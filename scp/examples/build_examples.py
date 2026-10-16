@@ -65,6 +65,25 @@ def weekly_history(loc: str, prod: str, base: float, season: dict[int, float], r
     return out
 
 
+def delhi_warehouse() -> dict:
+    """The Delhi DC's bins (Enterprise 6.1): a picking area of shelves along the walk, filled first and topped up with
+    the same product, and a high-rack reserve by weight behind it. Stock taken at go-live is in no bin yet: putting
+    it away is the first warehouse step."""
+    shelves = [{"location": "DC-DELHI", "id": f"S-01-{i:02d}", "storage_type": "SHELF", "walk": 10 * i, "max_qty": 300}
+               for i in range(1, 9)]
+    racks = [{"location": "DC-DELHI", "id": f"R-{a:02d}-{i:02d}", "storage_type": "RACK", "walk": 100 * a + 10 * i,
+              "max_kg": 1800} for a in (1, 2) for i in range(1, 5)]
+    return {
+        "storage_types": [
+            {"location": "DC-DELHI", "id": "SHELF", "name": "Picking shelves", "putaway": "add_to_stock",
+             "bins_per_product": 2, "sequence": 10},
+            {"location": "DC-DELHI", "id": "RACK", "name": "High rack reserve", "putaway": "next_empty",
+             "picking": False, "sequence": 20}],
+        "bins": shelves + racks,
+        "putaway_rules": [{"location": "DC-DELHI", "product": "", "storage_types": ["SHELF", "RACK"]}],
+    }
+
+
 def kitchenware() -> dict:
     rng = random.Random(42)
     festive = {10: 1.35, 11: 1.25, 12: 0.95, 1: 0.9, 2: 0.95, 3: 1.05}
@@ -97,11 +116,11 @@ def kitchenware() -> dict:
     ]
     products = [
         {"id": "MG-500", "name": "Mixer grinder 500 W", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.2,
-         "volume_m3": 0.028, "price": 2890, "setup_group": "MG", "customer_wait_days": 2},
+         "volume_m3": 0.028, "price": 2890, "setup_group": "MG", "customer_wait_days": 2, "barcode": "8906011250005"},
         {"id": "MG-750", "name": "Mixer grinder 750 W", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.9,
-         "volume_m3": 0.031, "price": 3990, "setup_group": "MG"},
+         "volume_m3": 0.031, "price": 3990, "setup_group": "MG", "barcode": "8906011250012"},
         {"id": "KT-15", "name": "Electric kettle 1.5 L", "type": "FG", "family": "Kettles", "weight_kg": 1.3,
-         "volume_m3": 0.009, "price": 1190, "setup_group": "KT", "customer_wait_days": 2},
+         "volume_m3": 0.009, "price": 1190, "setup_group": "KT", "customer_wait_days": 2, "barcode": "8906011250029"},
         {"id": "MOT-500", "name": "Motor assembly 500 W", "type": "SFG", "weight_kg": 1.6, "volume_m3": 0.004,
          "setup_group": "W500"},
         {"id": "MOT-750", "name": "Motor assembly 750 W", "type": "SFG", "weight_kg": 2.0, "volume_m3": 0.005,
@@ -329,6 +348,7 @@ def kitchenware() -> dict:
         "resources": resources, "production_sources": production_sources, "purchasing_sources": purchasing,
         "lanes": lanes, "vendors": vendors, "purchase_orders": [],
         "purchasing": {"approval_limit": 1000000, "release_window_days": 7},
+        **delhi_warehouse(),
         "demand": demand, "receipts": receipts, "history": history, "events": events, "npi": npi,
         "overrides": overrides,
         # sequence-dependent setups: winding gauge change (thick→thin needs re-tensioning) and

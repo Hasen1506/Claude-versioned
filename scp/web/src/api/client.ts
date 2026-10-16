@@ -8,7 +8,8 @@ import type {
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
   User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
-  WhatIfChip, WhatIfResult, SweepResult, CaseInfo,
+  WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, PutawayProposal, PickList, WarehouseActionResponse,
+  WarehouseAction,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
 import { done } from "../lib/guide";
@@ -342,6 +343,19 @@ export const api = {
   /** One order-to-cash step: take an order, quote, deliver, invoice, record a payment, take a return back. */
   salesAct: (dataset: Dataset, action: SalesAction, extra: SalesActionInput = {}) =>
     write<SalesActionResponse>("/api/sales/act", dataset, { action, ...extra }),
+  /** A place's bins with what each holds, and the stock in no bin (Enterprise 6.1). */
+  warehouse: (ds: Dataset, location: string) =>
+    planPost<WarehouseView>(`/api/warehouse?location=${encodeURIComponent(location)}`, ds),
+  /** Where the stock in no bin would be put away, by the place's rules (nothing is changed). */
+  putawayProposal: (ds: Dataset, location: string) =>
+    planPost<PutawayProposal>(`/api/warehouse/putaway?location=${encodeURIComponent(location)}`, ds),
+  /** A wave's pick list, in walk order. */
+  pickList: (ds: Dataset, wave: string) => planPost<PickList>(`/api/warehouse/picks?wave=${encodeURIComponent(wave)}`, ds),
+  /** One warehouse step: put-away tasks, a wave, confirm or cancel a task (bin and product as read), a bin move. */
+  warehouseAct: (dataset: Dataset, action: WarehouseAction, extra: {
+    location?: string; deliveries?: string[] | null; task?: string; qty?: number | null; bin?: string | null;
+    product?: string | null; from_bin?: string; to_bin?: string; batch?: string | null; date?: string | null; by?: string;
+  } = {}) => write<WarehouseActionResponse>("/api/warehouse/act", dataset, { action, ...extra }),
   /** Requisitions from the supply plan, every purchase order and the supplier scorecard. */
   purchasing: (ds: Dataset) => planPost<PurchasingView>("/api/purchasing", ds),
   /** Turn requisitions into purchase orders (`lines` = which, on which source; none = everything due now). */

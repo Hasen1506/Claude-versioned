@@ -242,6 +242,10 @@ def _batch_unknown(d):
                        "qty": 5, "batch": "NO-RECORD"}]
 
 
+def _wh_misfit(d):
+    d["bins"] = [{"location": "P", "id": "X1", "storage_type": "NONE"}]
+
+
 def _reversal_unknown(d):
     d["movements"] = [{"id": "GM-1", "date": "2026-01-01", "type": "receipt", "location": "P", "product": "B",
                        "qty": 5, "reversal_of": "GM-0"}]
@@ -288,7 +292,7 @@ MUTATORS = {
     "FIXED_SOURCE_TWICE": _fixed_twice, "OPEN_PO_BLOCKED_SUPPLIER": _open_po_blocked,
     "STOCK_EXPIRED": _stock_expired, "BATCH_UNKNOWN": _batch_unknown, "REVERSAL_UNKNOWN": _reversal_unknown,
     "SERIALS_COUNT": _serials_count, "COLD_CHAIN_LANE": _cold_chain,
-    "PLANNING_MATERIAL_CHAIN": _planning_chain, "VARIANT_FORECAST": _variant_forecast,
+    "PLANNING_MATERIAL_CHAIN": _planning_chain, "VARIANT_FORECAST": _variant_forecast, "WH_MISFIT": _wh_misfit,
 }
 
 

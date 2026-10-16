@@ -89,6 +89,8 @@ class GoodsMovement(Model):
                                description="Serial numbers moved (serialised products: one per unit)")
     erp_ref: str | None = Field(None, max_length=64, description="The ERP's document it came with: an ERP posting is "
                                                                  "taken once")
+    bin: str | None = Field(None, max_length=40, description="The storage bin the quantity comes from or goes to "
+                                                             "(places with bins; empty: goods in or staged to ship)")
 
     @model_validator(mode="after")
     def _qty(self) -> GoodsMovement:

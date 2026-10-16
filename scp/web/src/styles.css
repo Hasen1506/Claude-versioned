@@ -789,3 +789,19 @@ table.t td.num.bad { color: var(--critical-text); }
 /* enterprise plan 5.3: what a sweep says, above its cost-against-service chart */
 .t tr.hl td { background: var(--accent-soft); }
 .sweep-read { margin: 0 0 12px; padding-left: 18px; display: grid; gap: 4px; max-width: 80ch; }
+
+/* Enterprise 6.1: warehouse bins and the phone scan page */
+.fill { position: relative; display: inline-flex; align-items: center; min-width: 64px; height: 16px; padding: 0 4px;
+  font-size: 11px; font-variant-numeric: tabular-nums; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.fill > span { position: absolute; inset: 0 auto 0 0; background: var(--accent-soft, rgba(60, 110, 200, .18)); z-index: 0; }
+.scan { max-width: 520px; display: flex; flex-direction: column; gap: 12px; }
+.scan-card { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--surface); display: flex; flex-direction: column; gap: 8px; }
+.scan-what { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+.scan-bin { font-size: 22px; }
+.scan-bin strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 30px; }
+.scan-prod { font-size: 16px; }
+.scan-steps { display: flex; gap: 12px; list-style: none; padding: 0; margin: 4px 0; font-size: 13px; color: var(--ink-3, #777); }
+.scan-steps li.on { color: var(--ink); font-weight: 600; }
+.scan-steps li.done { color: var(--good); }
+.scan-input { font-size: 20px; padding: 10px 12px; width: 100%; box-sizing: border-box; }
+.scan-video { width: 100%; max-height: 260px; border-radius: 6px; background: #000; }

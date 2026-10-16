@@ -163,7 +163,8 @@
    "volume_m3": 0.028,
    "price": 2890,
    "setup_group": "MG",
-   "customer_wait_days": 2
+   "customer_wait_days": 2,
+   "barcode": "8906011250005"
   },
   {
    "id": "MG-750",
@@ -173,7 +174,8 @@
    "weight_kg": 4.9,
    "volume_m3": 0.031,
    "price": 3990,
-   "setup_group": "MG"
+   "setup_group": "MG",
+   "barcode": "8906011250012"
   },
   {
    "id": "KT-15",
@@ -184,7 +186,8 @@
    "volume_m3": 0.009,
    "price": 1190,
    "setup_group": "KT",
-   "customer_wait_days": 2
+   "customer_wait_days": 2,
+   "barcode": "8906011250029"
   },
   {
    "id": "MOT-500",
@@ -1090,6 +1093,148 @@
   "approval_limit": 1000000,
   "release_window_days": 7
  },
+ "storage_types": [
+  {
+   "location": "DC-DELHI",
+   "id": "SHELF",
+   "name": "Picking shelves",
+   "putaway": "add_to_stock",
+   "bins_per_product": 2,
+   "sequence": 10
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "RACK",
+   "name": "High rack reserve",
+   "putaway": "next_empty",
+   "picking": false,
+   "sequence": 20
+  }
+ ],
+ "bins": [
+  {
+   "location": "DC-DELHI",
+   "id": "S-01-01",
+   "storage_type": "SHELF",
+   "walk": 10,
+   "max_qty": 300
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "S-01-02",
+   "storage_type": "SHELF",
+   "walk": 20,
+   "max_qty": 300
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "S-01-03",
+   "storage_type": "SHELF",
+   "walk": 30,
+   "max_qty": 300
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "S-01-04",
+   "storage_type": "SHELF",
+   "walk": 40,
+   "max_qty": 300
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "S-01-05",
+   "storage_type": "SHELF",
+   "walk": 50,
+   "max_qty": 300
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "S-01-06",
+   "storage_type": "SHELF",
+   "walk": 60,
+   "max_qty": 300
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "S-01-07",
+   "storage_type": "SHELF",
+   "walk": 70,
+   "max_qty": 300
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "S-01-08",
+   "storage_type": "SHELF",
+   "walk": 80,
+   "max_qty": 300
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "R-01-01",
+   "storage_type": "RACK",
+   "walk": 110,
+   "max_kg": 1800
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "R-01-02",
+   "storage_type": "RACK",
+   "walk": 120,
+   "max_kg": 1800
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "R-01-03",
+   "storage_type": "RACK",
+   "walk": 130,
+   "max_kg": 1800
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "R-01-04",
+   "storage_type": "RACK",
+   "walk": 140,
+   "max_kg": 1800
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "R-02-01",
+   "storage_type": "RACK",
+   "walk": 210,
+   "max_kg": 1800
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "R-02-02",
+   "storage_type": "RACK",
+   "walk": 220,
+   "max_kg": 1800
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "R-02-03",
+   "storage_type": "RACK",
+   "walk": 230,
+   "max_kg": 1800
+  },
+  {
+   "location": "DC-DELHI",
+   "id": "R-02-04",
+   "storage_type": "RACK",
+   "walk": 240,
+   "max_kg": 1800
+  }
+ ],
+ "putaway_rules": [
+  {
+   "location": "DC-DELHI",
+   "product": "",
+   "storage_types": [
+    "SHELF",
+    "RACK"
+   ]
+  }
+ ],
  "demand": [
   {
    "location": "CUS-ECOM",

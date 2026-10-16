@@ -130,6 +130,8 @@ def build() -> dict:
              "reversal_of": "GM-99", "serials": [f"J-{i:04d}" for i in range(1, 11)]},     # takes back a lost posting
         ],
         "batches": [{"product": "FRUIT", "id": "F-0701", "made_on": "2026-07-01", "expires_on": "2026-07-03"}],
+        # the DC's racking labelled before its storage types were set up
+        "bins": [{"location": "DC", "id": "A-01", "storage_type": "RACK"}],
     }
 
 
@@ -170,6 +172,7 @@ WARNINGS = {
     ("BATCH_UNKNOWN", "movement", "GM-3"), ("SERIALS_COUNT", "movement", "GM-3"),
     ("REVERSAL_UNKNOWN", "movement", "GM-4"), ("COLD_CHAIN_LANE", "lane", "L-FARM"),
     ("PLANNING_MATERIAL_CHAIN", "product", "LABEL-GOLD"), ("VARIANT_FORECAST", "demand", "PLANT/LABEL"),
+    ("WH_MISFIT", "bin", "DC/A-01"),
 }
 
 

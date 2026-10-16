@@ -23,7 +23,8 @@ KEYS: dict[str, tuple[str, ...]] = {
     "purchase_orders": ("id",), "stock_targets": ("location", "product", "date"), "budgets": ("month", "product", "family"), "rolled_weeks": ("start",),
     "customers": ("customer",), "payment_terms": ("id",), "sales_orders": ("id",), "quotations": ("id",),
     "deliveries": ("id",), "invoices": ("id",), "returns": ("id",), "contracts": ("id",), "supplier_invoices": ("id",),
-    "supplier_returns": ("id",),
+    "supplier_returns": ("id",), "storage_types": ("location", "id"), "bins": ("location", "id"),
+    "putaway_rules": ("location", "product"), "warehouse_tasks": ("id",), "waves": ("id",),
 }
 SINGLE = ("settings", "forecasting", "inventory", "sop", "scheduling", "promising", "execution", "purchasing", "finance",
           "tower", "sales")

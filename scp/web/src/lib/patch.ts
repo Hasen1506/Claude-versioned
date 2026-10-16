@@ -18,6 +18,8 @@ export const KEYS: Record<string, string[]> = {
   rolled_weeks: ["start"],
   customers: ["customer"], payment_terms: ["id"], sales_orders: ["id"], quotations: ["id"], deliveries: ["id"],
   invoices: ["id"], returns: ["id"], contracts: ["id"], supplier_invoices: ["id"], supplier_returns: ["id"],
+  storage_types: ["location", "id"], bins: ["location", "id"], putaway_rules: ["location", "product"],
+  warehouse_tasks: ["id"], waves: ["id"],
 };
 
 /** Parts compared as one object (scp/versions/diff.py SINGLE). */

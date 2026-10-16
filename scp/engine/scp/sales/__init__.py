@@ -743,8 +743,12 @@ def pack(ds: Dataset, did: str, packages: int, gross_kg: float | None = None) ->
 
 def issue(ds: Dataset, did: str, on: date | None = None) -> tuple[Dataset, SalesReport]:
     """Goods issue: the delivery leaves; its sale movements are posted as one material document."""
+    from ..warehouse import open_picks, picked_batches    # (the warehouse reads deliveries: imported here)
     dl = _delivery(ds, did)
     day = _today(ds, on)
+    if left_open := open_picks(ds, did):
+        raise SalesError(f"{did} has picks still open ({', '.join(left_open[:5])}): confirm or cancel them first")
+    binned = picked_batches(ds, did)
     ids = movement_ids(ds)
     moves, per = [], {}
     for x in dl.lines:
@@ -757,12 +761,16 @@ def issue(ds: Dataset, did: str, on: date | None = None) -> tuple[Dataset, Sales
         q = x.picked if x.picked is not None else x.qty
         if q <= EPS:
             continue
-        per[len(moves)] = {"batch": x.batch} if x.batch else {}
         left = ordered_now(ds, d) - delivered(ds, x.order) - q
-        moves.append(GoodsMovement(id=next(ids), date=day, type=MovementType.SALE, location=dl.ship_from,
-                                   product=x.product, qty=round(q, 6), reference=x.order, counterparty=dl.customer,
-                                   final=x.final,
-                                   note=f"Delivery {did}" + (", rest cancelled" if x.final and left > EPS else "")))
+        # picked from bins: the batches the picks took, as picked (else the batch on the line, or first expiring)
+        got = binned.get(x.order, {})
+        parts = list(got.items()) if got and abs(sum(got.values()) - q) <= EPS else [(x.batch, q)]
+        for b, bq in parts:
+            per[len(moves)] = {"batch": b} if b else {}
+            moves.append(GoodsMovement(id=next(ids), date=day, type=MovementType.SALE, location=dl.ship_from,
+                                       product=x.product, qty=round(bq, 6), reference=x.order,
+                                       counterparty=dl.customer, final=x.final,
+                                       note=f"Delivery {did}" + (", rest cancelled" if x.final and left > EPS else "")))
     if not moves:
         raise SalesError(f"nothing was picked on {did}")
     try:

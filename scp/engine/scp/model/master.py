@@ -175,6 +175,8 @@ class Product(Model):
     family: str = ""
     weight_kg: float | None = Unit("kg", default=None, description="Gross weight per base unit")
     volume_m3: float | None = Unit("m3", default=None, description="Volume per base unit")
+    barcode: str = Field("", max_length=40, description="The code on its label (EAN, GTIN or your own), read by the "
+                                                        "warehouse scanner as well as the product id")
     shelf_life_days: int | None = Field(None, gt=0)
     batches: bool | None = Field(None, description="Stock kept by batch with an expiry date, issued first expiring, "
                                                    "first out. Empty: when the product has a shelf life")

@@ -89,6 +89,7 @@ ANON_COSTS: dict[str, int] = {
     "/api/whatif/sweep": 160,                # enterprise 5.3: up to nine full plans (today and eight sizes)
     "/api/ask": 40,                          # a plan and the worklist; a what-if question plans a copy too
     "/api/tower/fix": 30,                    # two plans and their exceptions
+    "/api/warehouse": 2,                     # enterprise 6.1: the place's journal read by bin
 }
 RATED_PATHS = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset", "/api/auth/reset/request",
                "/api/auth/email/verify", "/api/auth/email/request", "/api/auth/signin/second")

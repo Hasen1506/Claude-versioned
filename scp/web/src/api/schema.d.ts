@@ -2006,6 +2006,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/warehouse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Warehouse
+         * @description A place's bins with what each holds, the stock in no bin (to put away, or staged to ship) and what the journal
+         *     says about it.
+         */
+        post: operations["post_warehouse_api_warehouse_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/warehouse/putaway": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Warehouse Putaway
+         * @description Where the stock in no bin would go, by the place's rules (nothing is changed).
+         */
+        post: operations["post_warehouse_putaway_api_warehouse_putaway_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/warehouse/picks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Warehouse Picks
+         * @description A wave's pick list in walk order.
+         */
+        post: operations["post_warehouse_picks_api_warehouse_picks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/warehouse/act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Warehouse Action
+         * @description One warehouse step: make the put-away tasks, a wave of picks, confirm or cancel a task, move between bins.
+         */
+        post: operations["post_warehouse_action_api_warehouse_act_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/actuals/production-usage": {
         parameters: {
             query?: never;
@@ -3016,6 +3097,83 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /**
+         * Bin
+         * @description A storage bin (≈ EWM storage bin): the smallest place stock is kept in, its id the label read by the scanner.
+         */
+        Bin: {
+            /** Location */
+            location: string;
+            /**
+             * Id
+             * @description The bin's label, as printed on its barcode (e.g. A-01-02)
+             */
+            id: string;
+            /**
+             * Storage Type
+             * @description The storage type it belongs to
+             */
+            storage_type: string;
+            /**
+             * Walk
+             * @description Its place on the picking walk: picks are listed lowest first
+             * @default 0
+             */
+            walk: number;
+            /**
+             * Max Qty
+             * @description Most it holds, in the products' own units (empty: no limit)
+             */
+            max_qty?: number | null;
+            /**
+             * Max Kg
+             * @description Most weight it holds (empty: no limit)
+             */
+            max_kg?: number | null;
+            /**
+             * Product
+             * @description Kept for one product (fixed-bin put-away)
+             */
+            product?: string | null;
+            /**
+             * Blocked
+             * @description Nothing is put away into it or picked from it
+             * @default false
+             */
+            blocked: boolean;
+        };
+        /** BinRow */
+        BinRow: {
+            /** Bin */
+            bin: string;
+            /** Storage Type */
+            storage_type: string;
+            /** Walk */
+            walk: number;
+            /** Product */
+            product: string | null;
+            /** Batch */
+            batch: string | null;
+            stock_type: components["schemas"]["StockType"] | null;
+            /**
+             * Qty
+             * @default 0
+             */
+            qty: number;
+            /** Since */
+            since: string | null;
+            /** Expires On */
+            expires_on: string | null;
+            /** Fill */
+            fill: number | null;
+            /**
+             * Blocked
+             * @default false
+             */
+            blocked: boolean;
+            /** Fixed For */
+            fixed_for: string | null;
         };
         /**
          * Binding
@@ -4375,6 +4533,16 @@ export interface components {
             batches?: components["schemas"]["Batch"][];
             /** Inventory Docs */
             inventory_docs?: components["schemas"]["InventoryDoc"][];
+            /** Storage Types */
+            storage_types?: components["schemas"]["StorageType"][];
+            /** Bins */
+            bins?: components["schemas"]["Bin"][];
+            /** Putaway Rules */
+            putaway_rules?: components["schemas"]["PutawayRule"][];
+            /** Warehouse Tasks */
+            warehouse_tasks?: components["schemas"]["WarehouseTask"][];
+            /** Waves */
+            waves?: components["schemas"]["Wave"][];
             /** Closed Orders */
             closed_orders?: components["schemas"]["ClosedOrder"][];
             /** Accuracy */
@@ -5906,6 +6074,11 @@ export interface components {
              * @description The ERP's document it came with: an ERP posting is taken once
              */
             erp_ref?: string | null;
+            /**
+             * Bin
+             * @description The storage bin the quantity comes from or goes to (places with bins; empty: goods in or staged to ship)
+             */
+            bin?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -7421,6 +7594,21 @@ export interface components {
             changes: components["schemas"]["ListChange"][];
             /** Kept */
             kept: boolean;
+        };
+        /** LooseRow */
+        LooseRow: {
+            /** Product */
+            product: string;
+            /** Batch */
+            batch: string | null;
+            stock_type: components["schemas"]["StockType"];
+            /** Qty */
+            qty: number;
+            /**
+             * To Put Away
+             * @default 0
+             */
+            to_put_away: number;
         };
         /** LotRow */
         LotRow: {
@@ -9028,6 +9216,54 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** PickFor */
+        PickFor: {
+            /** Delivery */
+            delivery: string;
+            /** Order */
+            order: string;
+            /** Qty */
+            qty: number;
+            /** Task */
+            task: string;
+            /** Status */
+            status: string;
+        };
+        /** PickList */
+        PickList: {
+            /** Wave */
+            wave: string;
+            /** Location */
+            location: string;
+            /** Rows */
+            rows: components["schemas"]["PickRow"][];
+            /** Done */
+            done: boolean;
+        };
+        /** PickRow */
+        PickRow: {
+            /** Bin */
+            bin: string | null;
+            /** Walk */
+            walk: number | null;
+            /** Product */
+            product: string;
+            /** Name */
+            name: string;
+            /** Batch */
+            batch: string | null;
+            /** Qty */
+            qty: number;
+            /**
+             * Picked
+             * @default 0
+             */
+            picked: number;
+            /** Tasks */
+            tasks: string[];
+            /** Deliveries */
+            deliveries: components["schemas"]["PickFor"][];
+        };
         /** PlacementApplied */
         PlacementApplied: {
             /** Changes */
@@ -9647,6 +9883,12 @@ export interface components {
              * @description Volume per base unit
              */
             volume_m3?: number | null;
+            /**
+             * Barcode
+             * @description The code on its label (EAN, GTIN or your own), read by the warehouse scanner as well as the product id
+             * @default
+             */
+            barcode: string;
             /** Shelf Life Days */
             shelf_life_days?: number | null;
             /**
@@ -10048,6 +10290,20 @@ export interface components {
              */
             name: string;
         };
+        /** ProposedTask */
+        ProposedTask: {
+            /** Product */
+            product: string;
+            /** Batch */
+            batch: string | null;
+            stock_type: components["schemas"]["StockType"];
+            /** Qty */
+            qty: number;
+            /** To Bin */
+            to_bin: string;
+            /** Storage Type */
+            storage_type: string;
+        };
         /**
          * PurchaseContract
          * @description An outline agreement (≈ contract): prices agreed with a supplier for a period. Purchase orders for its products
@@ -10404,6 +10660,41 @@ export interface components {
             /** Vendors */
             vendors: components["schemas"]["VendorRow"][];
             payables: components["schemas"]["PayablesView"] | null;
+        };
+        /**
+         * Putaway
+         * @description Where a storage type puts goods away (≈ EWM put-away strategies).
+         * @enum {string}
+         */
+        Putaway: "fixed" | "add_to_stock" | "next_empty";
+        /** PutawayProposal */
+        PutawayProposal: {
+            /** Location */
+            location: string;
+            /** Tasks */
+            tasks: components["schemas"]["ProposedTask"][];
+            /** Notes */
+            notes: string[];
+        };
+        /**
+         * PutawayRule
+         * @description Which storage types a product is put away to, in order (≈ EWM storage type search sequence). The rule with no
+         *     product holds for every product without a rule of its own.
+         */
+        PutawayRule: {
+            /** Location */
+            location: string;
+            /**
+             * Product
+             * @description The product (empty: every other product)
+             * @default
+             */
+            product: string;
+            /**
+             * Storage Types
+             * @description Searched in this order
+             */
+            storage_types: string[];
         };
         /**
          * Quotation
@@ -13288,6 +13579,56 @@ export interface components {
          */
         StockType: "unrestricted" | "quality" | "blocked";
         /**
+         * StorageType
+         * @description An area of a warehouse with one way of putting away (≈ EWM storage type): a high rack, a picking shelf, a cold
+         *     room.
+         */
+        StorageType: {
+            /**
+             * Location
+             * @description The plant or warehouse it is in
+             */
+            location: string;
+            /**
+             * Id
+             * @description Short code, unique per place
+             */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * @description Where goods are put away here
+             * @default next_empty
+             */
+            putaway: components["schemas"]["Putaway"];
+            /**
+             * Mixed
+             * @description A bin here may hold several products at once
+             * @default false
+             */
+            mixed: boolean;
+            /**
+             * Picking
+             * @description Goods are picked from here (no: a reserve area, refilled from)
+             * @default true
+             */
+            picking: boolean;
+            /**
+             * Bins Per Product
+             * @description Most bins one product takes here (empty: no limit), so that one product does not fill a picking area
+             */
+            bins_per_product?: number | null;
+            /**
+             * Sequence
+             * @description Order in which put-away looks at the storage types when no rule names them: lowest first
+             * @default 10
+             */
+            sequence: number;
+        };
+        /**
          * Strategy
          * @description Planning strategy (S/4 guide §5.2).
          * @enum {string}
@@ -13884,6 +14225,11 @@ export interface components {
              */
             read: string[];
         };
+        /**
+         * TaskKind
+         * @enum {string}
+         */
+        TaskKind: "putaway" | "pick" | "move";
         /** TaxPart */
         TaxPart: {
             /** Name */
@@ -14590,6 +14936,182 @@ export interface components {
             size: number;
             /** Company */
             company: string;
+        };
+        /** WarehouseActionRequest */
+        WarehouseActionRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "putaway" | "wave" | "confirm" | "cancel" | "move";
+            /** Location */
+            location?: string | null;
+            /** Deliveries */
+            deliveries?: string[] | null;
+            /** Task */
+            task?: string | null;
+            /** Qty */
+            qty?: number | null;
+            /** Bin */
+            bin?: string | null;
+            /** Product */
+            product?: string | null;
+            /** From Bin */
+            from_bin?: string | null;
+            /** To Bin */
+            to_bin?: string | null;
+            /** Batch */
+            batch?: string | null;
+            /** @default unrestricted */
+            stock_type: components["schemas"]["StockType"];
+            /** Date */
+            date?: string | null;
+            /**
+             * By
+             * @default
+             */
+            by: string;
+        };
+        /** WarehouseActionResponse */
+        WarehouseActionResponse: {
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
+            report: components["schemas"]["WarehouseReport"];
+            picks: components["schemas"]["PickList"] | null;
+        };
+        /** WarehouseReport */
+        WarehouseReport: {
+            /** Message */
+            message: string;
+            /**
+             * Tasks
+             * @default []
+             */
+            tasks: string[];
+            /** Wave */
+            wave: string | null;
+            /**
+             * Movements
+             * @default []
+             */
+            movements: string[];
+            /** Next Task */
+            next_task: string | null;
+        };
+        /**
+         * WarehouseTask
+         * @description One move of stock inside a place (≈ EWM warehouse task): put away from goods in to a bin, picked from a bin
+         *     for a delivery, or moved between bins. Confirmed, it posts its movements.
+         */
+        WarehouseTask: {
+            /** Id */
+            id: string;
+            /** Location */
+            location: string;
+            kind: components["schemas"]["TaskKind"];
+            /** Product */
+            product: string;
+            /** Batch */
+            batch?: string | null;
+            /** @default unrestricted */
+            stock_type: components["schemas"]["StockType"];
+            /** Qty */
+            qty: number;
+            /**
+             * From Bin
+             * @description Empty: goods in (a put-away)
+             */
+            from_bin?: string | null;
+            /**
+             * To Bin
+             * @description Empty: staged for goods issue (a pick)
+             */
+            to_bin?: string | null;
+            /** Wave */
+            wave?: string | null;
+            /**
+             * Delivery
+             * @description The delivery a pick is for
+             */
+            delivery?: string | null;
+            /**
+             * Order
+             * @description The delivery's order line
+             */
+            order?: string | null;
+            /**
+             * Created On
+             * Format: date
+             */
+            created_on: string;
+            /**
+             * Status
+             * @default open
+             */
+            status: string;
+            /**
+             * Done Qty
+             * @description What was moved: less than asked is short
+             */
+            done_qty?: number | null;
+            /** Done On */
+            done_on?: string | null;
+            /**
+             * Done By
+             * @default
+             */
+            done_by: string;
+            /** Movements */
+            movements?: string[];
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** WarehouseView */
+        WarehouseView: {
+            /** Location */
+            location: string;
+            /**
+             * On
+             * Format: date
+             */
+            on: string;
+            /** Bins */
+            bins: components["schemas"]["BinRow"][];
+            /** Loose */
+            loose: components["schemas"]["LooseRow"][];
+            /** Tasks Open */
+            tasks_open: number;
+            /** Notes */
+            notes: string[];
+        };
+        /**
+         * Wave
+         * @description Deliveries picked together (≈ EWM wave): one pick list over all their lines, in walk order.
+         */
+        Wave: {
+            /** Id */
+            id: string;
+            /** Location */
+            location: string;
+            /**
+             * Created On
+             * Format: date
+             */
+            created_on: string;
+            /** Deliveries */
+            deliveries: string[];
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** WhatIfRequest */
         WhatIfRequest: {
@@ -18452,6 +18974,146 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SalesActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_warehouse_api_warehouse_post: {
+        parameters: {
+            query: {
+                location: string;
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarehouseView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_warehouse_putaway_api_warehouse_putaway_post: {
+        parameters: {
+            query: {
+                location: string;
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PutawayProposal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_warehouse_picks_api_warehouse_picks_post: {
+        parameters: {
+            query: {
+                wave: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PickList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_warehouse_action_api_warehouse_act_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WarehouseActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarehouseActionResponse"];
                 };
             };
             /** @description Validation Error */

@@ -445,7 +445,15 @@ function Deliveries({ res, ds, sel }: { res: SalesView; ds: Dataset; sel?: strin
   return <div className="stack">
     {banners}
     {open && <DeliveryDetail d={open} ds={ds} />}
-    <Panel flush title={`Due to ship in the next ${plural(ds.sales?.delivery_days ?? 3, "day")}`} actions={<Edits>
+    <Panel flush title={<h3 className="row" style={{ gap: 6 }}>Due to ship in the next
+      <Edits><input className="input" type="number" min={0} max={60} style={{ width: 64 }} aria-label="Days ahead to ship"
+        value={ds.sales?.delivery_days ?? 3} onChange={(e) => {
+          const n = Math.round(Number(e.target.value));
+          if (Number.isFinite(n) && n >= 0 && n <= 60) {
+            store.update((d) => { d.sales = { ...(d.sales ?? {}), delivery_days: n } as Dataset["sales"]; });
+            void store.run("sales");
+          }
+        }} /></Edits> days</h3>} actions={<Edits>
       <button className="btn sm accent" disabled={busy || chosen.size === 0}
         onClick={() => run("create_deliveries", { lines: [...chosen].map((order) => ({ order })) }, () => setPick(null))}>
         Make deliveries for {plural(chosen.size, "line")}</button></Edits>}>

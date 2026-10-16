@@ -44,6 +44,10 @@ from ..plan.advisor import StrategyAdvisor, strategy_advice
 from ..purchasing import PurchasingError, act as purchasing_act, create_one_off_po, create_purchase_orders, purchasing_view
 from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..sales import SalesError, act as sales_act, sales_view
+from ..warehouse import (
+    PickList, PutawayProposal, WarehouseError, WarehouseReport, WarehouseView, cancel_task, confirm_task, create_putaway,
+    create_wave, move_task, pick_list, propose_putaway, view as warehouse_view,
+)
 from ..sales.result import SalesReport, SalesView
 from ..promise import PromiseResult, check_lines, check_order, commit, run_bop, run_promise
 from ..promise.orders import (
@@ -871,6 +875,86 @@ def post_sales_action(req: SalesActionRequest) -> SalesActionResponse:
     except (SalesError, OrderError) as e:
         raise HTTPException(409, str(e)) from e
     return SalesActionResponse(**answer(req.dataset, new), report=rep)
+
+
+# ------------------------------------------------------------------------------------------------ warehouse (6.1)
+def _wh(make):
+    try:
+        return make()
+    except WarehouseError as e:
+        raise HTTPException(409, str(e)) from e
+
+
+@app.post("/api/warehouse", response_model=WarehouseView)
+def post_warehouse(ds: PlanData, location: str, as_of: dt.date | None = None) -> Response:
+    """A place's bins with what each holds, the stock in no bin (to put away, or staged to ship) and what the journal
+    says about it."""
+    return respond("warehouse", ds, lambda: _wh(lambda: warehouse_view(ds, location, as_of)), location, as_of)
+
+
+@app.post("/api/warehouse/putaway", response_model=PutawayProposal)
+def post_warehouse_putaway(ds: PlanData, location: str, as_of: dt.date | None = None) -> PutawayProposal:
+    """Where the stock in no bin would go, by the place's rules (nothing is changed)."""
+    return _wh(lambda: propose_putaway(ds, location, as_of))
+
+
+@app.post("/api/warehouse/picks", response_model=PickList)
+def post_warehouse_picks(ds: PlanData, wave: str) -> PickList:
+    """A wave's pick list in walk order."""
+    return _wh(lambda: pick_list(ds, wave))
+
+
+class WarehouseActionRequest(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
+    dataset: PlanData
+    action: Literal["putaway", "wave", "confirm", "cancel", "move"]
+    location: str | None = None                     # putaway, wave, move
+    deliveries: list[str] | None = None             # wave: these (default: every one due by the date)
+    task: str | None = None                         # confirm, cancel
+    qty: float | None = None                        # confirm: what was moved (default: all); move: how much
+    bin: str | None = None                          # confirm: the bin read by the scanner
+    product: str | None = None                      # confirm: the code read (id or barcode); move: the product
+    from_bin: str | None = None                     # move
+    to_bin: str | None = None
+    batch: str | None = None
+    stock_type: StockType = StockType.UNRESTRICTED
+    date: dt.date | None = None                     # the day (default: the planning start)
+    by: str = ""
+
+
+class WarehouseActionResponse(Out):
+    dataset: Dataset | None = None
+    patch: dict[str, Any] | None = None
+    report: WarehouseReport
+    picks: PickList | None = None                   # wave: its pick list
+
+
+@app.post("/api/warehouse/act", response_model=WarehouseActionResponse)
+def post_warehouse_action(req: WarehouseActionRequest) -> WarehouseActionResponse:
+    """One warehouse step: make the put-away tasks, a wave of picks, confirm or cancel a task, move between bins."""
+    ds, a = req.dataset, req.action
+
+    def need(v, what):
+        if not v:
+            raise WarehouseError(f"say which {what}")
+        return v
+
+    def run():
+        if a == "putaway":
+            return create_putaway(ds, need(req.location, "place"), req.date)
+        if a == "wave":
+            return create_wave(ds, need(req.location, "place"), req.deliveries, req.date)
+        if a == "confirm":
+            return confirm_task(ds, need(req.task, "task"), req.qty, req.bin, req.product, req.date,
+                                who_asks() or req.by)
+        if a == "cancel":
+            return cancel_task(ds, need(req.task, "task"))
+        return move_task(ds, need(req.location, "place"), need(req.product, "product"), need(req.qty, "quantity"),
+                         need(req.from_bin, "bin to move from"), need(req.to_bin, "bin to move to"), req.batch,
+                         req.stock_type, req.date)
+    new, rep = _wh(run)
+    picks = pick_list(new, rep.wave) if a == "wave" and rep.wave else None
+    return WarehouseActionResponse(**answer(ds, new), report=rep, picks=picks)
 
 
 class UsageInput(Out):

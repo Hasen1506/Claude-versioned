@@ -45,6 +45,8 @@ COLLECTION_TYPES: dict[str, str] = {
     "customers": "customer", "payment_terms": "payment_terms", "sales_orders": "sales_order", "quotations": "quotation",
     "deliveries": "delivery", "invoices": "invoice", "returns": "return", "contracts": "contract",
     "supplier_invoices": "supplier_invoice", "supplier_returns": "supplier_return",
+    "storage_types": "storage_type", "bins": "bin", "putaway_rules": "putaway_rule", "warehouse_tasks": "warehouse_task",
+    "waves": "wave",
 }
 _TYPE_COLLECTION = {v: k for k, v in COLLECTION_TYPES.items()}
 
@@ -59,7 +61,8 @@ SINGULAR: dict[str, str] = {
     "inventory_docs": "Physical inventory document", "customers": "Customer sales data", "payment_terms": "Payment terms",
     "sales_orders": "Sales order", "quotations": "Quotation", "deliveries": "Delivery", "invoices": "Invoice",
     "returns": "Return", "contracts": "Contract", "supplier_invoices": "Supplier invoice",
-    "supplier_returns": "Return to supplier",
+    "supplier_returns": "Return to supplier", "storage_types": "Storage type", "bins": "Storage bin",
+    "putaway_rules": "Put-away rule", "warehouse_tasks": "Warehouse task", "waves": "Wave",
 }
 
 # validate._ref's message: "<field> refers to unknown <kind> '<value>'"
@@ -103,6 +106,10 @@ def client_key(collection: str, rec: Any, index: int) -> str:
         return f"{r.get('customer')}/{r.get('product')}"
     if collection == "batches":
         return f"{r.get('product')}/{r.get('id')}"
+    if collection in ("storage_types", "bins"):
+        return f"{r.get('location')}/{r.get('id')}"
+    if collection == "putaway_rules":
+        return f"{r.get('location')}/{r.get('product') or '*'}"
     if collection == "vendors":
         return str(r.get("supplier") or f"#{index}")
     if collection == "customers":
@@ -253,6 +260,8 @@ def _readiness_id(collection: str, rec: dict[str, Any], index: int) -> str:
         return f"{rec.get('location')}/{rec.get('product')}@{rec.get('date')}"
     if collection == "customer_prices":
         return f"{rec.get('customer')}/{rec.get('product')}"
+    if collection in ("storage_types", "bins", "putaway_rules"):
+        return client_key(collection, rec, index)
     if collection in ("history", "confirmations", "changeovers"):
         return f"#{index}"
     if collection == "demand":

@@ -964,7 +964,51 @@ demand is due.
 | N278 | "What if kettle prices rise 5 %?" was first read as the purchase price of the kettle body: "kettle" names the kettle we make and the body we buy. | Minor | **Fixed:** a price is read as a purchase price only when a supplier is named, or every product named is one we buy. |
 | N279 | At 5,000 × 20 the first sweep ran out of memory and was stopped without a word: each scenario's plan was still held while the next was made, two plans of about 11 GB. | Major | **Fixed:** a plan is let go once its figures are read, in the side-by-side and the sweep alike: one plan in memory at a time (10.7 GB at the peak). |
 | N280 | Found by CI after 5.3: two browsers planning Kaveri in turn shared the server's one kept plan. One planned the heater stock change; the other then made the same change and read "Nothing the plan reads had changed since the last plan" of its own change. Two companies planned in turn each planned everything, from scratch. | Major | **Fixed:** the plan's work is kept for each planner, by the company open and the person or browser asking. The newest is always kept, others within `SCP_KEPT_NODES`. Tested with two planners, two companies, the budget, and two browsers through the API. |
+| N289 | Found by the full browser run after N280: a second browser opening Kaveri unchanged was answered with the plan the first had just made (the same data) and kept no plan work of its own, so its corrected stock figure was planned from scratch ("Only what the changes since the last plan reached" never showed). | Major | **Fixed:** whoever is answered with the kept plan keeps its work too; work held by two planners counts once in `SCP_KEPT_NODES`. Tested (and both changes mutation-checked) in tests/test_incremental.py. |
+| N290 | Found by CI after N280: the variant-shop browser test pressed *Use this forecast in the supply plan* and went straight to Recalculate. Under load the plan was asked for before the release answered, so it planned the demand without the forecast and was out of date the moment the release landed. The planner was right; the test raced it. | Minor | **Fixed:** the test waits for the "Released" banner before it plans, as demand-spread.spec.ts already did. |
+| N291 | Found by the full browser run: the S&OP browser test signed off the data step and checked the demand review's month row at once. The data step's panel shows the same month table, so under load the check passed on it, *Revenue* was pressed there, and the demand review then replaced the panel, showing units. | Minor | **Fixed:** the test waits for the step to move on (its sign-off button gone) after every sign-off; and the units-or-revenue choice is kept for the cycle, so the next step shows what was chosen instead of going back to units. |
 | N277 | At 5,000 × 20 each size of a sweep plans the whole company again, one after another. | Minor | Open, as N270: a change to some products' or one supplier's data could be planned again from the kept work (5.1), and the sizes side by side on more cores. |
+
+### 6.1: Bins, put-away, waves and a phone that reads the labels
+
+ENTERPRISE_PLAN 6.1, in a browser on the Kaveri Kitchenware example (*Stock & actuals → Warehouse*, the phone page
+*Scan* at 390 px, *Selling → Deliveries*), through the API, and through the engine on the generated company of 5,000
+products. The Delhi DC has two areas: eight picking shelves of 300 units along the walk (*add to stock*, two shelves
+a product) and eight high-rack bins of 1,800 kg behind them (*next empty*, a reserve). The rule sends every product
+to the shelves, then the rack.
+
+* *Put away. Input:* the go-live stock take, 1,500 kettles, 1,500 and 900 grinders, in no bin. *Processing:* each
+  product's storage types in the rule's order, in each its strategy, within each bin's units and kilograms.
+  *Output:* eleven tasks: two shelves of 300 for each product, the rest to the rack by weight (428 grinders of 4.2 kg
+  fill a rack bin to 99.9 %). Opened on the phone, the first task reads *Put away · To S-01-01 · 300 Electric kettle
+  1.5 L*. The 500 W grinder's label, read by mistake, is refused: "That is Mixer grinder 500 W: this task is for
+  Electric kettle 1.5 L". The kettle's label is read, then 300 confirmed, and the next task is *To S-01-02*. The
+  other ten are confirmed from the desk, in walk order. Stock by bin then shows every unit in a bin, and *in no bin*
+  is gone. The place's stock and the plan are the same as before the moves: a bin move is a pair of movements that
+  sums to zero.
+* *A wave. Input:* the orders due in the next ten days put on deliveries (Selling); the one from the Delhi DC has
+  two lines, 500 of the 500 W grinder (SO-88190) and 380 of the 750 W (SO-88140). *Processing:* each line is picked from the bins that hold it: the picking area before the reserve,
+  first expiring, then first in, then nearest on the walk; a bin and product once for every delivery that needs it.
+  *Output:* "Wave WV-0001: 1 delivery, 4 picks from 4 bins, in walk order", the pick list from S-01-03 to S-01-06,
+  the grinders' shelves (the rack is not needed).
+* *Pick on the phone, one short. Input:* the wrong bin is read first, then the right one; 20 fewer found than asked.
+  *Output:* "That is bin R-02-04: go to S-01-03". Then: "280 Mixer grinder 500 W picked from S-01-03, 20
+  short. Count bin S-01-03: the books say it still holds 20." Once the other picks are confirmed, the delivery reads
+  "is picked, short: SO-88190 480 of 500: pack it and ship it". The goods issue ships the batches the picks took. It
+  is refused while a pick is still open, and nothing is left staged.
+* *At 5,000 × 20:* 346 products in stock at one DC with 546 bins: stock by bin in 0.16 s, the put-away proposal in
+  0.6 s, making its 346 tasks 1.6 s, one task confirmed in 0.24 s.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N281 | The first put-away gave the kettles five of the eight picking shelves, being first in the list, and the 750 W grinders none: they would have been picked from the rack. | Major | **Fixed:** a storage type says how many of its bins one product may take (*Bins a product*). The Delhi shelves take two each, and put-away goes on to the next area. |
+| N282 | Every bin move was posted with its task as its reference, and the plan's data check reported each one as "the reference matches no receipt, sales order or closed order". | Major | **Fixed:** the task keeps the movements it posted; the movements name no order. A test checks that the plan, its warnings included, is the same before and after the moves. |
+| N283 | A storage type set to *mixed* never mixed: put-away only used empty bins or bins already holding the product. | Minor | **Fixed:** a mixed area takes a product beside others, once its empty bins are full. |
+| N284 | Selling listed only the order lines due in the next 3 days, a company setting with no field on the page, so an order due in 5 days could not be shipped early from the screen. Changing the setting while the list was being read left the old list showing. | Major | **Fixed:** the window is a field in the list's heading ("Due to ship in the next [3] days"), and changing it reads the list again. |
+| N285 | A short pick asks for a count of the bin, but the count is made on *Count stock*, by place and product, not by bin. | Minor | Open: a count by bin (a physical inventory of chosen bins, with the difference posted to the bin). |
+| N286 | Stock taken out without a pick (a component issue to production, a scrap, a goods issue at a place with bins but no wave) comes off the bins first in, first out: a guess. *Stock by bin* names those postings and asks for a count if the guess is wrong. | Minor | By design, until supply to production from a bin is built (staging for the shop floor); open. |
+| N287 | Reading a label with the phone's camera needs the browser's barcode reader, which Chrome on Android has and Safari on iPhone does not. A hand-held scanner works everywhere: it types the code and Enter into the field. | Minor | Open: a reader that does not depend on the browser. |
+| N288 | Picking bins are refilled from the reserve by a bin move made by hand; nothing proposes it when a shelf runs low. | Minor | Open: replenishment by minimum and maximum quantities per picking bin. |
 
 ## Found in the second reality check (after Phase E)
 

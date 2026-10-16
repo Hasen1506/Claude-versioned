@@ -9,7 +9,8 @@ export type CollectionKey =
   | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
   | "movements" | "closed_orders" | "accuracy" | "forecast_snapshots" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
   | "customers" | "payment_terms" | "sales_orders" | "quotations" | "deliveries" | "invoices" | "returns"
-  | "contracts" | "supplier_invoices" | "supplier_returns" | "budgets";
+  | "contracts" | "supplier_invoices" | "supplier_returns" | "budgets"
+  | "storage_types" | "bins" | "putaway_rules";
 
 export interface Column {
   label: string;
@@ -386,6 +387,36 @@ export const COLLECTIONS: CollectionDef[] = [
     columns: [
       { label: "Product", get: (o) => s(o.product) }, { label: "Batch", get: (o) => s(o.id) }, { label: "Made", get: (o) => s(o.made_on) },
       { label: "Expires", get: (o) => s(o.expires_on) }, { label: "Supplier's batch", get: (o) => s(o.supplier_batch) },
+    ],
+  },
+  {
+    key: "storage_types", label: "Storage types", singular: "storage type", defName: "StorageType", issueType: "storage_type",
+    group: "Execution", keyOf: (o) => `${s(o.location)}/${s(o.id)}`,
+    blurb: "The areas inside a plant or warehouse, each with one way of putting away: a picking shelf, a high rack, a cold room. The Warehouse page puts goods away and picks by them.",
+    columns: [
+      { label: "Place", get: (o) => s(o.location) }, { label: "Code", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
+      { label: "Put away", get: (o) => s(o.putaway) }, { label: "Picked from", get: (o) => (o.picking === false ? "no (reserve)" : "yes") },
+      { label: "Bins a product", get: (o) => s(o.bins_per_product) },
+    ],
+  },
+  {
+    key: "bins", label: "Storage bins", singular: "bin", defName: "Bin", issueType: "bin",
+    group: "Execution", keyOf: (o) => `${s(o.location)}/${s(o.id)}`,
+    blurb: "Every bin with the label its barcode carries, its place on the picking walk and what it holds at most (units or kilograms).",
+    columns: [
+      { label: "Place", get: (o) => s(o.location) }, { label: "Bin", get: (o) => s(o.id) }, { label: "Storage type", get: (o) => s(o.storage_type) },
+      { label: "Walk", get: (o) => o.walk as number, num: true }, { label: "Most units", get: (o) => o.max_qty as number, num: true },
+      { label: "Most kg", get: (o) => o.max_kg as number, num: true }, { label: "Kept for", get: (o) => s(o.product) },
+      { label: "Blocked", get: (o) => (o.blocked ? "yes" : "") },
+    ],
+  },
+  {
+    key: "putaway_rules", label: "Put-away rules", singular: "put-away rule", defName: "PutawayRule", issueType: "putaway_rule",
+    group: "Execution", keyOf: (o) => `${s(o.location)}/${s(o.product) || "*"}`,
+    blurb: "Which storage types a product goes to, in order. The rule without a product holds for every product without one of its own.",
+    columns: [
+      { label: "Place", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) || "every other" },
+      { label: "Storage types, in order", get: (o) => ((o.storage_types as string[]) ?? []).join(" → ") },
     ],
   },
   {

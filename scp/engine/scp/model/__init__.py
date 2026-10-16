@@ -32,9 +32,11 @@ from .master import (
     OrderStock, ProductionSource, PurchasingSource, Resource, SafetyStockPolicy, Settings, Shift, Subcontract, TransportLane,
     UomConversion,
 )
+from .warehouse import Bin, Putaway, PutawayRule, StorageType, TaskKind, Wave, WarehouseTask
 from .transactional import DemandRecord, Reservation, SalesHistory, ConfirmedDelivery, ScheduledReceipt
 
 __all__ = [
+    "Bin", "Putaway", "PutawayRule", "StorageType", "TaskKind", "Wave", "WarehouseTask",
     "Budget",
     "Customer", "Delivery", "DeliveryLine", "Invoice", "InvoiceLine", "PaymentTerms", "Payment", "QuoteLine",
     "Quotation", "ReturnOrder", "SalesOrder", "SalesSettings",

@@ -79,6 +79,7 @@ RULES: dict[str, tuple[Severity, str]] = {
     "NEGATIVE_STOCK": ("warning", "The movement journal takes stock below zero"),
     "STOCK_EXPIRED": ("warning", "Stock in batches past their expiry date"),
     "BATCH_UNKNOWN": ("warning", "Goods movement in a batch with no batch record"),
+    "WH_MISFIT": ("warning", "Warehouse records that do not fit together (bins, storage types, rules, tasks)"),
     "REVERSAL_UNKNOWN": ("warning", "Reversal of a movement that is not in the journal"),
     "SERIALS_COUNT": ("warning", "Serial numbers that do not match the quantity"),
     "COLD_CHAIN_LANE": ("warning", "Chilled product on a route without refrigeration"),
@@ -119,6 +120,7 @@ def validate(ds: Dataset) -> list[Issue]:
     _forecasting(ds, c)
     _graph(ds, c)
     _movements(ds, c)
+    _warehouse(ds, c)
     order = {"error": 0, "warning": 1}
     c.issues.sort(key=lambda i: (order[i.severity], i.code, i.object_type, i.object_id))
     return c.issues
@@ -147,6 +149,7 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "purchasing_source": ds.purchasing_sources, "lane": ds.lanes, "receipt": ds.receipts,
         "movement": ds.movements, "capacity_option": ds.finance.capacity_options,
         "purchase_order": ds.purchase_orders, "inventory_doc": ds.inventory_docs, "mrp_group": ds.mrp_groups,
+        "warehouse_task": ds.warehouse_tasks, "wave": ds.waves,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
@@ -156,6 +159,15 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         if n > 1:
             c.add("DUP_ID", "batch", f"{prod}/{bid}", f"batch {bid} of {prod} is kept {n} times",
                   "A batch number is unique per product")
+    for typ, items in (("storage_type", ds.storage_types), ("bin", ds.bins)):
+        for (loc, oid), n in Counter((x.location, x.id) for x in items).items():
+            if n > 1:
+                c.add("DUP_ID", typ, f"{loc}/{oid}", f"{typ.replace('_', ' ')} {oid} at {loc} is kept {n} times",
+                      "A code is unique per place")
+    for (loc, prod), n in Counter((r.location, r.product) for r in ds.putaway_rules).items():
+        if n > 1:
+            c.add("DUP_ID", "putaway_rule", f"{loc}/{prod or '*'}",
+                  f"{prod or 'every other product'} has {n} put-away rules at {loc}", "Keep one rule per product")
     for sup, n in Counter(v.supplier for v in ds.vendors).items():
         if n > 1:
             c.add("DUP_ID", "vendor", sup, f"supplier '{sup}' has {n} purchasing records; the first is used",
@@ -876,3 +888,44 @@ def _movements(ds: Dataset, c: _Collector) -> None:
     for mid in unmatched(ds):
         c.add("MOVEMENT_REF_UNKNOWN", "movement", mid, "The reference matches no receipt, sales order or closed order",
               "Fix the reference, or leave it empty for an unplanned movement", "reference")
+
+
+def _warehouse(ds: Dataset, c: _Collector) -> None:
+    """Storage types, bins, put-away rules and warehouse tasks (Enterprise 6.1): their places and products must exist
+    (errors, as for any record); what does not fit together inside a warehouse is a warning, for planning never
+    reads it."""
+    types: set[tuple[str, str]] = set()
+    for t in ds.storage_types:
+        oid = f"{t.location}/{t.id}"
+        if _ref(ds, c, "location", t.location, "storage_type", oid, "location"):
+            _loc_type(ds, c, t.location, STOCKING_LOCATION_TYPES, "storage_type", oid, "location",
+                      "bins are inside plants and warehouses")
+        types.add((t.location, t.id))
+    bins = {(b.location, b.id) for b in ds.bins}
+    for b in ds.bins:
+        oid = f"{b.location}/{b.id}"
+        _ref(ds, c, "location", b.location, "bin", oid, "location")
+        _ref(ds, c, "product", b.product, "bin", oid, "product")
+        if (b.location, b.storage_type) not in types:
+            c.add("WH_MISFIT", "bin", oid, f"bin {b.id} is in storage type {b.storage_type}, which {b.location} does "
+                  "not have", "Create the storage type, or pick one of the place's", "storage_type")
+    for r in ds.putaway_rules:
+        oid = f"{r.location}/{r.product or '*'}"
+        _ref(ds, c, "location", r.location, "putaway_rule", oid, "location")
+        _ref(ds, c, "product", r.product or None, "putaway_rule", oid, "product")
+        for st in r.storage_types:
+            if (r.location, st) not in types:
+                c.add("WH_MISFIT", "putaway_rule", oid, f"the rule names storage type {st}, which {r.location} does "
+                      "not have", "Create it, or take it off the rule", "storage_types")
+    for k in ds.warehouse_tasks:
+        _ref(ds, c, "location", k.location, "warehouse_task", k.id, "location")
+        _ref(ds, c, "product", k.product, "warehouse_task", k.id, "product")
+        for f in ("from_bin", "to_bin"):
+            v = getattr(k, f)
+            if v and k.status == "open" and (k.location, v) not in bins:
+                c.add("WH_MISFIT", "warehouse_task", k.id, f"{f.replace('_', ' ')} {v} is not a bin at {k.location}",
+                      "Cancel the task, or create the bin", f)
+    for m in ds.movements:
+        if m.bin and (m.location, m.bin) not in bins:
+            c.add("WH_MISFIT", "movement", m.id, f"bin {m.bin} is not a bin at {m.location}: its stock is shown "
+                  "there all the same", "Create the bin again, or move the stock out of it", "bin")

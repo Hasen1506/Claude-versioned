@@ -16,6 +16,7 @@ from .actuals import AccuracyRecord, Batch, ClosedOrder, ExecutionSettings, Good
 from .common import LocationType, Model
 from .finance import FinanceSettings
 from .tower import TowerSettings
+from .warehouse import Bin, PutawayRule, StorageType, Wave, WarehouseTask
 from .demand import DemandEvent, ForecastOverride, ForecastSettings, ForecastSnapshot, NpiRule
 from .inventory import InventorySettings
 from .purchasing import (
@@ -81,6 +82,11 @@ class Dataset(Model):
     movements: list[GoodsMovement] = Field(default_factory=list)
     batches: list[Batch] = Field(default_factory=list)
     inventory_docs: list[InventoryDoc] = Field(default_factory=list)
+    storage_types: list[StorageType] = Field(default_factory=list)
+    bins: list[Bin] = Field(default_factory=list)
+    putaway_rules: list[PutawayRule] = Field(default_factory=list)
+    warehouse_tasks: list[WarehouseTask] = Field(default_factory=list)
+    waves: list[Wave] = Field(default_factory=list)
     closed_orders: list[ClosedOrder] = Field(default_factory=list)
     accuracy: list[AccuracyRecord] = Field(default_factory=list)
     rolled_weeks: list[RolledWeek] = Field(default_factory=list)

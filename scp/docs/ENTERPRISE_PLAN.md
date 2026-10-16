@@ -69,6 +69,9 @@ safety stock phased in over weeks, the engine's money format and sizes planned f
 | 5.3 | What-if smaller than the leaders' | Sweep one chip (cost against service), stored versions as columns, money at risk over time |
 
 ## Phase 6: Warehouse and transport (EWM and TM, small)
+Done: 6.1 (N281–N288; counts by bin, staging for production, a camera reader for every phone and replenishment of
+picking bins, open).
+
 | # | Gap (guide §) | Build |
 |---|---|---|
 | 6.1 | No bins (§12.2–12.3) | Storage types and bins, put-away rules, pick lists by bin and waves, a phone page that reads a barcode |

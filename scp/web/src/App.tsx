@@ -16,6 +16,8 @@ const Demand = lazy(() => import("./pages/Demand").then((m) => ({ default: m.Dem
 const Buying = lazy(() => import("./pages/Buying").then((m) => ({ default: m.Buying })));
 const Selling = lazy(() => import("./pages/Selling").then((m) => ({ default: m.Selling })));
 const Execution = lazy(() => import("./pages/Execution").then((m) => ({ default: m.Execution })));
+const Warehouse = lazy(() => import("./pages/Warehouse").then((m) => ({ default: m.Warehouse })));
+const Scan = lazy(() => import("./pages/Scan").then((m) => ({ default: m.Scan })));
 const Finance = lazy(() => import("./pages/Finance").then((m) => ({ default: m.Finance })));
 const Tower = lazy(() => import("./pages/Tower").then((m) => ({ default: m.Tower })));
 const Versions = lazy(() => import("./pages/Versions").then((m) => ({ default: m.Versions })));
@@ -103,6 +105,8 @@ export function App() {
           : page === "schedule" ? <Schedule route={route} />
           : page === "promise" ? <Promising route={route} />
           : page === "execution" ? <Execution route={route} />
+          : page === "warehouse" ? <Warehouse route={route} />
+          : page === "scan" ? <Scan route={route} />
           : page === "buying" ? <Buying route={route} />
           : page === "selling" ? <Selling route={route} />
           : page === "finance" ? <Finance route={route} />
