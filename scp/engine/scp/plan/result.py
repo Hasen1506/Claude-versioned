@@ -199,3 +199,6 @@ class PlanResult(Out):
     exceptions: list[PlanException] = Field(default_factory=list)
     kpis: Kpis = Field(default_factory=Kpis)
     issues: list[Issue] = Field(default_factory=list)
+    # planned again from the previous plan's work (S/4 net change planning): the nodes the changes since reached, which
+    # were planned; the rest were kept as they were. None: planned from scratch
+    planned_again: int | None = None

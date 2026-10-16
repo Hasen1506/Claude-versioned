@@ -58,6 +58,8 @@ the spread on transfers and production, open). Phase 4 is done.
 | 4.4 | One demand number (no spread) | P90 demand and promise against it; measured supplier lead-time deviation fed into safety stock |
 
 ## Phase 5: Speed and an assistant
+Done: 5.1 (N255–N261; capacity-constrained plans and co-products planned whole, open).
+
 | # | Gap | Build |
 |---|---|---|
 | 5.1 | 66–78 s supply plan at 5,000 × 20 | Incremental planning: re-plan only the parts of the network a change reaches (by low-level code and component), cache the rest; target under 15 s for a single change |

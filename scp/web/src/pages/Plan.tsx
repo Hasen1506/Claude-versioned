@@ -16,6 +16,12 @@ const partOnTime = (o: PlannedOrder) => (o.projected_on_time_qty ?? 0) > 1e-9 &&
 
 type View = "overview" | "node" | "capacity" | "orders";
 
+/** How the plan was made when it was planned from the previous plan's work (S/4 net change planning). */
+export function againWords(planned: number, nodes: number): string {
+  if (planned === 0) return "Nothing the plan reads had changed since the last plan, so it stands as it was.";
+  return `Only what the changes since the last plan reached was planned again: ${qty(planned)} of ${qty(nodes)} products at their places; the rest stand as they were.`;
+}
+
 export function Plan({ route }: { route: string[] }) {
   const run = useStore((s) => s.runs.plan);
   const plan = run.data;
@@ -30,7 +36,8 @@ export function Plan({ route }: { route: string[] }) {
         supply, level by level through the bills of material and transport lanes (low-level-code order), then lot-sized, sourced
         and scheduled on working days. Every order is linked to the demand it serves (<Term t="Pegging">pegging</Term>).</>}
       answer={plan && <>{pct(plan.kpis.on_time_fill_rate)} of demand is covered on time, with {qty((plan.kpis.orders_make ?? 0) + (plan.kpis.orders_buy ?? 0) + (plan.kpis.orders_transfer ?? 0))} orders
-        to make, buy and move costing {money(plan.kpis.total_cost, plan.currency)} over {plural(plan.buckets.length, "week")}.</>}
+        to make, buy and move costing {money(plan.kpis.total_cost, plan.currency)} over {plural(plan.buckets.length, "week")}.
+        {plan.planned_again != null && <span className="again"> {againWords(plan.planned_again, plan.nodes.length)}</span>}</>}
       right={<>
       {plan && <Provenance kind="solved" at={run.at} stale={stale} />}
       <RunButton running={run.running} has={!!plan} onClick={() => store.run("plan")} disabled={blocking} /></>} />

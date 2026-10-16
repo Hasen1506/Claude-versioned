@@ -86,6 +86,10 @@ def change(d: dict, rng: random.Random) -> str:
     return f"{coll}.{'.'.join(map(str, path))}: {old!r} -> {holder[path[-1]]!r}"
 
 
+def text(plan) -> str:
+    return plan.model_dump_json(exclude={"planned_again"})
+
+
 def full(d: dict):
     return plan_again(Dataset.model_validate(d), None)
 
@@ -115,7 +119,7 @@ def check(d0: dict, seed: int, steps: int) -> int:
         ds = Dataset.model_validate(d)
         inc, k2 = plan_again(ds, kept)
         ref, _ = plan_again(Dataset.model_validate(d), None)
-        same = inc.model_dump_json() == ref.model_dump_json()    # (a bool: no diff of two long texts)
+        same = text(inc) == text(ref)    # (a bool: no diff of two long texts)
         assert same, what
         reused += bool(k2 and k2.reused)
         kept = k2
@@ -138,7 +142,8 @@ def again_equals_scratch(before: dict, after: dict) -> int:
     nodes were planned again."""
     _, kept = full(before)
     inc, k2 = plan_again(Dataset.model_validate(after), kept)
-    same = inc.model_dump_json() == full(after)[0].model_dump_json()
+    same = text(inc) == text(full(after)[0])
+    assert inc.planned_again == (k2.planned if k2.reused else None)
     assert same, "planned again differs from planned from scratch"
     return k2.planned
 
@@ -182,6 +187,23 @@ def test_a_forecast_change_replans_its_node_and_what_it_draws_on_only():
     planned = again_equals_scratch(d, after)
     nodes = len(full(after)[0].nodes)
     assert 0 < planned < nodes / 2
+
+
+def test_an_order_the_change_does_not_reach_keeps_its_number():
+    """The usability log's case: 6,000 more heater elements at Pune. The heaters and the part they go into are planned
+    again; one requisition for heaters is no longer needed, and every other order keeps its number, as planned orders
+    are numbered by their product at its place, not in one sequence over the network."""
+    d = example_dict("kitchenware_network")
+    after = copy.deepcopy(d)
+    next(x for x in after["location_products"]
+         if (x["location"], x["product"]) == ("PLT-PUNE", "RM-HEATER"))["on_hand"] = 20000
+    assert again_equals_scratch(d, after) == 2
+    was = {o.id: o for o in full(d)[0].orders}
+    now = {o.id: o for o in full(after)[0].orders}
+    assert sorted(set(was) - set(now)) == ["PR-0025-03"] and set(now) <= set(was)
+    gone = was["PR-0025-03"]
+    assert (gone.product, gone.location) == ("RM-HEATER", "PLT-PUNE")
+    assert all(now[k].product == o.product and now[k].location == o.location for k, o in was.items() if k in now)
 
 
 def test_a_make_to_order_plant_follows_the_order_its_shipment_now_serves():

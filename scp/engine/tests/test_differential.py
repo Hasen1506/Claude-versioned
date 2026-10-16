@@ -148,6 +148,29 @@ INTENTIONAL += [
       _engine_passage(_PIPE, "total_final=sum(", "\n\n"))),
 ]
 
+# ENTERPRISE_PLAN 5.1: a plan made from the previous plan's work says how many nodes it planned (None from scratch, as
+# here: the two engines plan each company from scratch)
+INTENTIONAL += [
+    ("Planning again: the plan says how many nodes it planned again", "scp/plan/result.py",
+     ("    issues: list[Issue] = Field(default_factory=list)\n",
+      _engine_passage("scp/plan/result.py", "    issues: list[Issue] = Field(default_factory=list)\n",
+                      "    planned_again: int | None = None\n") + "    planned_again: int | None = None\n")),
+]
+
+# Planned order numbers by the product at its place, so that a node planned again as before keeps its numbers
+INTENTIONAL += [
+    ("Planning again: a planned order's number names its product at its place", "scp/plan/mrp.py",
+     ('    def _next_id(self, kind: str) -> str:\n        self.counters[kind] += 1\n'
+      '        return f"{_PREFIX[kind]}-{self.counters[kind]:05d}"\n',
+      '    def _next_id(self, kind: str, node: Node) -> str:\n'
+      '        if not hasattr(self, "_node_no"):\n'
+      '            self._node_no = {n: i for i, n in enumerate(self.g.order, 1)}\n'
+      '        self.counters[(node, kind)] += 1\n'
+      '        return f"{_PREFIX[kind]}-{self._node_no[node]:04d}-{self.counters[(node, kind)]:02d}"\n')),
+    ("Planning again: the order's node is passed for its number", "scp/plan/mrp.py",
+     ("        oid = self._next_id(opt.kind)\n", "        oid = self._next_id(opt.kind, node)\n")),
+]
+
 
 def _git(*args: str, cwd: Path = ENGINE) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, timeout=120)

@@ -269,7 +269,8 @@ warehouses; 11,635 planning policies), two years of weekly sales history (624,00
 | Opening the company in the browser | 1.4 s | |
 | Reading the company (once per save, and once per set of unsaved changes) | 3.6 s | 1.4 GB |
 | Data checks and network view (after each change) | 7 s each | 2.1 GB |
-| Supply plan | 66–78 s | 5.5 GB |
+| Supply plan | 89–97 s | 5.5 GB |
+| Supply plan again after a change (only the products at places the change reaches) | 12–14 s | |
 | Forecast (6,000 series, 4 cores; after a change, only series whose history changed) | 136 s | 6.1 GB |
 | Promising (the plan is kept, not made again) | 3 s | |
 | Safety stock | 11 s | |
@@ -283,7 +284,8 @@ warehouses; 11,635 planning policies), two years of weekly sales history (624,00
 
 *Plan everything* takes about five and a half minutes the first time for a company that size, and seconds when asked
 again for the same data: the server keeps every answer beside the company it was worked out on. After a change, the
-steps are worked out again (the forecast only for the series whose history changed). In the browser every page opens
+steps are worked out again (the supply plan only for the products at places the change reaches, from the last
+plan's work the server process keeps; the forecast only for the series whose history changed). In the browser every page opens
 within five seconds with under a gigabyte of memory. `engine/scripts/scale.py` measures your own machine
 (`python scripts/scale.py --products 1000`).
 

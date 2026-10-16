@@ -320,8 +320,8 @@ test("scheduling: schedule → select order → resequence → reset → edit se
   await expect(page.locator(".gantt svg g[data-order]").first()).toBeVisible();
 
   // follow an order across resources, then push it one place later on its first resource
-  await page.locator('.gantt svg g[data-order="MO-00024"]').first().dispatchEvent("click");
-  await expect(page.getByText("MO-00024 · Mixer grinder 500 W")).toBeVisible();
+  await page.locator('.gantt svg g[data-order="MO-0017-01"]').first().dispatchEvent("click");
+  await expect(page.getByText("MO-0017-01 · Mixer grinder 500 W")).toBeVisible();
   await page.getByRole("button", { name: "later ▶" }).first().click();
   // exact: the banner's fallback line ("…re-timed with your sequence") can show for a render before the move's own
   // sentence replaces it, and a substring match then finds two elements
@@ -365,8 +365,8 @@ test("scheduling: a step moved while a recalculation is in flight is not overwri
   await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(page.getByRole("button", { name: "Calculating…" })).toBeVisible();
 
-  await page.locator('.gantt svg g[data-order="MO-00024"]').first().dispatchEvent("click");
-  await expect(page.getByText("MO-00024 · Mixer grinder 500 W")).toBeVisible();
+  await page.locator('.gantt svg g[data-order="MO-0017-01"]').first().dispatchEvent("click");
+  await expect(page.getByText("MO-0017-01 · Mixer grinder 500 W")).toBeVisible();
   const moved = page.waitForResponse((r) => r.url().endsWith("/api/schedule") && r.request().method() === "POST");
   await page.getByRole("button", { name: "later ▶" }).first().click();
   await moved;
@@ -526,7 +526,7 @@ test("execution: journal → stock in sync → ship → roll forward → accurac
   await page.getByRole("button", { name: /^Make \d+ orders? firm$/ }).click();
   await expect(page.getByText(/planned orders firmed/)).toBeVisible();
   await expect(page.locator("td b", { hasText: /^PRD-\d{5}$/ }).first()).toBeVisible();
-  await expect(page.getByText(/^was MO-\d{5}$/).first()).toBeVisible();     // the planned number it came from (Q22)
+  await expect(page.getByText(/^was MO-\d{4}-\d{2}$/).first()).toBeVisible();     // the planned number it came from (Q22)
 });
 
 test("posting: count stock → firm → ship and receive a transfer → confirm production with its parts → a late posting is offered", async ({ page }) => {

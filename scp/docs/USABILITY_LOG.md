@@ -833,6 +833,39 @@ on the Buying page. Small companies in the engine tests cover the arithmetic.
 | N253 | A supplier late on average (Shenzhen, a day) shows its mean delay but it is not offered as a longer lead time. | Minor | By design: the page says a mean delay needs a longer lead time and leaves the choice to the buyer. |
 | N254 | A line delivered in parts is measured from its last receipt, when it was there in full. | Minor | By design: that is when the plan had it. |
 
+### 5.1: Planning again only what a change reaches
+
+ENTERPRISE_PLAN 5.1, in a browser on the Kaveri Kitchenware example and through the engine on the generated company
+of 5,000 products at 20 places (DEPLOY.md §5). Every plan keeps its work, product by product at each place; the next
+plan replays a node whose data, and whatever its consumers hand it, are as they were, and plans the rest (S/4 net
+change planning). The plan made that way is the plan made from scratch, byte for byte: over the six examples and 24
+random networks with random changes, and in the size test.
+
+* *Input:* on Data, Pune plant's heater elements on hand from 14,000 to 20,000. *Processing:* the heaters at Pune and
+  the part they go into are planned again; nothing else reads them. *Output:* the Plan page reads "⚠ Out of date",
+  then after *Recalculate* "Only what the changes since the last plan reached was planned again: 2 of 29 products at
+  their places; the rest stand as they were." One requisition for heaters (PR-0025-03) is no longer needed; every
+  other order keeps its number. Planning again with nothing changed says the plan stands as it was.
+* *At 5,000 × 20* (11,635 products at places; a plan from scratch takes 89–97 s): a forecast raised by half at
+  one warehouse is planned again in 13.5 s, the stock of one product at a warehouse set to nothing in 11.9 s, the lead
+  time of one bought part in 13.1 s; each the same plan as from scratch. What is left is reading the company: the data
+  checks, each product's inputs, and comparing them with the last plan's. Keeping the work makes a plan from scratch
+  about 7 % slower (86.7 s of planning before, 92.9 s now).
+* *What is planned whole* (the previous plan's work is not used): capacity-constrained planning and co-products,
+  where products share machines or one product's orders make another's stock; and a change everything reads
+  (settings, calendars, places, machines, suppliers, MRP groups, purchasing, scheduling and inventory settings,
+  contracts), or a product or place added or taken away.
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N255 | At 5,000 × 20 the data checks rebuilt the list of product families for every reference they checked, which grew with the square of the company: a plan from scratch took 590 s, 500 of them in the checks. | Major | **Fixed:** each check builds only the list it reads. |
+| N256 | Planned orders were numbered in one sequence over the whole network, so one requisition fewer renumbered every order planned after it: a stock change at one warehouse took 68 s, most of it renaming orders in work that had not changed. | Major | **Fixed:** a planned order is numbered by its product at its place, then in turn there (PR-0025-03), so a product planned as before keeps its numbers whatever changes elsewhere. The old engine numbered that way gives the same plans (differential test). |
+| N257 | Planned numbers are longer (PR-0025-03, not PR-00042); the schedule board labels orders "17-01". | Cosmetic | By design: the first part is the product at its place, the same in every plan. |
+| N258 | Capacity-constrained plans and plans with co-products are always planned whole. | Minor | Open: machines and suppliers shared between products would need planning again together. |
+| N259 | Deleting a demand line without an id renumbers the lines after it ("#12" becomes "#11"), so their products are planned again although nothing about them changed. | Minor | Open: the plan is right, only slower. |
+| N260 | The server keeps the last plan's work beside it, one company per server process: planning another company plans from scratch and replaces it. | Minor | By design: one plan's work per process; its memory is part of the plan's peak in DEPLOY.md §5. |
+| N261 | The first change after a plan of 5,000 products took 21 s, not 13: Python's collector looked through the gigabytes of kept work for cycles. | Minor | **Fixed:** the collector waits while a plan is made again from kept work. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

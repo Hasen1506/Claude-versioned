@@ -481,9 +481,9 @@ def test_fence_and_goods_receipt_time_count_working_days_when_the_company_says_s
     d = buy(lt=1, workdays=WEEKDAYS, planning_time_fence_days=5)
     dem(d, "2026-01-07", 10)
     shift = lambda res: [e.message for e in res.exceptions if e.code == "FENCE_SHIFT"]  # noqa: E731
-    assert shift(plan(d)) == ["PR-00001 moved to the planning time fence end 2026-01-10"]
+    assert shift(plan(d)) == ["PR-0001-01 moved to the planning time fence end 2026-01-10"]
     d["settings"]["working_day_fences"] = True
-    assert shift(plan(d)) == ["PR-00001 moved to the planning time fence end 2026-01-12"]
+    assert shift(plan(d)) == ["PR-0001-01 moved to the planning time fence end 2026-01-12"]
 
     d = promising(buy(lt=30, workdays=WEEKDAYS, gr_processing_days=2))
     rec(d, "2026-01-09", 50)
@@ -665,10 +665,10 @@ def test_a_firm_order_bought_for_one_sales_order_is_not_taken_by_another():
     the earlier order SO-2 (expedite it 2 days) and SO-1 gets a new requisition; bought for SO-1 it stays with SO-1,
     the plan buys for SO-2 instead, and that requisition is marked for SO-2 so it is firmed for it."""
     free = plan(made_to_order(False))
-    assert {(p.supply_id, p.requirement_id) for p in free.pegs} == {("PO-1", "D:SO-2"), ("PR-00001", "D:SO-1")}
+    assert {(p.supply_id, p.requirement_id) for p in free.pegs} == {("PO-1", "D:SO-2"), ("PR-0001-01", "D:SO-1")}
     assert "RESCHEDULE_IN" in codes(free)
     held = plan(made_to_order(True))
-    assert {(p.supply_id, p.requirement_id) for p in held.pegs} == {("PO-1", "D:SO-1"), ("PR-00001", "D:SO-2")}
+    assert {(p.supply_id, p.requirement_id) for p in held.pegs} == {("PO-1", "D:SO-1"), ("PR-0001-01", "D:SO-2")}
     [o] = orders(held)
     assert (o.need_date.isoformat(), o.qty, o.sales_order) == ("2026-01-12", 50, "SO-2")
     assert "RESCHEDULE_IN" not in codes(held)

@@ -30,6 +30,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from itertools import accumulate
 import dataclasses
+import gc
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, TypeVar
@@ -93,8 +94,6 @@ class _NodeMemo:
     """One node's planning, as the next plan replays it when nothing it reads has changed."""
     key: tuple                             # everything the node reads of the data (see ``_Planner._key``)
     incoming: list[tuple[Node, Any]]       # what planned consumers handed it before it was planned, in order
-    counters_in: dict[str, int]            # order numbers in use when it was planned
-    created: dict[str, int]                # orders of each kind it made
     fx: list[tuple]                        # what it did beyond its own state, in order
     st: _NodeState                         # its state once planned
     orders: list[PlannedOrder]
@@ -197,7 +196,8 @@ class _Planner:
         self.state: dict[Node, _NodeState] = {}
         self.pegs: list[Peg] = []
         self.exceptions: list[PlanException] = []
-        self.counters: dict[str, int] = defaultdict(int)
+        self.counters: dict[tuple[Node, str], int] = defaultdict(int)   # orders of each kind made at each node
+        self._node_no = {n: i for i, n in enumerate(g.order, 1)}         # its number in planned order numbers
         self.quota_alloc: dict[tuple[Node, str], float] = defaultdict(float)
         self.res_daily: dict[str, dict[date, float]] = defaultdict(lambda: defaultdict(float))
         self.res_orders: dict[str, dict[tuple[str, str, bool], dict[date, float]]] = defaultdict(dict)
@@ -1140,9 +1140,11 @@ class _Planner:
         return valid[0]
 
     # ------------------------------------------------------------------ orders
-    def _next_id(self, kind: str) -> str:
-        self.counters[kind] += 1
-        return f"{_PREFIX[kind]}-{self.counters[kind]:05d}"
+    def _next_id(self, kind: str, node: Node) -> str:
+        """A planned order's number: the product at its place (by its place in the planning order), then the orders
+        of that kind made there, so that a node planned as before keeps its numbers whatever changes elsewhere."""
+        self.counters[(node, kind)] += 1
+        return f"{_PREFIX[kind]}-{self._node_no[node]:04d}-{self.counters[(node, kind)]:02d}"
 
     def _create_order(self, node: Node, st: _NodeState, opt: SupplyOption, qty: float, need: date) -> None:
         ds = self.ds
@@ -1161,7 +1163,7 @@ class _Planner:
         if opt.kind == "make" and self.s.capacity_constrained:
             sch, placed = self._fit(opt, qty, target, sch)
             past = past and sch.start_date <= self.start
-        oid = self._next_id(opt.kind)
+        oid = self._next_id(opt.kind, node)
         loc, prod = node
         origin = None
         if opt.kind == "transfer":
@@ -1536,7 +1538,6 @@ class _Planner:
     def _plan(self, node: Node) -> None:
         self._cur, fx = node, []
         self._fx = fx
-        before = dict(self.counters)
         came = list(self.incoming.get(node, ()))
         p0, o0 = len(self.pegs), len(self.orders)
         self.seed(node)
@@ -1549,25 +1550,22 @@ class _Planner:
         reads_up = (bool(st.fixed) or any(sp.segment is not None for sp in st.supplies)
                     or st.lp.strategy is Strategy.MTO or st.lp.direct_production)
         self.memo[node] = _NodeMemo(
-            key=self._key(node), incoming=came, counters_in=before,
-            created={k: n - before.get(k, 0) for k, n in self.counters.items() if n != before.get(k, 0)},
-            fx=fx, st=st, orders=self.orders[o0:], pegs=self.pegs[p0:],
+            key=self._key(node), incoming=came, fx=fx, st=st, orders=self.orders[o0:], pegs=self.pegs[p0:],
             quota=[(k, self.quota_alloc[k]) for o in self.g.options.get(node, ())
                    if (k := (node, o.source_id)) in self.quota_alloc],
             lot_cost=self._lot_costs.get(node), reads_up=reads_up)
 
     def _clean(self, node: Node, m: _NodeMemo) -> bool:
-        """The node reads nothing that changed since the previous plan: the same data, the same requirements and
-        co-products from its consumers, the same order numbers free, and (where its plan reads its consumers'
-        plans) consumers that were not planned again."""
+        """Whether the node reads nothing that changed since the previous plan: the same data, the same requirements
+        and co-products from its consumers and (where its plan reads its consumers' plans) consumers that were not
+        planned again. Its order numbers are its own (see ``_next_id``), so it makes the same orders by the same
+        numbers whatever other nodes now make."""
         came = self.incoming.get(node, [])
         if len(came) != len(m.incoming):
             return False
         for (who, a), (was, b) in zip(came, m.incoming, strict=True):
             if a is not b and (who != was or a != b):
                 return False
-        if any(self.counters.get(k, 0) != m.counters_in.get(k, 0) for k in m.created):
-            return False
         if m.reads_up and any(who in self.touched for who, _ in came):
             return False
         return m.key == self._key(node)
@@ -1600,8 +1598,6 @@ class _Planner:
                 self._add_load(e[1], e[2], e[3])
             else:   # _FLOW
                 (self.lane_load if e[1] else self.supplier_load)[e[2]][e[3]] += e[4]
-        for k, n in m.created.items():
-            self.counters[k] += n
         for k, v in m.quota:
             self.quota_alloc[k] = v
         if m.lot_cost is not None:
@@ -2149,7 +2145,8 @@ _KEEP_AFTER_S = 2.0
 T = TypeVar("T")
 _last: tuple[str, PlanResult, dict[str, Any]] | None = None
 _last_lock = threading.Lock()
-# and its work, node by node, so that after a change only what the change reaches is planned again
+# and the last plan's work, node by node, so that after a change only what the change reaches is planned again (any
+# company: the next plan of another company finds its data different and plans from scratch)
 _kept: Kept | None = None
 
 
@@ -2177,9 +2174,10 @@ def run_mrp(ds: Dataset) -> PlanResult:
                 return _last[1]
     t = time.perf_counter()
     res, kept = plan_again(ds, _kept)
-    if time.perf_counter() - t >= _KEEP_AFTER_S or (kept is not None and kept.reused):
-        with _last_lock:
+    with _last_lock:
+        if time.perf_counter() - t >= _KEEP_AFTER_S:
             _last = (key or _fingerprint(ds), res, {})
+        if kept is not None:
             _kept = kept
     return res
 
@@ -2229,15 +2227,28 @@ def plan_again(ds: Dataset, kept: Kept | None) -> tuple[PlanResult, Kept | None]
     gkey = _global_key(ds) if replay else ()
     use = (kept if replay and kept is not None and kept.gkey == gkey and kept.order == g.order
            and kept.llc == g.llc else None)
+    # the collector would look through every object the kept work holds (gigabytes for a large company) to find the
+    # few cycles a plan again makes: not while planning again
+    pause = use is not None and gc.isenabled()
+    if pause:
+        gc.disable()
     try:
         p = _Planner(ds, g, use)
         p.run()
         res = p.result()
     except _NotIncremental:
+        if pause:                            # planning everything: as any plan from scratch
+            gc.enable()
+            pause = False
         p = _Planner(ds, g)
         p.run()
         res = p.result()
+    finally:
+        if pause:
+            gc.enable()
     res.issues = issues
+    if p.kept is not None:
+        res.planned_again = len(p.touched)
     _open_later(ds, res)
     return res, (Kept(gkey, list(g.order), dict(g.llc), p.memo, reused=p.kept is not None, planned=len(p.touched))
                  if replay else None)

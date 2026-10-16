@@ -8973,6 +8973,8 @@ export interface components {
             kpis: components["schemas"]["Kpis"];
             /** Issues */
             issues: components["schemas"]["Issue"][];
+            /** Planned Again */
+            planned_again: number | null;
         };
         /** PlanSummary */
         PlanSummary: {
