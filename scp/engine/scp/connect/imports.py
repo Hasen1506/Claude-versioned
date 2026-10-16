@@ -90,8 +90,9 @@ def kinds() -> list[str]:
 
 class Paging(Model):
     """How a web API gives its records page by page."""
-    mode: Literal["next", "page"] = Field("next", description="next: each answer names the next page's address; "
-                                                              "page: pages are numbered")
+    mode: Literal["next", "page", "link"] = Field("next", description="next: each answer names the next page's "
+                                                                      "address; page: pages are numbered; link: "
+                                                                      "the answer's Link header names it (rel=next)")
     next: str = Field("", max_length=200, description="next: the path in the answer to the next page's address "
                                                       "(links.next, @odata.nextLink); page: the path to a flag that "
                                                       "more pages follow (page_context.has_more_page); empty: until "
@@ -107,16 +108,19 @@ SINCE = "{since}"
 class JobInput(Model):
     name: str = Field(min_length=1, max_length=60)
     kind: str = Field(description="orders, stock, postings or records:<list>")
-    source_type: Literal["url", "folder", "api", "tally", "zoho"]
+    source_type: Literal["url", "folder", "api", "tally", "zoho", "shopify", "odoo"]
     source: str = Field(min_length=1, max_length=500, description="The web address, or the file pattern in the "
                                                                   "folder; {since} in an address is the time the last "
                                                                   "good run started (only what changed since); Tally: "
                                                                   "its address (http://tally-pc:9000); Zoho: the "
-                                                                  "organisation ID")
-    app: AppSettings | None = Field(None, description="Tally or Zoho: what the connector needs beyond its source")
+                                                                  "organisation ID; Shopify: the shop "
+                                                                  "(my-shop.myshopify.com); Odoo: its address")
+    app: AppSettings | None = Field(None, description="Tally, Zoho, Shopify or Odoo: what the connector needs beyond "
+                                                      "its source")
     secrets: dict[str, str] | None = Field(None, description="Zoho: client_id, client_secret and refresh_token; "
+                                                             "Shopify: access_token; Odoo: login and api_key; "
                                                              "omitted (or a value left empty) keeps the one kept for "
-                                                             "the same organisation")
+                                                             "the same organisation, shop or database")
     mapping: Mapping | None = Field(None, description="Which column or field there fills each field here; none: "
                                                       "columns are recognised by their names")
     paging: Paging | None = Field(None, description="api: how the answer comes page by page")
@@ -160,7 +164,7 @@ class ImportJobs(Out):
     timezone: str
     kinds: list[str]
     fields: dict[str, list[str]] = {}   # the fields a mapping can fill, by kind
-    apps: dict[str, list[str]] = {}     # Tally and Zoho: the kinds each reads (or, send:…, sends)
+    apps: dict[str, list[str]] = {}     # Tally, Zoho, Shopify, Odoo: the kinds each reads (or, send:…, sends)
     secrets: dict[str, list[str]] = {}  # the credentials each keeps
 
 
@@ -233,9 +237,9 @@ def _check(c: Companies, cid: str, body: JobInput) -> None:
         raise CompanyError("pages are read from a web API (from: a web API)", 422)
     if body.source_type == "api" and body.format != "json":
         raise CompanyError("a web API answers in JSON", 422)
-    if body.source_type == "zoho":
+    if body.source_type in ("zoho", "shopify"):
         return
-    if body.source_type in ("url", "api", "tally"):
+    if body.source_type in ("url", "api", "tally", "odoo"):
         u = urlparse(body.source.replace(SINCE, ""))
         if u.scheme not in ("http", "https") or not u.hostname:
             raise CompanyError("a web address starts with https:// (or http://)", 422)
@@ -264,7 +268,7 @@ def _check_app(body: JobInput, secrets: dict[str, str]) -> None:
 
 def _given(body: JobInput) -> dict[str, str] | None:
     """The headers (a web address, Tally) or the credentials (Zoho) sent with a job."""
-    return body.secrets if body.source_type == "zoho" else body.headers
+    return body.secrets if apps.keeps_secrets(body.source_type) else body.headers
 
 
 def _kept(old: Any, body: JobInput) -> dict[str, str]:
@@ -278,17 +282,17 @@ def _kept(old: Any, body: JobInput) -> dict[str, str]:
     if given is None:
         return before
     return {k: (v if v.strip() or k not in before else before[k]) for k, v in given.items()
-            if v.strip() or k in before} if body.source_type == "zoho" else given
+            if v.strip() or k in before} if apps.keeps_secrets(body.source_type) else given
 
 
 def _same(old: Any, body: JobInput) -> bool:
     if old is None or old["source_type"] == "folder" or body.source_type == "folder":
         return False
-    if (old["source_type"] == "zoho") != (body.source_type == "zoho"):
-        return False
-    if body.source_type == "zoho":
+    if apps.keeps_secrets(old["source_type"]) or apps.keeps_secrets(body.source_type):
+        if old["source_type"] != body.source_type:
+            return False
         was = AppSettings.model_validate_json(old["app"]) if old["app"] else AppSettings()
-        return old["source"].strip() == body.source.strip() and was.data_centre == (body.app or AppSettings()).data_centre
+        return bool(apps.module(body.source_type).same(old["source"], was, body.source, body.app or AppSettings()))
     return _origin(old["source"]) == _origin(body.source)
 
 
@@ -760,6 +764,26 @@ fetch: Fetch = _fetch
 Http = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]]
 
 
+class Answer(tuple):
+    """An answer as ``(status, body)``, with its headers (names in lower case)."""
+    headers: dict[str, str]
+
+    def __new__(cls, status: int, body: bytes, headers: dict[str, str] | None = None) -> Answer:
+        t = super().__new__(cls, (status, body))
+        t.headers = {k.lower(): v for k, v in (headers or {}).items()}
+        return t
+
+
+def link_next(answer: Any) -> str | None:
+    """The next page an answer's ``Link`` header names (``<https://…?page_info=x>; rel="next"``)."""
+    header = (getattr(answer, "headers", None) or {}).get("link", "")
+    for part in header.split(","):
+        m = re.match(r'\s*<([^>]+)>\s*;(.*)$', part)
+        if m and re.search(r'rel\s*=\s*"?next"?', m.group(2)):
+            return m.group(1).strip()
+    return None
+
+
 def _http(method: str, url: str, headers: dict[str, str], body: bytes | None = None) -> tuple[int, bytes]:
     """A request a connector makes (ENTERPRISE_PLAN 3.2): to an address a job may read, as :func:`_fetch` is, and
     answered with its status and body (an error's body too: Zoho says why in it)."""
@@ -772,12 +796,12 @@ def _http(method: str, url: str, headers: dict[str, str], body: bytes | None = N
                                          _Redirect)
     try:
         with opener.open(req, timeout=60) as r:
-            status, data = r.status, r.read(MAX_BYTES + 1)
+            status, data, got = r.status, r.read(MAX_BYTES + 1), dict(r.headers.items())
     except urllib.error.HTTPError as e:
-        status, data = e.code, e.read(MAX_BYTES + 1)
+        status, data, got = e.code, e.read(MAX_BYTES + 1), dict(e.headers.items()) if e.headers else {}
     if len(data) > MAX_BYTES:
         raise ValueError(f"the answer is larger than {MAX_BYTES // (1024 * 1024)} MB")
-    return status, data
+    return Answer(status, data, got)
 
 
 #: tests replace this to answer as Tally or Zoho would
@@ -836,7 +860,14 @@ def read_api(job: dict) -> bytes:
     for n in range(1, (paging.max_pages if paging else 1) + 1):
         assert url is not None
         seen.add(url)
-        raw = fetch(url, headers if _origin(url) == origin else {})
+        sent = headers if _origin(url) == origin else {}
+        if paging is not None and paging.mode == "link":
+            answer = http("GET", url, sent, None)
+            status, raw = answer
+            if status >= 400:
+                raise ValueError(f"{url} answered {status}")
+        else:
+            raw = fetch(url, sent)
         size += len(raw)
         if size > MAX_BYTES:
             raise ValueError(f"the pages are larger than {MAX_BYTES // (1024 * 1024)} MB together: read only what "
@@ -846,7 +877,12 @@ def read_api(job: dict) -> bytes:
         out += got
         if paging is None:
             return json.dumps(out).encode()
-        if paging.mode == "next":
+        if paging.mode == "link":
+            nxt = link_next(answer)
+            url = urljoin(url, nxt) if nxt else None
+            if url in seen:
+                url = None
+        elif paging.mode == "next":
             nxt = dig(data, paging.next)
             url = urljoin(url, nxt) if isinstance(nxt, str) and nxt.strip() else None
             if url in seen:
@@ -863,9 +899,9 @@ def read_api(job: dict) -> bytes:
 def _read(job: dict) -> bytes:
     if job["source_type"] in apps.APPS:
         kept = json.loads(job["headers"])
-        zoho = job["source_type"] == "zoho"
-        return apps.module(job["source_type"]).read(job, apps.settings_of(job), kept if zoho else {},
-                                                    {} if zoho else kept)
+        own = apps.keeps_secrets(job["source_type"])
+        return apps.module(job["source_type"]).read(job, apps.settings_of(job), kept if own else {},
+                                                    {} if own else kept)
     if job["source_type"] == "api":
         return read_api(job)
     return fetch(since(job["source"], job["cursor"]), json.loads(job["headers"]))

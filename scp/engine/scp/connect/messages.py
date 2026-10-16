@@ -86,7 +86,8 @@ def _summary(kind: str, items: list[ItemResult]) -> str:
     words = {"applied": "taken", "unchanged": "as here already", "duplicate": "sent before", "refused": "refused"}
     bits = [f"{v} {words[k]}" for k, v in n.items() if v]
     what = kind.replace("records:", "").replace("_", " ")
-    return f"{len(items)} {what}: " + ", ".join(bits) if bits else f"no {what}"
+    one = {"batches": "batch"}.get(what, what[:-1] if what.endswith("s") else what)
+    return f"{len(items)} {one if len(items) == 1 else what}: " + ", ".join(bits) if bits else f"no {what}"
 
 
 def _row(c: Companies, r: Any, detail: bool = True) -> MessageRow:

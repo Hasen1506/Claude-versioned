@@ -29,11 +29,12 @@ from xml.sax.saxutils import escape, quoteattr
 
 from . import AppSettings, slug, today
 
+KINDS = ["records:products", "records:locations", "stock", "orders", "send:purchase_order"]
 SECRETS: list[str] = []
 SAFE = re.compile(r'^[^"<>&\\\x00-\x1f]*$')     # a name inside a TDL formula: no quote, no markup
 
 
-def check(source: str, s: AppSettings, secrets: dict[str, str]) -> None:
+def check(source: str, s: AppSettings, secrets: dict[str, str], kind: str = "") -> None:
     for what, v in (("the company", s.company), ("the order voucher type", s.order_type),
                     ("the purchase voucher type", s.purchase_type), ("the purchase ledger", s.purchase_ledger)):
         if not SAFE.match(v):

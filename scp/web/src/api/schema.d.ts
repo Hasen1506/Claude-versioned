@@ -2574,6 +2574,31 @@ export interface components {
              * @enum {string}
              */
             data_centre: "in" | "com" | "eu" | "com.au" | "jp" | "ca" | "sa";
+            /**
+             * Customer
+             * @description Shopify orders: the customer here they are booked to (the online shop)
+             * @default
+             */
+            customer: string;
+            /**
+             * Api Version
+             * @description Shopify: the Admin API version asked (a supported one, 2026-07)
+             * @default 2026-07
+             */
+            api_version: string;
+            /**
+             * Database
+             * @description Odoo: the database's name
+             * @default
+             */
+            database: string;
+            /**
+             * Odoo Api
+             * @description Odoo: JSON-RPC (every version), or the JSON API of Odoo 19 and later
+             * @default jsonrpc
+             * @enum {string}
+             */
+            odoo_api: "jsonrpc" | "json2";
         };
         /** AppliedOrder */
         AppliedOrder: {
@@ -6036,17 +6061,17 @@ export interface components {
              * Source Type
              * @enum {string}
              */
-            source_type: "url" | "folder" | "api" | "tally" | "zoho";
+            source_type: "url" | "folder" | "api" | "tally" | "zoho" | "shopify" | "odoo";
             /**
              * Source
-             * @description The web address, or the file pattern in the folder; {since} in an address is the time the last good run started (only what changed since); Tally: its address (http://tally-pc:9000); Zoho: the organisation ID
+             * @description The web address, or the file pattern in the folder; {since} in an address is the time the last good run started (only what changed since); Tally: its address (http://tally-pc:9000); Zoho: the organisation ID; Shopify: the shop (my-shop.myshopify.com); Odoo: its address
              */
             source: string;
-            /** @description Tally or Zoho: what the connector needs beyond its source */
+            /** @description Tally, Zoho, Shopify or Odoo: what the connector needs beyond its source */
             app?: components["schemas"]["AppSettings"] | null;
             /**
              * Secrets
-             * @description Zoho: client_id, client_secret and refresh_token; omitted (or a value left empty) keeps the one kept for the same organisation
+             * @description Zoho: client_id, client_secret and refresh_token; Shopify: access_token; Odoo: login and api_key; omitted (or a value left empty) keeps the one kept for the same organisation, shop or database
              */
             secrets?: {
                 [key: string]: string;
@@ -8177,11 +8202,11 @@ export interface components {
         Paging: {
             /**
              * Mode
-             * @description next: each answer names the next page's address; page: pages are numbered
+             * @description next: each answer names the next page's address; page: pages are numbered; link: the answer's Link header names it (rel=next)
              * @default next
              * @enum {string}
              */
-            mode: "next" | "page";
+            mode: "next" | "page" | "link";
             /**
              * Next
              * @description next: the path in the answer to the next page's address (links.next, @odata.nextLink); page: the path to a flag that more pages follow (page_context.has_more_page); empty: until a page has no records

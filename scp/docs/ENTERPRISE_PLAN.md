@@ -36,7 +36,7 @@ Done: 2.1 (USABILITY_LOG N180–N181), 2.2 (N182), 2.3 (N183–N185), 2.4 (N186�
 | 2.7 | Allocation is one level; kits confirmed line by line; only EOQ beside fixed lots (§7.2, §7.4, §8.3) | Allocation hierarchy with carry-forward, single delivery for a whole order, part-period balancing / least unit cost / Groff |
 
 ## Phase 3: Connectors
-Done: 3.1 (N200–N206), 3.2 (N207–N213; godown and warehouse stock and goods movements open).
+Done: 3.1 (N200–N206), 3.2 (N207–N213; godown and warehouse stock and goods movements open), 3.3 (N214–N221; Odoo's lots and a partner both customer and vendor open).
 
 | # | Gap | Build |
 |---|---|---|

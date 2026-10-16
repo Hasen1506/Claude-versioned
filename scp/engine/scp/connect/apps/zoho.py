@@ -27,6 +27,7 @@ from urllib.parse import quote, urlencode
 
 from . import AppSettings, settings_of, slug, today
 
+KINDS = ["records:products", "records:locations", "stock", "orders", "send:purchase_order"]
 SECRETS = ["client_id", "client_secret", "refresh_token"]
 ACCOUNTS = {"in": "https://accounts.zoho.in", "com": "https://accounts.zoho.com", "eu": "https://accounts.zoho.eu",
             "com.au": "https://accounts.zoho.com.au", "jp": "https://accounts.zoho.jp",
@@ -40,12 +41,16 @@ MAX_ORDERS = 500                # sales orders read whole in one run
 _tokens: dict[str, tuple[str, float]] = {}
 
 
-def check(source: str, s: AppSettings, secrets: dict[str, str]) -> None:
+def check(source: str, s: AppSettings, secrets: dict[str, str], kind: str = "") -> None:
     if not source.strip().isdigit():
         raise ValueError("Zoho's organisation ID is a number (Settings → Organisation profile)")
     missing = [k.replace("_", " ") for k in SECRETS if not (secrets.get(k) or "").strip()]
     if missing:
         raise ValueError(f"Zoho needs the {', '.join(missing)} of a self client (api-console.zoho.{s.data_centre})")
+
+
+def same(old_source: str, old: AppSettings, source: str, new: AppSettings) -> bool:
+    return old_source.strip() == source.strip() and old.data_centre == new.data_centre
 
 
 class Session:

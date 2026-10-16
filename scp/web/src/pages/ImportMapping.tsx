@@ -27,7 +27,8 @@ const NUMBERS = new Set(["qty", "price", "quality", "blocked"]);
 /** A connector's rows are named as the fields here already: what usually needs translating is the codes. */
 const CODES: Record<string, string[]> = {
   orders: ["customer", "product"], stock: ["product"], "records:products": ["id"], "records:locations": ["id"],
-  "send:purchase_order": ["product", "supplier"],
+  "send:purchase_order": ["product", "supplier"], "send:production_order": ["product"],
+  "records:production_sources": ["product"], postings: [],
 };
 
 export function startRows(kind: string, fields: string[], app = false): MapRow[] {
@@ -114,11 +115,13 @@ export function PagingFields({ value, onChange }: { value: Paging; onChange: (p:
   return <div className="qrow" role="group" aria-label="Pages">
     <label className="qf"><span className="qf-l">Pages</span>
       <select className="select" value={value.mode ?? "next"} onChange={(ev) => set({ mode: ev.target.value as Paging["mode"] })} aria-label="Pages come">
-        <option value="next">each answer names the next page</option><option value="page">numbered pages</option></select></label>
-    <label className="qf"><span className="qf-l">{value.mode === "page" ? "More pages flag" : "Next page at"}</span>
+        <option value="next">each answer names the next page</option><option value="page">numbered pages</option>
+        <option value="link">the Link header names the next page</option></select></label>
+    {value.mode !== "link" ? <label className="qf"><span className="qf-l">{value.mode === "page" ? "More pages flag" : "Next page at"}</span>
       <input className="input mono" value={value.next ?? ""} onChange={(ev) => set({ next: ev.target.value })} aria-label="Next page path"
         placeholder={value.mode === "page" ? "page_context.has_more_page" : "links.next"} />
       <span className="qf-h">{value.mode === "page" ? "empty: until a page has no records" : "the path in the answer to the next page's address"}</span></label>
+      : <span className="qf-h" style={{ alignSelf: "center" }}>as Shopify's REST API and GitHub's do: <code>{'<…?page_info=…>; rel="next"'}</code></span>}
     {value.mode === "page" && <label className="qf"><span className="qf-l">Page parameter</span>
       <input className="input mono" value={value.param ?? "page"} onChange={(ev) => set({ param: ev.target.value })} aria-label="Page parameter" /></label>}
     <label className="qf"><span className="qf-l">At most</span>
@@ -155,18 +158,23 @@ export function TryResult({ t, onColumn }: { t: Tried; onColumn?: (c: string) =>
   </div>;
 }
 
-// ---- named connectors (ENTERPRISE_PLAN 3.2) --------------------------------------------------------------------
-export const APP_NAMES: Record<string, string> = { tally: "Tally Prime", zoho: "Zoho Inventory" };
+// ---- named connectors (ENTERPRISE_PLAN 3.2, 3.3) ---------------------------------------------------------------
+export const APP_NAMES: Record<string, string> = { tally: "Tally Prime", zoho: "Zoho Inventory", shopify: "Shopify", odoo: "Odoo" };
+/** The credentials each connector keeps on the server (never shown again). */
+export const APP_SECRETS: Record<string, string[]> = { zoho: ["client_id", "client_secret", "refresh_token"], shopify: ["access_token"], odoo: ["login", "api_key"] };
 const ZOHO_DC: [string, string][] = [["in", "zoho.in (India)"], ["com", "zoho.com (US)"], ["eu", "zoho.eu"], ["com.au", "zoho.com.au"],
   ["jp", "zoho.jp"], ["ca", "zohocloud.ca"], ["sa", "zoho.sa"]];
 
 /** What Tally or Zoho needs beyond its address: the company in Tally, the place stock is at, Zoho's credentials. */
-export function AppFields({ app, kind, value, onChange, places, secrets, kept, onSecrets }: {
+export function AppFields({ app, kind, value, onChange, places, customers = [], secrets, kept, onSecrets }: {
   app: string; kind: string; value: Partial<AppSettings>; onChange: (s: Partial<AppSettings>) => void; places: { id: string; name: string }[];
-  secrets: Record<string, string>; kept: string[]; onSecrets: (s: Record<string, string>) => void;
+  customers?: { id: string; name: string }[]; secrets: Record<string, string>; kept: string[]; onSecrets: (s: Record<string, string>) => void;
 }) {
   const set = (p: Partial<AppSettings>) => onChange({ ...value, ...p });
-  const SECRET: Record<string, string> = { client_id: "Client ID", client_secret: "Client secret", refresh_token: "Refresh token" };
+  const SECRET: Record<string, string> = { client_id: "Client ID", client_secret: "Client secret", refresh_token: "Refresh token",
+    access_token: "Admin API access token", login: "Login", api_key: "API key" };
+  const byLocation = app === "shopify" || app === "odoo";
+  const own = APP_SECRETS[app] ?? [];
   return <div className="stack" style={{ gap: 8 }} role="group" aria-label={`${APP_NAMES[app]} settings`}>
     <div className="qrow">
       {app === "tally" && <label className="qf"><span className="qf-l">Company in Tally</span>
@@ -176,17 +184,36 @@ export function AppFields({ app, kind, value, onChange, places, secrets, kept, o
         <select className="select" value={value.data_centre ?? "in"} onChange={(ev) => set({ data_centre: ev.target.value as AppSettings["data_centre"] })} aria-label="Data centre">
           {ZOHO_DC.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select>
         <span className="qf-h">where you sign in to Zoho</span></label>}
-      {kind === "stock" && <label className="qf"><span className="qf-l">Stock is at</span>
+      {app === "shopify" && <label className="qf"><span className="qf-l">API version</span>
+        <input className="input mono" value={value.api_version ?? "2026-07"} onChange={(ev) => set({ api_version: ev.target.value })} aria-label="API version" style={{ width: 110 }} />
+        <span className="qf-h">a supported Admin API version (they are quarterly)</span></label>}
+      {app === "odoo" && <>
+        <label className="qf"><span className="qf-l">Database</span>
+          <input className="input mono" value={value.database ?? ""} onChange={(ev) => set({ database: ev.target.value })} aria-label="Odoo database" placeholder="my-company" />
+          <span className="qf-h">on odoo.com, the my-company of my-company.odoo.com</span></label>
+        <label className="qf"><span className="qf-l">Asked by</span>
+          <select className="select" value={value.odoo_api ?? "jsonrpc"} onChange={(ev) => set({ odoo_api: ev.target.value as AppSettings["odoo_api"] })} aria-label="Odoo API">
+            <option value="jsonrpc">JSON-RPC (every version)</option><option value="json2">the JSON API (Odoo 19 and later)</option></select></label></>}
+      {kind === "stock" && <label className="qf"><span className="qf-l">{byLocation ? "Not translated: at" : "Stock is at"}</span>
         <select className="select" value={value.place ?? ""} onChange={(ev) => set({ place: ev.target.value })} aria-label="Stock is at">
-          <option value="">choose a place…</option>{places.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}</select>
-        <span className="qf-h">{app === "tally" ? "Tally's closing balance of each item is counted here" : "each tracked item's stock on hand is counted here"}</span></label>}
+          <option value="">{byLocation ? "the place of the same name" : "choose a place…"}</option>{places.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}</select>
+        <span className="qf-h">{app === "tally" ? "Tally's closing balance of each item is counted here" : app === "shopify" ? "stock on hand at each Shopify location not translated (Translate codes, location) is counted here"
+          : app === "odoo" ? "each Odoo warehouse not translated (Translate codes, location) is counted here" : "each tracked item's stock on hand is counted here"}</span></label>}
+      {kind === "records:production_sources" && <label className="qf"><span className="qf-l">Made at</span>
+        <select className="select" value={value.place ?? ""} onChange={(ev) => set({ place: ev.target.value })} aria-label="Made at">
+          <option value="">choose a plant…</option>{places.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}</select>
+        <span className="qf-h">each bill of materials is a way to make its product here; the steps here are kept</span></label>}
+      {app === "shopify" && kind === "orders" && <label className="qf"><span className="qf-l">Booked to the customer</span>
+        <select className="select" value={value.customer ?? ""} onChange={(ev) => set({ customer: ev.target.value })} aria-label="Orders' customer">
+          <option value="">choose a customer…</option>{customers.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}</select>
+        <span className="qf-h">the online shop: a shop's buyers are not places here (each buyer's name is the order's note)</span></label>}
       {kind === "records:products" && <label className="qf"><span className="qf-l">A new product is</span>
         <select className="select" value={value.product_type ?? "FG"} onChange={(ev) => set({ product_type: ev.target.value as AppSettings["product_type"] })} aria-label="New product type">
           <option value="FG">a finished good</option><option value="SFG">a sub-assembly</option><option value="RM">a raw material</option><option value="PKG">packaging</option></select>
         <span className="qf-h">a product kept here keeps its type and unit</span></label>}
-      {kind === "orders" && <label className="qf"><span className="qf-l">{app === "tally" ? "Vouchers of the last" : "First read: changed in the last"}</span>
+      {(kind === "orders" || kind === "postings") && <label className="qf"><span className="qf-l">{app === "tally" ? "Vouchers of the last" : "First read: changed in the last"}</span>
         <input className="input num" type="number" min={1} max={730} value={value.days_back ?? 90} onChange={(ev) => set({ days_back: Number(ev.target.value) || 90 })} aria-label="Days back" style={{ width: 90 }} />
-        <span className="qf-h">days{app === "zoho" && "; after that, what changed since the last good run"}</span></label>}
+        <span className="qf-h">days{app !== "tally" && "; after that, what changed since the last good run"}</span></label>}
       {app === "tally" && kind === "orders" && <label className="qf"><span className="qf-l">Voucher type</span>
         <input className="input" value={value.order_type ?? "Sales Order"} onChange={(ev) => set({ order_type: ev.target.value })} aria-label="Order voucher type" /></label>}
       {app === "tally" && kind.startsWith("send:") && <>
@@ -195,13 +222,18 @@ export function AppFields({ app, kind, value, onChange, places, secrets, kept, o
         <label className="qf"><span className="qf-l">Booked to the ledger</span>
           <input className="input" value={value.purchase_ledger ?? "Purchase"} onChange={(ev) => set({ purchase_ledger: ev.target.value })} aria-label="Purchase ledger" /></label></>}
     </div>
-    {app === "zoho" && <div className="qrow">
-      {Object.entries(SECRET).map(([k, label]) => <label key={k} className="qf"><span className="qf-l">{label}</span>
-        <input className="input mono" type={k === "client_id" ? "text" : "password"} autoComplete="off" value={secrets[k] ?? ""} aria-label={label}
-          onChange={(ev) => onSecrets({ ...secrets, [k]: ev.target.value })} placeholder={kept.includes(k) ? "kept as it is" : ""} /></label>)}
-      <span className="qf-h" style={{ flexBasis: "100%" }}>From a <i>self client</i> in Zoho's API console (api-console.zoho.{value.data_centre ?? "in"}), with the scope
-        <code> ZohoInventory.FullAccess.all</code>; kept on the server for this organisation and never shown again.</span>
+    {own.length > 0 && <div className="qrow">
+      {own.map((k) => <label key={k} className="qf"><span className="qf-l">{SECRET[k]}</span>
+        <input className="input mono" type={k === "client_id" || k === "login" ? "text" : "password"} autoComplete="off" value={secrets[k] ?? ""} aria-label={SECRET[k]}
+          onChange={(ev) => onSecrets({ ...secrets, [k]: ev.target.value })} placeholder={kept.includes(k) ? "kept as it is" : k === "access_token" ? "shpat_…" : ""} /></label>)}
+      <span className="qf-h" style={{ flexBasis: "100%" }}>{app === "zoho" ? <>From a <i>self client</i> in Zoho's API console (api-console.zoho.{value.data_centre ?? "in"}), with the scope
+        <code> ZohoInventory.FullAccess.all</code>; kept on the server for this organisation and never shown again.</>
+        : app === "shopify" ? <>A custom app's token (Settings → Apps and sales channels → Develop apps), with the scopes <code>read_products</code>, <code>read_inventory</code>,
+          <code> read_locations</code>, <code>read_orders</code> and <code>read_fulfillments</code>; sent in Shopify's own header, kept on the server for this shop and never shown again.</>
+        : <>The user's login and an API key made for them (Preferences → Account security → New API key); kept on the server for this database and never shown again.
+          The user's rights in Odoo are what the connector may do.</>}</span>
     </div>}
+    {app === "shopify" && kind.startsWith("send:") && <span className="banner warning small">Shopify keeps no purchase or production orders: nothing is sent to it.</span>}
     {app === "tally" && <span className="faint small">Tally answers on its port (F1 Help → Settings → Connectivity: Tally acts as a server, port 9000). It sits on your own network:
       the server's administrator allows it by name (<code>SCP_IMPORT_HOSTS</code>) for the server to reach it.</span>}
   </div>;

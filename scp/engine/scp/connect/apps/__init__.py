@@ -1,5 +1,5 @@
-"""Named connectors (ENTERPRISE_PLAN 3.2): Tally Prime and Zoho Inventory, as scheduled imports that know the other
-system's own answers.
+"""Named connectors (ENTERPRISE_PLAN 3.2, 3.3): Tally Prime, Zoho Inventory, Shopify and Odoo, as scheduled imports
+that know the other system's own answers.
 
 A connector is a scheduled import (:mod:`scp.connect.imports`) whose source is the other system itself: it asks it
 in its own way (Tally's XML over its HTTP port, Zoho's REST API with an OAuth refresh token), reads its answer, and
@@ -7,13 +7,15 @@ gives rows named as the fields here, which then go the way a file's rows go: a c
 stock row per place and product, master data record by record, each logged with what was read. A job reads one kind:
 
 * ``records:products``: Tally's stock items, Zoho's items;
-* ``records:locations``: Tally's ledgers under Sundry Debtors and Sundry Creditors, Zoho's contacts, as customers and
-  suppliers;
-* ``stock``: what is on hand, by godown when Tally gives it, at the place the job names otherwise;
-* ``orders``: Tally's sales order vouchers, Zoho's sales orders;
-* ``send:purchase_order``: purchase orders released here go to it (a Tally purchase order voucher, a Zoho purchase
-  order), and the number it gives each is kept as the ERP's (``erp_ref``), so a changed order goes again and a
-  cancelled one is cancelled there.
+* ``records:locations``: Tally's ledgers under Sundry Debtors and Sundry Creditors, Zoho's contacts and Odoo's
+  partners as customers and suppliers; Shopify's locations as places;
+* ``records:production_sources``: Odoo's bills of materials;
+* ``stock``: what is on hand at the place the job names (Tally, Zoho), or by Shopify location and Odoo warehouse;
+* ``orders``: Tally's sales order vouchers, Zoho's and Odoo's sales orders, Shopify's orders;
+* ``postings``: Shopify's fulfilments, as deliveries;
+* ``send:purchase_order`` (Tally, Zoho, Odoo) and ``send:production_order`` (Odoo): orders released here go to it,
+  and the number it gives each is kept as the ERP's (``erp_ref``), so a changed order goes again and a cancelled one
+  is cancelled there.
 
 Codes are translated by the job's mapping (``values``: the other system's code = the code here); a name that is not
 translated becomes a code here as it is, with characters a code cannot have made hyphens ("Steel Tumbler 250 ml"
@@ -33,10 +35,9 @@ from pydantic import Field
 from ...model.common import Model, ProductType
 from ..mapping import Mapping, recode
 
-APPS = ("tally", "zoho")
-READS = ["records:products", "records:locations", "stock", "orders"]
-SENDS = ["send:purchase_order"]
-NAMES = {"tally": "Tally", "zoho": "Zoho Inventory"}
+APPS = ("tally", "zoho", "shopify", "odoo")
+SENDS = ["send:purchase_order", "send:production_order"]
+NAMES = {"tally": "Tally", "zoho": "Zoho Inventory", "shopify": "Shopify", "odoo": "Odoo"}
 #: fields a new record takes from the other system, and one kept here does not
 ADD_ONLY = {"records:products": frozenset({"type", "base_uom", "family"}),
             "records:locations": frozenset({"type", "region"})}
@@ -59,20 +60,32 @@ class AppSettings(Model):
     purchase_ledger: str = Field("Purchase", min_length=1, max_length=120,
                                  description="Tally: the ledger a purchase order is booked to")
     data_centre: DataCentre = Field("in", description="Zoho: where the organisation is kept (zoho.in, zoho.com, …)")
+    customer: str = Field("", max_length=64, description="Shopify orders: the customer here they are booked to (the "
+                                                         "online shop)")
+    api_version: str = Field("2026-07", pattern=r"^\d{4}-(01|04|07|10)$",
+                             description="Shopify: the Admin API version asked (a supported one, 2026-07)")
+    database: str = Field("", max_length=80, pattern=r"^[A-Za-z0-9_.\-]*$", description="Odoo: the database's name")
+    odoo_api: Literal["jsonrpc", "json2"] = Field("jsonrpc", description="Odoo: JSON-RPC (every version), or the JSON "
+                                                                          "API of Odoo 19 and later")
 
 
 def module(app: str):  # type: ignore[no-untyped-def]
-    from . import tally, zoho
-    return {"tally": tally, "zoho": zoho}[app]
+    from . import odoo, shopify, tally, zoho
+    return {"tally": tally, "zoho": zoho, "shopify": shopify, "odoo": odoo}[app]
 
 
 def kinds(app: str) -> list[str]:
-    return [*READS, *SENDS]
+    return list(module(app).KINDS)
 
 
 def secrets_of(app: str) -> list[str]:
     """The credentials a connector keeps (never shown again)."""
     return list(module(app).SECRETS)
+
+
+def keeps_secrets(app: str) -> bool:
+    """A connector with credentials of its own (kept as the headers of a web address are)."""
+    return app in APPS and bool(module(app).SECRETS)
 
 
 def settings_of(job: dict) -> AppSettings:
@@ -88,15 +101,16 @@ def check(app: str, kind: str, source: str, s: AppSettings, secrets: dict[str, s
     """Refuse a connector that cannot work (ValueError, saying what to give)."""
     if kind not in kinds(app):
         raise ValueError(f"{NAMES[app]} gives {', '.join(kinds(app))}")
-    if kind == "stock" and not s.place and not (m and "location" in m.fields and m.fields["location"].values):
+    if kind == "stock" and not getattr(module(app), "PLACES", False) and not s.place and not (
+            m and "location" in m.fields and m.fields["location"].values):
         raise ValueError(f"{NAMES[app]}'s stock goes to a place here: name the place, or translate each "
                          f"{'godown' if app == 'tally' else 'warehouse'} (location)")
-    module(app).check(source, s, secrets)
+    module(app).check(source, s, secrets, kind)
 
 
 # ------------------------------------------------------------------------------------------------ reading
 ID_FIELDS = {"orders": ("customer", "product"), "stock": ("location", "product"), "records:products": ("id",),
-             "records:locations": ("id",)}
+             "records:locations": ("id",), "records:production_sources": ("id", "location", "product")}
 
 
 def items(job: dict, raw: bytes, m: Mapping | None, day_first: bool = True) -> list[dict[str, Any]]:
@@ -104,18 +118,33 @@ def items(job: dict, raw: bytes, m: Mapping | None, day_first: bool = True) -> l
     from ..imports import _orders
     kind = job["kind"]
     s = settings_of(job)
-    rows = recode(kind, module(job["source_type"]).rows(kind, raw, s), m, day_first)
+    got = module(job["source_type"]).rows(kind, raw, s)
+    if kind == "stock" and s.place:   # a location there not translated is the place the job names
+        told = _values(m, "location")
+        for r in got:
+            if r.get("location") and "*" not in told and str(r["location"]).strip() not in told:
+                r["location"] = s.place
+    rows = recode(kind, got, m, day_first)
     for r in rows:
         for f in ID_FIELDS.get(kind, ()):
             if r.get(f) not in (None, ""):
                 r[f] = slug(r[f])
         if kind == "records:products":
             r.setdefault("type", s.product_type.value)
+        if kind == "records:production_sources":
+            told = _values(m, "product")
+            for c in r.get("components") or []:
+                c["product"] = slug(told.get(str(c["product"]).strip(), told.get("*", c["product"])))
     if kind == "stock":
         return _summed(rows, s.place)
     if kind == "orders":
         return _orders(rows)
     return rows
+
+
+def _values(m: Mapping | None, field: str) -> dict[str, str]:
+    f = m.fields.get(field) if m is not None else None
+    return dict(f.values) if f is not None and f.values else {}
 
 
 def _summed(rows: list[dict[str, Any]], place: str) -> list[dict[str, Any]]:
@@ -151,5 +180,5 @@ def today() -> dt.date:
     return dt.datetime.now(dt.UTC).date()
 
 
-__all__ = ["ADD_ONLY", "APPS", "AppSettings", "NAMES", "READS", "SENDS", "check", "columns", "items", "kinds",
+__all__ = ["ADD_ONLY", "APPS", "AppSettings", "NAMES", "SENDS", "check", "columns", "items", "keeps_secrets", "kinds",
            "module", "secrets_of", "settings_of", "slug"]

@@ -599,8 +599,8 @@ system answers page by page and can give only what changed after a time.
 | N202 | A web API that pages its answer was read one page at a time, and every run read everything again. | Serious | **Fixed.** Pages by the next page's address or by number, at most a set number (more fails the run); `{since}` is the last good run's start. |
 | N203 | A refused file left no trace of what it held: the log said "not a list of records" and nothing else. | Minor | **Fixed.** The log keeps the start of what was read with the message. |
 | N204 | The mapping table offered a date format and a factor for every field, the place and product included. | Minor | **Fixed** before it shipped: a factor only for numbers, a date format only for dates (any field of master data). |
-| N205 | The form sends only an `Authorization` header; an API with its own header (Shopify's `X-Shopify-Access-Token`) can be set only through the API. | Minor | Partly fixed in 3.2: Zoho has its own credential fields (client ID, secret, refresh token). Shopify's comes with 3.3. |
-| N206 | An API that names its next page in a `Link` header (Shopify) cannot be paged, since only the body is read. | Minor | Open, for 3.3. |
+| N205 | The form sends only an `Authorization` header; an API with its own header (Shopify's `X-Shopify-Access-Token`) can be set only through the API. | Minor | **Fixed** (3.2, 3.3): Zoho, Shopify and Odoo have their own credential fields, sent in each system's own way. A generic web API with its own header is still set through the API. |
+| N206 | An API that names its next page in a `Link` header (Shopify) cannot be paged, since only the body is read. | Minor | **Fixed** (3.3): *Pages: the Link header names the next page*. |
 
 ### 3.2: Tally Prime and Zoho Inventory (16 October 2026)
 
@@ -633,7 +633,43 @@ connectors are checked against those formats, not yet against a running Tally or
 | N210 | An order sent and taken, whose answer was lost (a timeout), would have been made twice on the next run. | Serious | **Fixed** before it shipped: the connector asks Tally (an export by voucher number) or Zoho (by `purchaseorder_number`) first and then changes it. |
 | N211 | Tally's stock is read item by item as one total at one place: godown-wise closing stock is not read. | Minor | Open: Tally's godown-wise closing needs a TDL report; to be done against a running Tally. |
 | N212 | Zoho's stock is the item's total, not per warehouse or location (Zoho gives that only item by item, which its call limits make slow). | Minor | Open. |
-| N213 | Goods movements are not read from Tally (receipt notes, delivery notes, stock journals) or Zoho (receives, packages). | Minor | Open: stock is counted instead; postings come with 3.3's pattern. |
+| N213 | Goods movements are not read from Tally (receipt notes, delivery notes, stock journals) or Zoho (receives, packages). | Minor | Partly fixed (3.3): Shopify's fulfilments are read as deliveries. Tally, Zoho and Odoo still count stock instead. |
+
+### 3.3: Shopify and Odoo (16 October 2026)
+
+ENTERPRISE_PLAN 3.3, through the engine and in a browser. A second company sells online through Shopify and
+keeps its books, bills of materials and purchasing in Odoo. Again neither was at hand: each was played by a server
+answering as its documented interface does (Shopify's GraphQL `nodes`/`pageInfo`, `THROTTLED` errors and its token
+header; Odoo's JSON-RPC `authenticate` and `execute_kw`, its domains, many-to-one pairs and errors, and the JSON API
+of Odoo 19). The connectors are checked against those formats, not against a live shop or database.
+
+* *Shopify's catalogue, locations and stock* (input: *Connect Shopify*, the shop's myshopify.com address, a custom
+  app's token; processing: variants read a page at a time, the SKU (else the titles) as the code, each location's
+  on-hand stock by location; output: products in the product type's family, the locations as warehouses, stock at
+  the place each location is translated to, or of its own name).
+* *Shopify's orders and fulfilments* (input: *What it brings: customer orders*, *Booked to the customer: Online
+  shop*; processing: orders updated since the last good run, each line's quantity after edits; output: order 1001 of
+  the online shop with the buyer's name as its note, a cancelled one never taken; then *fulfilments (as deliveries)*:
+  2 delivered from line 10, the same fulfilment never posted twice).
+* *Odoo's products, partners and BOMs* (input: *Connect Odoo*, its address, the database, a login and API key;
+  processing: JSON-RPC as that user; output: products without services, customers and suppliers by rank, each BOM a
+  way to make at the plant named with its components, the steps here kept).
+* *Purchase and manufacturing orders to Odoo* (input: *purchase orders to send*; processing: Odoo's vendor and
+  product found, *Try it* first: "would be made in Odoo (Sharma Metals)"; output: "1 purchase order to Odoo: 1 sent",
+  made and confirmed with PO-00001 as its source document, kept as P00201, the next run "nothing to send". Changed:
+  its line rewritten in place. A manufacturing order: made with Odoo's start field and confirmed, a new quantity
+  through *change quantity*, deleted here cancelled there).
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N214 | A summary of one item read "1 orders: 1 taken". | Minor | **Fixed.** "1 order", "1 purchase order", "1 location". |
+| N215 | On a phone the four *Connect* buttons ran off the panel. | Minor | **Fixed.** They wrap. |
+| N216 | A sending job's *Try it* offered a sample box that sending never reads. | Minor | **Fixed.** Sending says what a dry run does instead. |
+| N217 | An Odoo stock quant below zero (stock sold before it was received) would have refused the warehouse's whole row. | Minor | **Fixed** before it shipped: quants are summed by warehouse first, and a total below zero counts as none. |
+| N218 | Shopify keeps no purchase or production orders, so nothing planned here can go to it. | Minor | By design: a shop that buys through Odoo or Zoho sends its orders there. |
+| N219 | A partner in Odoo who is both a customer and a vendor becomes one place here (the bigger rank). | Minor | Open: one place can be both only with two ids; translate the second by hand. |
+| N220 | Shopify's buyers are one customer here, so promises and margins are per channel, not per buyer. | Minor | By design for a shop; B2B buyers come through an ERP. |
+| N221 | Odoo's lots and Shopify's per-location committed stock are not read; stock is on hand only. | Minor | Open. |
 
 ## Found in the second reality check (after Phase E)
 

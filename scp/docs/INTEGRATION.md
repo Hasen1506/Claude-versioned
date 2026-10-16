@@ -256,6 +256,8 @@ Where the ERP cannot call an API, it writes an export that the server reads. An 
   address that names a page already read ends the reading.
 - **Numbered pages**: `?page=1`, `2`, … (the parameter is named on the import), until a flag in the answer says there
   are no more (`page_context.has_more_page`) or, without one, a page has no records.
+- **The Link header** (`"paging": {"mode": "link"}`): the answer's `Link` header names the next page
+  (`<https://…?page_info=…>; rel="next"`), as Shopify's REST API and GitHub's do; no such link ends the reading.
 - **At most** a number of pages (50 unless set): an answer with more fails the run rather than take a part of it.
 - The headers go to the import's own host only; a next page on another host is asked without them.
 
@@ -341,6 +343,45 @@ A scheduled import can ask Tally Prime or Zoho Inventory directly (*Connect Tall
   20,000 records of a kind, and 500 sales orders changed between two runs, are read.
 - **Try it** and **Dry run** work as for a file: a pasted answer of Tally's (or one page of Zoho's) is read as the
   connector would; a dry run of `send:purchase_order` builds what would be sent and sends nothing.
+
+## Shopify and Odoo
+
+*Connect Shopify* and *Connect Odoo* (`source_type` `shopify` or `odoo`) work as Tally and Zoho do: one kind a job,
+codes translated by the mapping, a new record's type, unit and family taken only when it is new, orders sent one by
+one and acknowledged.
+
+| What it brings | Shopify | Odoo |
+|---|---|---|
+| `records:products` | product variants: the SKU (else the product's title, and the variant's when there are several) as the code, the product type as a new product's family, the variant's price; a draft or archived product is not read | product variants: the internal reference (else the name) as the code, the unit and the category's last part for a new product, the sales price; services and combos are not read |
+| `records:locations` | the shop's active locations as places (a warehouse, a new one), with their address | customers and vendors (companies and people without a parent company): the tax ID, the address, the state as region; a partner that is more vendor than customer is a supplier |
+| `records:production_sources` | — | bills of materials (not kits) as ways to make their product at the plant the job names (`place`): the BOM's quantity and components; the steps here are kept |
+| `stock` | on hand at each location, per tracked variant | on hand in internal locations, summed by warehouse |
+| `orders` | orders updated since the last good run: the name without `#` as the number, the customer the job names (`customer`, the online shop) and the buyer's name as the note, each line's quantity after edits and refunds, a cancelled order cancelled | confirmed sales orders changed since the last good run: the reference as the number, the customer's company as the customer, the delivery date (else the order date) on every line, a cancelled one cancelled; quotations are not read |
+| `postings` | fulfilments of the orders updated since the last good run, as deliveries of the order's lines (`1001/10`), each taken once | — |
+| `send:purchase_order` | — (Shopify keeps no purchase orders) | requests for quotation made and confirmed, our number as the source document, Odoo's vendor and products found by name and internal reference; changed: its lines rewritten (a line no longer here cut to what was received); cancelled or deleted here: cancelled |
+| `send:production_order` | — | manufacturing orders made and confirmed (start and deadline, our number as the source document); a new quantity through Odoo's own *change quantity*; deleted here: cancelled |
+
+```json
+{"name": "Shopify orders", "kind": "orders", "source_type": "shopify", "source": "kaveri.myshopify.com",
+ "app": {"customer": "WEB-SHOP"}, "secrets": {"access_token": "shpat_…"}, "every": "hour", "at": "00:20"}
+{"name": "Production orders to Odoo", "kind": "send:production_order", "source_type": "odoo",
+ "source": "https://kaveri.odoo.com", "app": {"database": "kaveri"},
+ "secrets": {"login": "planner@kaveri.example", "api_key": "…"}, "every": "hour", "at": "00:25"}
+```
+
+- **Shopify** is asked through its Admin GraphQL API (`api_version`, `2026-07` unless set; it pages by cursor and a
+  throttled call is asked again once) with a custom app's Admin API access token in Shopify's own header
+  (`X-Shopify-Access-Token`). The app needs `read_products`, `read_inventory`, `read_locations`, `read_orders` and,
+  for fulfilments, `read_fulfillments`. The source is the shop's `myshopify.com` address; the token is kept for that
+  shop only. A shop's buyers are not places here: its orders go to one customer the job names.
+- **Odoo** is asked as a user, with an API key made for them (Preferences → Account security → New API key), through
+  JSON-RPC (`/jsonrpc`, every version) or, with `"odoo_api": "json2"`, the JSON API of Odoo 19 and later
+  (`/json/2/…`, the key as a bearer token); Odoo 20 removes JSON-RPC. `database` is the database's name. The user's
+  rights in Odoo are what the connector may do. The login and key are kept for the same address and database.
+- **Places.** Shopify's locations and Odoo's warehouses are the places of the same name here, or the ones the mapping
+  translates them to (`location` values); a job's `place` takes every one not translated.
+- **Odoo's warehouses for orders out.** A place translated to an Odoo warehouse (the mapping's `location`, here =
+  there) sends its orders to that warehouse's receipt or manufacturing operation; otherwise Odoo's default.
 
 ## E-mail from the server
 

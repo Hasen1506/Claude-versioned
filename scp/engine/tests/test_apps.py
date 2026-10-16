@@ -156,7 +156,7 @@ def test_tallys_sales_orders_come_in_line_by_due_date_and_an_optional_voucher_is
                                    mapping={"fields": {"customer": {"values": {"Kumar Stores": "K"}},
                                                        "product": {"values": {"Tin White 1L": "A"}}}}))
     [row] = run(owner, cid, j["id"])
-    assert row["summary"] == "1 orders: 1 taken", row
+    assert row["summary"] == "1 order: 1 taken", row
     assert '$VoucherTypeName = "Sales Order"' in asked[0] and '<SVFROMDATE TYPE="Date">' in asked[0]
     [so] = [o for o in doc_of(owner, cid)["dataset"]["sales_orders"] if o["erp_ref"] == "SO/12"]
     assert (so["customer"], so["customer_ref"]) == ("K", "KS-PO-88")
@@ -432,7 +432,7 @@ def test_zohos_sales_orders_changed_since_the_last_run_are_read_whole(monkeypatc
     j = save(owner, cid, zoho_job("orders", mapping={"fields": {"customer": {"values": {"Kumar Stores": "K"}}}}))
     with get_store_cursor(j["id"], "2026-10-10T00:00:00+00:00"):
         [row] = run(owner, cid, j["id"])
-    assert row["summary"] == "1 orders: 1 taken", row
+    assert row["summary"] == "1 order: 1 taken", row
     # page by page, newest first, until a page with one older than the last run: the rest are not read
     assert [(c[1], c[2].get("page")) for c in z.calls] == [("salesorders", "1"), ("salesorders", "2"),
                                                            ("salesorders", "3"), ("salesorders/71", None)]
@@ -567,6 +567,6 @@ def test_a_pasted_tally_answer_is_tried_before_the_connector_is_saved(monkeypatc
         "content": sample})
     assert r.status_code == 200, r.text
     t = r.json()
-    assert t["messages"][0]["summary"] == "Dry run, nothing saved: 1 orders: 1 taken"
+    assert t["messages"][0]["summary"] == "Dry run, nothing saved: 1 order: 1 taken"
     assert t["rows"][0]["customer"] == "K" and len(t["rows"][0]["lines"]) == 2
     assert {"number", "customer", "product", "qty", "date", "price"} <= set(t["columns"])

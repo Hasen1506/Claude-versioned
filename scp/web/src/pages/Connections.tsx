@@ -9,7 +9,7 @@ import { when } from "../components/SaveStatus";
 import { useLatest } from "../lib/latest";
 import { go, href } from "../lib/router";
 import { store, useStore } from "../state/store";
-import { APP_NAMES, AppFields, fromMapping, MappingEditor, PagingFields, startRows, toMapping, TryResult, type MapRow } from "./ImportMapping";
+import { APP_NAMES, APP_SECRETS, AppFields, fromMapping, MappingEditor, PagingFields, startRows, toMapping, TryResult, type MapRow } from "./ImportMapping";
 
 type Tab = "messages" | "keys" | "imports" | "mail";
 const TABS: { id: Tab; label: string }[] = [
@@ -27,12 +27,15 @@ const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const err = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** "orders", "records:products" → what a person calls them. */
-export function kindName(kind: string): string {
+export function kindName(kind: string, app?: string): string {
   const k: Record<string, string> = {
     orders: "customer orders", stock: "stock", postings: "goods movements", acknowledgements: "order numbers back",
     purchase_orders: "purchase orders taken", production_orders: "production orders taken", transfer_orders: "transfers taken",
     purchase_order: "purchase orders sent", "send:purchase_order": "purchase orders to send", "records:locations": "customers and suppliers",
+    production_order: "production orders sent", "send:production_order": "production orders to send", "records:production_sources": "bills of materials",
   };
+  if (app === "shopify" && kind === "records:locations") return "locations (as places)";
+  if (app === "shopify" && kind === "postings") return "fulfilments (as deliveries)";
   return k[kind] ?? (kind.startsWith("records:") ? kind.slice(8).replace(/_/g, " ") : kind.replace(/_/g, " "));
 }
 
@@ -130,11 +133,17 @@ function Keys({ id, owner }: { id: string; owner: boolean }) {
 }
 
 // ---- imports -----------------------------------------------------------------------------------------------------
-const blank = (kinds: string[], app: "tally" | "zoho" | null = null, apps: Record<string, string[]> = {}): JobInput => ({
-  name: app ? `${app === "tally" ? "Tally" : "Zoho"} stock` : "", kind: app ? "stock" : kinds[0] ?? "orders", source_type: app ?? "url",
-  source: "", headers: {}, format: app === "zoho" ? "json" : "csv", day_first: true, every: app ? "hour" : "day", at: app ? "00:05" : "06:00",
+type App = "tally" | "zoho" | "shopify" | "odoo";
+const SHORT: Record<App, string> = { tally: "Tally", zoho: "Zoho", shopify: "Shopify", odoo: "Odoo" };
+const blank = (kinds: string[], app: App | null = null, apps: Record<string, string[]> = {}): JobInput => ({
+  name: app ? `${SHORT[app]} stock` : "", kind: app ? "stock" : kinds[0] ?? "orders", source_type: app ?? "url",
+  source: "", headers: {}, format: app && app !== "tally" ? "json" : "csv", day_first: true, every: app ? "hour" : "day", at: app ? "00:05" : "06:00",
   weekday: 0, enabled: true, ...(app && !(apps[app] ?? []).includes("stock") ? { kind: (apps[app] ?? ["stock"])[0] } : {}),
 });
+
+const SOURCE_LABEL: Record<string, string> = { tally: "Tally's address", zoho: "Organisation ID", shopify: "Shop", odoo: "Odoo's address" };
+const SOURCE_HINT: Record<string, string> = { tally: "http://tally-pc:9000", zoho: "60012345", shopify: "my-shop.myshopify.com", odoo: "https://my-company.odoo.com",
+  api: "https://erp.example.com/api/stock?changed_after={since}" };
 
 function schedule(j: Pick<ImportJob, "every" | "at" | "weekday">): string {
   if (j.every === "hour") return `every hour at :${j.at.slice(3)}`;
@@ -161,9 +170,11 @@ function JobForm({ cid, jid, data, initial, onSave, onCancel }: { cid: string; j
   const [trying, setTrying] = useState(false);
   const set = (p: Partial<JobInput>) => setJ({ ...j, ...p });
   const fields = data.fields?.[j.kind] ?? [];
-  const isApp = j.source_type === "tally" || j.source_type === "zoho";
+  const isApp = j.source_type in APP_NAMES;
   const kinds = isApp ? data.apps?.[j.source_type] ?? data.kinds : data.kinds;
-  const web = j.source_type !== "folder" && j.source_type !== "zoho";
+  const own = APP_SECRETS[j.source_type] ?? [];
+  const web = j.source_type !== "folder" && !own.length;
+  const customers = (useStore((s) => s.dataset?.locations) ?? []).filter((l) => l.type === "customer");
   const json = !isApp && (j.format === "json" || j.source_type === "api");
   const payload = (): JobInput => {
     const headers = clearAuth || !web ? {} : auth.trim() ? { Authorization: auth.trim() } : j.headers;
@@ -173,7 +184,7 @@ function JobForm({ cid, jid, data, initial, onSave, onCancel }: { cid: string; j
       : !isApp && items.trim() && format === "json" ? toMapping(items, "", []) : null;
     return { name, kind, source_type, source, format, day_first, every, at, weekday, enabled, headers, mapping,
       paging: source_type === "api" ? paging : null, app: isApp ? app as AppSettings : null,
-      secrets: source_type === "zoho" ? { client_id: "", client_secret: "", refresh_token: "", ...secrets } : null };
+      secrets: own.length ? { ...Object.fromEntries(own.map((k) => [k, ""])), ...secrets } : null };
   };
   const tryIt = async () => {
     setE(null);
@@ -192,7 +203,7 @@ function JobForm({ cid, jid, data, initial, onSave, onCancel }: { cid: string; j
         <input className="input" required maxLength={60} value={j.name} onChange={(ev) => set({ name: ev.target.value })} placeholder="Open orders from SAP" aria-label="Import name" /></label>
       <label className="qf"><span className="qf-l">What it brings</span>
         <select className="select" value={j.kind} onChange={(ev) => { set({ kind: ev.target.value }); if (mapped) setRows(startRows(ev.target.value, data.fields?.[ev.target.value] ?? [], isApp)); }} aria-label="What it brings">
-          {kinds.map((k) => <option key={k} value={k}>{kindName(k)}</option>)}</select></label>
+          {kinds.map((k) => <option key={k} value={k}>{kindName(k, j.source_type)}</option>)}</select></label>
       {j.source_type !== "api" && !isApp && <label className="qf"><span className="qf-l">Format</span>
         <select className="select" value={j.format} onChange={(ev) => set({ format: ev.target.value as JobInput["format"] })} aria-label="Format">
           <option value="csv">CSV (or a semicolon list)</option><option value="json">JSON</option></select></label>}
@@ -208,11 +219,14 @@ function JobForm({ cid, jid, data, initial, onSave, onCancel }: { cid: string; j
         }} aria-label="Read from">
           <option value="url">a file at a web address</option><option value="api">a web API (JSON, page by page)</option>
           <option value="folder" disabled={!data.folder}>a folder on the server{data.folder ? "" : " (not set up)"}</option>
-          <option value="tally">Tally Prime</option><option value="zoho">Zoho Inventory</option></select></label>
-      <label className="qf" style={{ flex: "2 1 280px" }}><span className="qf-l">{j.source_type === "tally" ? "Tally's address" : j.source_type === "zoho" ? "Organisation ID" : web ? "Web address" : "Files"}</span>
+          <option value="tally">Tally Prime</option><option value="zoho">Zoho Inventory</option>
+          <option value="shopify">Shopify</option><option value="odoo">Odoo</option></select></label>
+      <label className="qf" style={{ flex: "2 1 280px" }}><span className="qf-l">{SOURCE_LABEL[j.source_type] ?? (web ? "Web address" : "Files")}</span>
         <input className="input" required value={j.source} onChange={(ev) => set({ source: ev.target.value })} aria-label="Source"
-          placeholder={j.source_type === "tally" ? "http://tally-pc:9000" : j.source_type === "zoho" ? "60012345" : j.source_type === "api" ? "https://erp.example.com/api/stock?changed_after={since}" : web ? "https://erp.example.com/exports/orders.csv" : "orders-*.csv"} />
-        <span className="qf-h">{j.source_type === "zoho" ? <>Zoho Inventory → Settings → Organisation profile</> : j.source_type === "tally" ? <>the computer Tally runs on and its port</> : web ? <>only addresses on hosts the server's administrator allowed; <code>{"{since}"}</code> in it is the time the last good run started, so only what changed is read
+          placeholder={SOURCE_HINT[j.source_type] ?? (web ? "https://erp.example.com/exports/orders.csv" : "orders-*.csv")} />
+        <span className="qf-h">{j.source_type === "zoho" ? <>Zoho Inventory → Settings → Organisation profile</> : j.source_type === "tally" ? <>the computer Tally runs on and its port</>
+          : j.source_type === "shopify" ? <>the shop's myshopify.com address (Settings → Domains), whatever its own domain</>
+          : j.source_type === "odoo" ? <>where you sign in to Odoo; only hosts the server's administrator allowed</> : web ? <>only addresses on hosts the server's administrator allowed; <code>{"{since}"}</code> in it is the time the last good run started, so only what changed is read
           {(initial as Partial<ImportJob>).since && <> (now {when((initial as Partial<ImportJob>).since!)})</>}</>
           : <>files matching this in <code>{data.folder}</code>; each read file moves to <code>done/</code> (or <code>failed/</code>)</>}</span></label>
     </div>
@@ -224,8 +238,8 @@ function JobForm({ cid, jid, data, initial, onSave, onCancel }: { cid: string; j
         <input type="checkbox" checked={clearAuth} onChange={(ev) => setClearAuth(ev.target.checked)} aria-label="Remove saved request headers" />
         Remove saved request headers</span> : null}</label>}
     {j.source_type === "api" && <PagingFields value={paging} onChange={setPaging} />}
-    {isApp && <AppFields app={j.source_type} kind={j.kind} value={app} onChange={setApp} places={places} secrets={secrets} onSecrets={setSecrets}
-      kept={(initial as Partial<ImportJob>).source_type === "zoho" ? (initial as Partial<ImportJob>).header_names ?? [] : []} />}
+    {isApp && <AppFields app={j.source_type} kind={j.kind} value={app} onChange={setApp} places={places} customers={customers} secrets={secrets} onSecrets={setSecrets}
+      kept={own.length && (initial as Partial<ImportJob>).source_type === j.source_type ? (initial as Partial<ImportJob>).header_names ?? [] : []} />}
     <fieldset className="stack" style={{ gap: 8, border: "1px solid var(--border)", padding: "8px 12px", margin: 0 }}>
       <legend className="small"><label className="row small"><input type="checkbox" checked={mapped} onChange={(ev) => {
         setMapped(ev.target.checked);
@@ -240,10 +254,12 @@ function JobForm({ cid, jid, data, initial, onSave, onCancel }: { cid: string; j
     </fieldset>
     <details className="small" open={!!tried}><summary><b>Try it first</b>: a dry run, nothing is saved</summary>
       <div className="stack" style={{ gap: 8, marginTop: 8 }}>
-        <label className="qf"><span className="qf-l">A sample <span className="faint">(optional)</span></span>
+        {j.kind.startsWith("send:") ? <span className="qf-h">sending: the orders that would go are built, and nothing is sent</span>
+        : <label className="qf"><span className="qf-l">A sample <span className="faint">(optional)</span></span>
           <textarea className="input mono" rows={4} value={sample} onChange={(ev) => setSample(ev.target.value)} aria-label="Sample to try"
-            placeholder={j.source_type === "tally" ? "<ENVELOPE> … Tally's answer … </ENVELOPE>" : j.source_type === "zoho" ? '{"items": [ … ]}' : json ? '{"orders": [ … ]}' : "Item Code,Godown,Closing Qty\nTIN-W,Main Godown,8"} />
-          <span className="qf-h">{j.kind.startsWith("send:") ? "sending: the orders that would go are built, and nothing is sent" : "paste a few lines of the file (or one page of the answer); empty: the source is read now"}</span></label>
+            placeholder={j.source_type === "tally" ? "<ENVELOPE> … Tally's answer … </ENVELOPE>" : j.source_type === "zoho" ? '{"items": [ … ]}'
+              : j.source_type === "shopify" ? '{"orders": [ … ]}' : j.source_type === "odoo" ? '{"products": [ … ]}' : json ? '{"orders": [ … ]}' : "Item Code,Godown,Closing Qty\nTIN-W,Main Godown,8"} />
+          <span className="qf-h">paste a few lines of the file (or one page of the answer); empty: the source is read now</span></label>}
         <div><button type="button" className="btn sm" disabled={trying || (!sample.trim() && !j.source.trim())} onClick={tryIt}>{trying ? "Trying…" : "Try it"}</button></div>
         {tried && <TryResult t={tried} />}
       </div>
@@ -274,8 +290,8 @@ function Imports({ id, owner }: { id: string; owner: boolean }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [failed, setE] = useState<string | null>(null);
   const [dry, setDry] = useState<{ name: string; t: Tried } | null>(null);
-  const [preset, setPreset] = useState<"tally" | "zoho" | null>(null);
-  const start = (st: "tally" | "zoho" | null) => { setPreset(st); setEditing("new"); };
+  const [preset, setPreset] = useState<App | null>(null);
+  const start = (st: App | null) => { setPreset(st); setEditing("new"); };
   const { value: data, show: setData, error: readErr } = useLatest<ImportJobs>(() => api.imports(id), [id]);
   const e = failed ?? readErr;
   const run = async (j: ImportJob) => {
@@ -297,16 +313,18 @@ function Imports({ id, owner }: { id: string; owner: boolean }) {
     try { setDry({ name: j.name, t: await api.dryRunImport(id, j.id) }); } catch (x) { setE(err(x)); } finally { setBusy(null); }
   };
   if (!data) return e ? <div className="banner error">{e}</div> : <div className="faint">Loading…</div>;
-  return <Panel title="Files, addresses and connected systems read on a schedule" actions={owner && !editing && <span className="row">
+  return <Panel title="Files, addresses and connected systems read on a schedule" actions={owner && !editing && <span className="row" style={{ flexWrap: "wrap" }}>
     <button className="btn sm" onClick={() => start(null)}>New import</button>
     <button className="btn sm ghost" onClick={() => start("tally")}>Connect Tally</button>
-    <button className="btn sm ghost" onClick={() => start("zoho")}>Connect Zoho</button></span>}>
+    <button className="btn sm ghost" onClick={() => start("zoho")}>Connect Zoho</button>
+    <button className="btn sm ghost" onClick={() => start("shopify")}>Connect Shopify</button>
+    <button className="btn sm ghost" onClick={() => start("odoo")}>Connect Odoo</button></span>}>
     <p className="small muted" style={{ marginTop: 0 }}>The server reads an export your ERP writes (open orders, stock, movements, master data) at the time set, and
       takes it in as that system's message would be: each line taken or refused with why, in Messages. The same file is never
       taken twice. Column names are recognised in English and as SAP exports name them, or you name which column fills which field;
-      a web API is read page by page, only what changed since the last good run. <i>Tally Prime</i> and <i>Zoho Inventory</i> are asked
-      directly: their items, customers and suppliers, stock and sales orders come in, and purchase orders released here go to them and come back with
-      their number. <i>Dry run</i> shows what would become of each line first.</p>
+      a web API is read page by page, only what changed since the last good run. <i>Tally Prime</i>, <i>Zoho Inventory</i>, <i>Shopify</i> and <i>Odoo</i> are asked
+      directly: their items, customers and suppliers, stock and orders come in (Shopify's fulfilments as deliveries, Odoo's bills of materials as ways to make), and
+      purchase orders released here go to Tally, Zoho and Odoo, production orders to Odoo, and come back with their number. <i>Dry run</i> shows what would become of each line first.</p>
     {editing && <div className="hcard" style={{ marginBottom: 12 }}>
       <JobForm cid={id} jid={editing === "new" ? undefined : editing.id} data={data} initial={editing === "new" ? blank(data.kinds, preset, data.apps) : { ...editing, headers: undefined } as unknown as JobInput}
         onCancel={() => setEditing(null)} onSave={async (j) => {
@@ -319,7 +337,7 @@ function Imports({ id, owner }: { id: string; owner: boolean }) {
       : <div className="table-wrap"><table className="t">
         <thead><tr><th>Import</th><th>When</th><th>Last time</th><th /></tr></thead>
         <tbody>{data.jobs.map((j) => <tr key={j.id}>
-          <td><b>{j.name}</b> {!j.enabled && <Badge>off</Badge>}<div className="small">{kindName(j.kind)} · {APP_NAMES[j.source_type] ? <>{j.kind.startsWith("send:") ? "to" : "from"} {APP_NAMES[j.source_type]}{j.source_type === "zoho" ? " organisation " : " at "}</>
+          <td><b>{j.name}</b> {!j.enabled && <Badge>off</Badge>}<div className="small">{kindName(j.kind, j.source_type)} · {APP_NAMES[j.source_type] ? <>{j.kind.startsWith("send:") ? "to" : "from"} {APP_NAMES[j.source_type]}{j.source_type === "zoho" ? " organisation " : j.source_type === "shopify" ? " shop " : " at "}</>
               : <>{j.source_type === "api" ? "web API" : j.format.toUpperCase()} from {j.source_type === "folder" ? "the folder: " : ""}</>}<span className="mono">{j.source}</span></div>
             {j.mapping && Object.keys(j.mapping.fields ?? {}).length > 0 && <div className="faint small">{Object.keys(j.mapping.fields ?? {}).length} fields {APP_NAMES[j.source_type] ? "translated" : "mapped"}</div>}
             <div className="faint small">runs as {j.run_as}</div></td>

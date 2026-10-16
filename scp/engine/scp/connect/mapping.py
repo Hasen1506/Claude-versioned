@@ -36,6 +36,7 @@ FIELDS: dict[str, list[str]] = {
                  "supplier_batch", "stock_type", "to_type", "note"],
     # a connector's purchase orders going out (ENTERPRISE_PLAN 3.2): codes there = here, read backwards
     "send:purchase_order": ["product", "supplier", "location"],
+    "send:production_order": ["product", "location"],
 }
 LINE = "line"
 

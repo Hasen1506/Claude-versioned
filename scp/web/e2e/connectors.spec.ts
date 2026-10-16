@@ -1,9 +1,10 @@
 import { createServer, type Server } from "node:http";
 import { expect, test, type Page } from "@playwright/test";
 
-// ENTERPRISE_PLAN 3.2, on the second server of playwright.config.ts (which may reach "localhost", as a company's own
-// Tally is allowed by name): Tally Prime asked on its port for its closing stock, tried first and taken; a purchase
-// order released here made in Tally as a voucher and kept as taken; Zoho's credentials kept and never shown again.
+// ENTERPRISE_PLAN 3.2 and 3.3, on the second server of playwright.config.ts (which may reach "localhost", as a company's
+// own Tally or Odoo is allowed by name): Tally Prime asked on its port for its closing stock, tried first and taken; a
+// purchase order released here made in Tally as a voucher and kept as taken; Zoho's and Shopify's credentials kept and
+// never shown again; a purchase order made in Odoo through JSON-RPC and confirmed there.
 test.use({ baseURL: "http://127.0.0.1:8766" });
 
 const ITEMS = '<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>' +
@@ -15,6 +16,28 @@ const TAKEN = "<RESPONSE><CREATED>1</CREATED><ALTERED>0</ALTERED><ERRORS>0</ERRO
 let tally: Server;
 let port = 0;
 const asked: string[] = [];
+let odoo: Server;
+let odooPort = 0;
+const odooCalls: string[] = [];
+const made: Record<string, unknown>[] = [];
+
+/** One Odoo database (kaveri) as JSON-RPC answers: a product, a vendor, and the purchase orders made. */
+function odooAnswer(body: { params: { service: string; method: string; args: unknown[] } }): unknown {
+  const { service, args } = body.params;
+  if (service === "common") return args[2] === "odoo-test-key" ? 2 : false;
+  const [, , , model, method, margs] = args as [string, number, string, string, string, unknown[]];
+  odooCalls.push(`${model}.${method}`);
+  if (method === "search_read") {
+    const dom = JSON.stringify(margs[0]);
+    if (model === "product.product") return [{ id: 31, default_code: "TIN", name: "Tin of white" }];
+    if (model === "res.partner") return dom.includes("Sharma Metals") ? [{ id: 9, supplier_rank: 4 }] : [];
+    if (model === "purchase.order") return dom.includes('"id"') ? made.map((m) => ({ id: m.id, name: m.name })) : [];
+    return [];
+  }
+  if (method === "create") { made.push({ id: 201, name: "P00201", ...(margs[0] as Record<string, unknown>[])[0] }); return [201]; }
+  if (method === "button_confirm") return true;
+  return [];
+}
 
 test.beforeAll(async () => {
   tally = createServer((req, res) => {
@@ -30,6 +53,17 @@ test.beforeAll(async () => {
   });
   await new Promise<void>((resolve) => tally.listen(0, "localhost", () => resolve()));
   port = (tally.address() as { port: number }).port;
+  odoo = createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", () => {
+      const q = JSON.parse(body);
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: q.id, result: odooAnswer(q) }));
+    });
+  });
+  await new Promise<void>((resolve) => odoo.listen(0, "localhost", () => resolve()));
+  odooPort = (odoo.address() as { port: number }).port;
 });
 
 test.beforeEach(async ({ page }) => {
@@ -43,13 +77,17 @@ test.afterEach(async ({ page }) => {
   expect((page as unknown as { __errors: string[] }).__errors).toEqual([]);
 });
 
-test.afterAll(async () => { await new Promise((resolve) => tally.close(resolve)); });
+test.afterAll(async () => {
+  await new Promise((resolve) => tally.close(resolve));
+  await new Promise((resolve) => odoo.close(resolve));
+});
 
 function fixture(): Record<string, unknown> {
   return {
     settings: { company_name: "Mehta Paints", planning_start: "2026-01-05", horizon_days: 28, default_calendar: "CAL", wacc: 0, holding_spread: 0 },
     calendars: [{ id: "CAL", workdays: [0, 1, 2, 3, 4, 5, 6] }],
-    locations: [{ id: "PUNE", name: "Pune plant", type: "plant" }, { id: "SHARMA", name: "Sharma Metals", type: "supplier" }],
+    locations: [{ id: "PUNE", name: "Pune plant", type: "plant" }, { id: "SHARMA", name: "Sharma Metals", type: "supplier" },
+      { id: "WEB", name: "Online shop", type: "customer" }],
     products: [{ id: "TIN", name: "Tin of white", type: "FG", price: 100 }],
     location_products: [{ location: "PUNE", product: "TIN", on_hand: 0, lot_sizing: { policy: "L4L" } }],
     purchasing_sources: [{ id: "PIR-TIN", supplier: "SHARMA", location: "PUNE", product: "TIN", price: 10, lead_time_days: 3 }],
@@ -153,4 +191,57 @@ test("Tally's stock tried and taken, a purchase order made in Tally, Zoho's cred
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
   await page.screenshot({ path: "test-results/connectors-zoho-phone.png", fullPage: true });
+});
+
+test("Shopify's token kept unseen, and a purchase order made in Odoo and confirmed there", async ({ page }) => {
+  await owner(page);
+  await page.goto("/#/connections/imports");
+
+  // Shopify: its orders go to a customer here, and its token is kept on the server
+  await page.getByRole("button", { name: "Connect Shopify" }).click();
+  await expect(page.getByLabel("Read from")).toHaveValue("shopify");
+  await page.getByLabel("What it brings").selectOption("orders");
+  await page.getByLabel("Import name").fill("Shopify orders");
+  await page.getByLabel("Source").fill("mehta-paints.myshopify.com");
+  const shop = page.getByRole("group", { name: "Shopify settings" });
+  await shop.getByLabel("Admin API access token").fill("shpat_test_only_0001");
+  await page.getByRole("button", { name: "Save the import" }).click();
+  await expect(page.getByRole("alert")).toContainText("Shopify's orders go to a customer here");
+  await shop.getByLabel("Orders' customer").selectOption("WEB");
+  await page.getByRole("button", { name: "Save the import" }).click();
+  await expect(page.getByRole("status").first()).toContainText("Shopify orders saved");
+  await expect(page.locator("main")).toContainText("customer orders · from Shopify shop mehta-paints.myshopify.com");
+  expect(await page.locator("main").innerText()).not.toContain("shpat_test_only");
+  await page.locator("tr", { hasText: "Shopify orders" }).getByRole("button", { name: "Change", exact: true }).click();
+  await expect(shop.getByLabel("Admin API access token")).toHaveAttribute("placeholder", "kept as it is");
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  // Input: PO-00001 (100 tins from Sharma Metals), released here. Processing: Odoo's vendor and product found by name
+  // and internal reference through JSON-RPC as the user with the API key; tried first, then sent.
+  await page.getByRole("button", { name: "Connect Odoo" }).click();
+  await page.getByLabel("Import name").fill("Purchase orders to Odoo");
+  await page.getByLabel("What it brings").selectOption("send:purchase_order");
+  await page.getByLabel("Source").fill(`http://localhost:${odooPort}`);
+  const o = page.getByRole("group", { name: "Odoo settings" });
+  await o.getByLabel("Odoo database").fill("kaveri");
+  await o.getByLabel("Login").fill("planner@mehta.example");
+  await o.getByLabel("API key").fill("odoo-test-key");
+  await page.getByText("Try it first").click();
+  await page.getByRole("button", { name: "Try it", exact: true }).click();
+  await expect(page.getByLabel("Dry run")).toContainText("would be made in Odoo (Sharma Metals)");
+  expect(odooCalls).not.toContain("purchase.order.create");
+  await page.getByRole("form", { name: "Scheduled import" }).screenshot({ path: "test-results/connectors-odoo-form.png" });
+  await page.getByRole("button", { name: "Save the import" }).click();
+  await expect(page.locator("main")).toContainText(`purchase orders to send · to Odoo at http://localhost:${odooPort}`);
+  const row = page.locator("tr", { hasText: "Purchase orders to Odoo" });
+  await row.getByRole("button", { name: "Run now" }).click();
+  // Output: made and confirmed in Odoo with our number as its source document, kept as P00201
+  await expect(page.getByRole("status").first()).toContainText("1 purchase order to Odoo: 1 sent");
+  expect(odooCalls).toEqual(expect.arrayContaining(["purchase.order.create", "purchase.order.button_confirm"]));
+  expect(made[0]).toMatchObject({ partner_id: 9, origin: "PO-00001" });
+  await row.getByRole("button", { name: "Run now" }).click();
+  await expect(page.getByRole("status").first()).toContainText("nothing to send: every purchase order is in Odoo as it is here");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+  await page.screenshot({ path: "test-results/connectors-odoo-phone.png", fullPage: true });
 });
