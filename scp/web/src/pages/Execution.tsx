@@ -822,7 +822,11 @@ function Journal({ ds }: { ds: Dataset }) {
 // ------------------------------------------------------------------------------------------------
 function Roll({ ds }: { ds: Dataset }) {
   const start = ds.settings.planning_start;
-  const [to, setTo] = useState(addDays(start, 7));
+  // the date picked belongs to the planning start it was picked from: another company, an undo or a roll made
+  // elsewhere starts again a week after its own start (the page may stay mounted through all of them)
+  const [pick, setPick] = useState({ start, to: addDays(start, 7) });
+  const to = pick.start === start ? pick.to : addDays(start, 7);
+  const setTo = (v: string) => setPick({ start, to: v });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<RollSnapshot | null>(lastRoll);
@@ -837,7 +841,7 @@ function Roll({ ds }: { ds: Dataset }) {
       lastRoll = { report: out.report, on: out.dataset };
       setSnapshot(lastRoll);
       await store.run("actuals");
-      setTo(addDays(to, 7));
+      setPick({ start: out.dataset.settings.planning_start, to: addDays(to, 7) });
     } catch (e) {
       setErr(String(e));
     } finally {

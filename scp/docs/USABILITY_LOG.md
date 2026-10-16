@@ -1043,6 +1043,7 @@ the generated company of 5,000 products.
 | N295 | The invoice total on the button was always in rupees: a 15,000 USD bill read "₹15,000.00". | Major | **Fixed:** the total is in the supplier's currency when the lines share one. |
 | N296 | Where sales history is recorded at the DC itself (the generated company), the cycle count followed the DC's own supply lane back to the plant: every product at the DC used nothing up and was C. | Major | **Fixed:** history at a stocking place counts for that place. Only a customer's or market's history goes to the place that ships to it. |
 | N297 | A price difference is a figure on the page, not a posting to an account; a moving price cannot be revalued by hand (S/4 MR21); there is one price per product at a place, not per batch or valuation type. | Minor | Open: the account postings come with the double-entry journal (7.4); a price change by hand and split valuation, open. |
+| N298 | *Roll the plan forward* kept the date it offered while the company under it changed: after a roll then an undo (or another company opened with the page still mounted) it offered the week after the roll, 19 Jan, for a plan starting on 5 Jan. The browser test failed on it in CI and passed here only because the page happened to be mounted again. | Minor | **Fixed:** the date picked belongs to the planning start it was picked from; another start offers a week after its own. The test checks the date after the undo and the redo, with the page open. |
 
 ## Found in the second reality check (after Phase E)
 
