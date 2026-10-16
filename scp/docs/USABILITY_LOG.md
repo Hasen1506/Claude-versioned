@@ -599,8 +599,41 @@ system answers page by page and can give only what changed after a time.
 | N202 | A web API that pages its answer was read one page at a time, and every run read everything again. | Serious | **Fixed.** Pages by the next page's address or by number, at most a set number (more fails the run); `{since}` is the last good run's start. |
 | N203 | A refused file left no trace of what it held: the log said "not a list of records" and nothing else. | Minor | **Fixed.** The log keeps the start of what was read with the message. |
 | N204 | The mapping table offered a date format and a factor for every field, the place and product included. | Minor | **Fixed** before it shipped: a factor only for numbers, a date format only for dates (any field of master data). |
-| N205 | The form sends only an `Authorization` header; an API with its own header (Shopify's `X-Shopify-Access-Token`) can be set only through the API. | Minor | Open: the named connectors of 3.2 and 3.3 carry their own credential fields. |
+| N205 | The form sends only an `Authorization` header; an API with its own header (Shopify's `X-Shopify-Access-Token`) can be set only through the API. | Minor | Partly fixed in 3.2: Zoho has its own credential fields (client ID, secret, refresh token). Shopify's comes with 3.3. |
 | N206 | An API that names its next page in a `Link` header (Shopify) cannot be paged, since only the body is read. | Minor | Open, for 3.3. |
+
+### 3.2: Tally Prime and Zoho Inventory (16 October 2026)
+
+ENTERPRISE_PLAN 3.2, through the engine and in a browser. Kaveri's books are in Tally Prime; a second company sells
+through Zoho Inventory. Neither was at hand, so each was played by a server answering as its documented interface
+does (Tally's XML envelopes, counts and `LINEERROR`s; Zoho's JSON with `code`, `page_context` and OAuth tokens): the
+connectors are checked against those formats, not yet against a running Tally or a live Zoho organisation.
+
+* *Tally's stock items, ledgers, stock and sales orders* (input: *Connect Tally*, Tally's address, the company's name
+  in Tally, the place its stock is at, *Translate codes* `Tin White 1L=TIN`; processing: the export envelope asks for
+  the collection, the answer's names become codes here, translated where the mapping says; output: products with
+  Tally's stock group as family, customers and suppliers from Sundry Debtors and Creditors with address and GSTIN, the
+  closing balance counted at the plant, sales order vouchers as customer orders a line per due date). *Try it* reads
+  Tally now and shows each line and the rows as the fields here before anything is saved.
+* *Purchase orders to Tally* (input: *What it brings: purchase orders to send*, the supplier's ledger translated;
+  processing: a purchase order voucher numbered as here, with each line's due date, rate and the purchase ledger;
+  output: "1 purchase order to Tally: 1 sent", *made in Tally as PO-00001* in Messages, the order taken, and the next
+  run "nothing to send". Changed here: the voucher is altered; cancelled or deleted here: cancelled. Refused by Tally
+  (*Ledger 'Sharma Metals' does not exist!*): said on the line, nothing kept, sent again next run).
+* *Zoho Inventory* (input: *Connect Zoho*, the organisation ID, the data centre, a self client's ID, secret and refresh
+  token; processing: one access token an hour, pages of 200, sales orders newest first until one older than the last
+  good run, each read whole; output: as Tally's, and purchase orders made with Zoho's item and vendor IDs). The secret
+  is not shown again: *Change* shows "kept as it is".
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N207 | A code translation with no column named was dropped when the import was saved: the form kept a row only when it named a source or a value, but for a connector "the same field" is the usual case. Found by the browser test (Tally's `Tin White 1L` reached the dry run untranslated). | Serious | **Fixed.** A row with codes is kept. |
+| N208 | Connectors' rows are typed already: the mapping table offered a factor and a date format to them. | Minor | **Fixed.** Hidden for Tally and Zoho; *From* reads "the same field". |
+| N209 | A new product from Tally or Zoho would have changed a product kept here: type, unit and family sent on every run. | Serious | **Fixed** before it shipped: those fields (a place's type and region too) are taken only by a new record. |
+| N210 | An order sent and taken, whose answer was lost (a timeout), would have been made twice on the next run. | Serious | **Fixed** before it shipped: the connector asks Tally (an export by voucher number) or Zoho (by `purchaseorder_number`) first and then changes it. |
+| N211 | Tally's stock is read item by item as one total at one place: godown-wise closing stock is not read. | Minor | Open: Tally's godown-wise closing needs a TDL report; to be done against a running Tally. |
+| N212 | Zoho's stock is the item's total, not per warehouse or location (Zoho gives that only item by item, which its call limits make slow). | Minor | Open. |
+| N213 | Goods movements are not read from Tally (receipt notes, delivery notes, stock journals) or Zoho (receives, packages). | Minor | Open: stock is counted instead; postings come with 3.3's pattern. |
 
 ## Found in the second reality check (after Phase E)
 

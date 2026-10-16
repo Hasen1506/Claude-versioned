@@ -296,6 +296,52 @@ schedule and `{since}` stay as they were. Only an owner may: an import reads fro
 **Run now** reads the file at once. The message log keeps the first 2,000 characters of what was read beside each
 message (*What was read* on **Connections → Messages**, `sample` in `GET /messages`).
 
+## Tally Prime and Zoho Inventory
+
+A scheduled import can ask Tally Prime or Zoho Inventory directly (*Connect Tally*, *Connect Zoho* on **Connections
+→ Scheduled imports**; `source_type` `tally` or `zoho` in the API). Each job does one thing, on its schedule:
+
+| What it brings | Tally Prime | Zoho Inventory |
+|---|---|---|
+| `records:products` | stock items: the name (as the code too, unless translated), the stock group as family and the base unit of a new product | items: the SKU (else the name) as the code, the unit and item group of a new product, the selling rate as price; services are left out |
+| `records:locations` | ledgers under Sundry Debtors (customers) and Sundry Creditors (suppliers), sub-groups too: address, GSTIN, the state as region of a new one | contacts: customers and vendors, GSTIN, billing address, place of supply as region of a new one |
+| `stock` | each stock item's closing balance, counted at the place the job names | each tracked item's stock on hand, counted at the place the job names |
+| `orders` | vouchers of the sales order type (`Sales Order` unless set) of the last `days_back` days: a line due in parts is a line per due date (`ORDERDUEDATE`), a cancelled voucher cancels the order, an optional one is not read | sales orders changed since the last good run (newest first, until an older one), each read whole: the shipment date is each line's date, a void order cancels it, a draft is not read |
+| `send:purchase_order` | purchase order vouchers numbered as the order here (`Alter` when it changed, `Cancel` when it was cancelled or deleted here), quantities in the stock item's own unit, booked to the purchase ledger | purchase orders numbered as the order here (`ignore_auto_number_generation`), Zoho's item and vendor IDs found by SKU or name; changed: updated, cancelled: cancelled; the earliest line date is the delivery date |
+
+```json
+{"name": "Tally stock", "kind": "stock", "source_type": "tally", "source": "http://tally-pc:9000",
+ "app": {"company": "Kaveri Kitchenware", "place": "PLT-PUNE"},
+ "mapping": {"fields": {"product": {"values": {"Mixer Grinder 500W": "MG-500"}}}},
+ "every": "hour", "at": "00:05"}
+```
+
+- **Codes.** The mapping translates them (`values`, the other system's code = the code here; a field without
+  `source` is the connector's field of the same name). A name not translated becomes the code here as it is, with
+  characters a code cannot have made hyphens (`Steel Tumbler 250 ml` → `Steel-Tumbler-250-ml`). Sending, each code
+  here goes as the first name translated to it; otherwise as the name of the product or supplier here (Tally: a
+  product's name when its code was made from it).
+- **Kept as here.** A product's type, unit and family, and a place's type and region, are taken only by a new record:
+  one kept here is not made another type because the other system says so. Its name, address and GSTIN follow.
+- **Purchase orders out.** The orders an ERP would take (`GET /erp/purchase-orders`) are sent one by one; what the
+  other system took is acknowledged as an ERP acknowledges, so each keeps its number there (`erp_ref`) and goes again
+  only when it changes. A refused one (Tally's or Zoho's own words) goes again on the next run. Before making one,
+  the connector asks whether the other system has it already by our number (an answer lost on the way), and then
+  changes it rather than making it twice. An order cancelled here that was never sent is not sent.
+- **Tally** answers on its port (F1 Help → Settings → Connectivity: TallyPrime acts as a server, port 9000). It sits
+  on the company's own network: the server reaches it only when the administrator allows its host by name
+  (`SCP_IMPORT_HOSTS=tally-pc`), so a server on the internet needs a tunnel or a server on the same network. `company`
+  is the company's name in Tally (empty: the one open). An answer with a document type (entities) is refused; the
+  control characters Tally writes in names are dropped.
+- **Zoho**: the organisation ID is the source, `data_centre` where it is kept (`in`, `com`, `eu`, `com.au`, `jp`,
+  `ca`, `sa`), and a *self client* from Zoho's API console gives `secrets`: `client_id`, `client_secret` and
+  `refresh_token` (scope `ZohoInventory.FullAccess.all`). They are kept on the server and never shown again (their
+  names are in `header_names`); changing the job with a value left empty keeps the one kept for the same organisation
+  and data centre. An access token is asked for once an hour (once more if Zoho stops taking it early). At most
+  20,000 records of a kind, and 500 sales orders changed between two runs, are read.
+- **Try it** and **Dry run** work as for a file: a pasted answer of Tally's (or one page of Zoho's) is read as the
+  connector would; a dry run of `send:purchase_order` builds what would be sent and sends nothing.
+
 ## E-mail from the server
 
 When the server has a mail server set up (`SCP_SMTP_HOST`, see [DEPLOY.md](DEPLOY.md)), documents can go from the server.
@@ -330,7 +376,7 @@ These are set in the server's environment:
 | Variable | What it does | Default |
 |---|---|---|
 | `SCP_IMPORT_DIR` | Folder of company folders (`<dir>/<company id>/`) for scheduled imports. None: imports read web addresses only. | none |
-| `SCP_IMPORT_HOSTS` | Comma-separated hosts a scheduled import may read from. None: any host on the internet, never one inside the server's own network. That means no private, loopback or link-local address, as the name resolves when the file is read, redirects included. | none |
+| `SCP_IMPORT_HOSTS` | Comma-separated hosts a scheduled import may read from. None: any host on the internet, never one inside the server's own network. That means no private, loopback or link-local address, as the name resolves when the file is read, redirects included. A host named here may be on the server's own network (a company's Tally). | none |
 | `SCP_TIMEZONE` | Time zone of the imports' and reminders' times of day, e.g. `Asia/Kolkata`. | `UTC` |
 | `SCP_SCHEDULER` | `0` stops this server from running imports and reminders, e.g. on a second server using the same database. | on |
 | `SCP_SMTP_*`, `SCP_PUBLIC_URL` | Mail, as for password resets; the public address is used in reminder links. | none |

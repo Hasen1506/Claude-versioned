@@ -34,6 +34,8 @@ FIELDS: dict[str, list[str]] = {
     "stock": ["location", "product", "qty", "batch", "expires_on", "stock_type", "quality", "blocked"],
     "postings": ["ref", "action", "number", "qty", "date", "final", "location", "product", "batch", "expires_on",
                  "supplier_batch", "stock_type", "to_type", "note"],
+    # a connector's purchase orders going out (ENTERPRISE_PLAN 3.2): codes there = here, read backwards
+    "send:purchase_order": ["product", "supplier", "location"],
 }
 LINE = "line"
 
@@ -250,6 +252,35 @@ def apply(kind: str, recs: list[dict[str, Any]], m: Mapping, day_first: bool = T
     return rows
 
 
+def recode(kind: str, rows: list[dict[str, Any]], m: Mapping | None, day_first: bool = True) -> list[dict[str, Any]]:
+    """A connector's rows (already named as the fields here) with the mapping's translations: a field the mapping
+    names is filled from its source (empty: the field of the same name), the other fields stay as they came."""
+    if m is None or not m.fields:
+        return rows
+    out = []
+    for row in rows:
+        new = dict(row)
+        for target, f in m.fields.items():
+            v = _value(target, f, _pick(row, f.source or target), day_first, kind)
+            if v is None:
+                new.pop(target, None)
+            else:
+                new[target] = v
+        out.append(new)
+    return out
+
+
+def inverse(m: Mapping | None, target: str) -> dict[str, str]:
+    """A field's code translation read backwards (here → there), for what goes out: the first code there that
+    becomes a code here names it (``*`` is no code)."""
+    out: dict[str, str] = {}
+    f = m.fields.get(target) if m is not None else None
+    for there, here in (f.values.items() if f is not None else []):
+        if there != "*" and here not in out:
+            out[here] = there
+    return out
+
+
 def sample(raw: bytes, limit: int = 2000) -> str:
     """The start of what was read, kept with its message so a refused line can be looked at."""
     text = raw[: limit * 4].decode("utf-8-sig", errors="replace")
@@ -257,4 +288,4 @@ def sample(raw: bytes, limit: int = 2000) -> str:
 
 
 __all__ = ["FIELDS", "FieldMap", "Mapping", "apply", "check", "columns", "csv_records", "dig", "fields_of",
-           "json_items", "records", "sample"]
+           "inverse", "json_items", "recode", "records", "sample"]

@@ -230,6 +230,7 @@ export type TryInput = S["TryInput"];
 export type Mapping = S["Mapping"];
 export type FieldMap = S["FieldMap"];
 export type Paging = S["Paging"];
+export type AppSettings = S["AppSettings"];
 export type MailInput = S["MailInput"];
 export type MailRow = S["MailRow"];
 export type MailSetup = S["MailSetup"];

@@ -1,7 +1,7 @@
 // The connector framework's screens (ENTERPRISE_PLAN 3.1): which column or field of the other system fills each
 // field here, how a web API gives its pages, and a dry run that shows what would become of each line before anything
 // is saved.
-import type { FieldMap, Mapping, MessageRow, Paging, Tried } from "../api/types";
+import type { AppSettings, FieldMap, Mapping, MessageRow, Paging, Tried } from "../api/types";
 import { Badge, type Severity } from "../components/ui";
 
 /** One field of the mapping as typed: codes and numbers stay text until the import is saved or tried. */
@@ -24,8 +24,14 @@ export const FIELD_NAMES: Record<string, string> = {
 const DATES = new Set(["date", "order_date", "expires_on"]);
 const NUMBERS = new Set(["qty", "price", "quality", "blocked"]);
 
-export function startRows(kind: string, fields: string[]): MapRow[] {
-  return (FIRST[kind] ?? fields.slice(0, 3)).map((target) => blankRow(target));
+/** A connector's rows are named as the fields here already: what usually needs translating is the codes. */
+const CODES: Record<string, string[]> = {
+  orders: ["customer", "product"], stock: ["product"], "records:products": ["id"], "records:locations": ["id"],
+  "send:purchase_order": ["product", "supplier"],
+};
+
+export function startRows(kind: string, fields: string[], app = false): MapRow[] {
+  return ((app ? CODES[kind] : undefined) ?? FIRST[kind] ?? fields.slice(0, 3)).map((target) => blankRow(target));
 }
 
 export const blankRow = (target: string): MapRow => ({ target, source: "", codes: "", factor: "", date_format: "", value: "" });
@@ -51,7 +57,7 @@ export function fromMapping(m: Mapping | null | undefined): { items: string; eac
 export function toMapping(items: string, each: string, rows: MapRow[]): Mapping {
   const fields: Record<string, FieldMap> = {};
   for (const r of rows) {
-    if (!r.source.trim() && !r.value.trim()) continue;
+    if (!r.source.trim() && !r.value.trim() && !r.codes.trim()) continue;   // a connector's field translated as it comes
     const f: FieldMap = { source: r.source.trim(), date_format: r.date_format.trim() };
     const codes = codesOf(r.codes);
     if (Object.keys(codes).length) f.values = codes;
@@ -62,9 +68,9 @@ export function toMapping(items: string, each: string, rows: MapRow[]): Mapping 
   return { items: items.trim(), each: each.trim(), fields };
 }
 
-export function MappingEditor({ kind, fields, json, items, each, rows, columns, onChange }: {
+export function MappingEditor({ kind, fields, json, items, each, rows, columns, onChange, app }: {
   kind: string; fields: string[]; json: boolean; items: string; each: string; rows: MapRow[]; columns: string[];
-  onChange: (p: { items?: string; each?: string; rows?: MapRow[] }) => void;
+  onChange: (p: { items?: string; each?: string; rows?: MapRow[] }) => void; app?: string;
 }) {
   const set = (i: number, p: Partial<MapRow>) => onChange({ rows: rows.map((r, j) => (j === i ? { ...r, ...p } : r)) });
   const left = fields.filter((f) => !rows.some((r) => r.target === f));
@@ -81,13 +87,14 @@ export function MappingEditor({ kind, fields, json, items, each, rows, columns, 
     </div>}
     <datalist id={list}>{columns.map((c) => <option key={c} value={c} />)}</datalist>
     <div className="table-wrap"><table className="t small">
-      <thead><tr><th>Field here</th><th>From (column or path)</th><th>Codes there = here</th><th>× by</th><th>Dates written as</th><th>If empty</th><th /></tr></thead>
+      <thead><tr><th>Field here</th><th>From (column or path)</th><th>Codes there = here</th>{!app && <><th>× by</th><th>Dates written as</th></>}<th>If empty</th><th /></tr></thead>
       <tbody>{rows.map((r, i) => <tr key={r.target}>
         <td className="nowrap"><b>{FIELD_NAMES[r.target] ?? r.target.replace(/_/g, " ")}</b><div className="faint mono">{r.target}</div></td>
-        <td><input className="input mono" list={list} value={r.source} onChange={(ev) => set(i, { source: ev.target.value })} aria-label={`${r.target} from`} placeholder={json ? "customer.code" : "Item Code"} /></td>
-        <td><input className="input mono" value={r.codes} onChange={(ev) => set(i, { codes: ev.target.value })} aria-label={`${r.target} codes`} placeholder="WH-01=P; *=?" /></td>
-        <td>{(any || NUMBERS.has(r.target)) && <input className="input num" inputMode="decimal" value={r.factor} onChange={(ev) => set(i, { factor: ev.target.value })} aria-label={`${r.target} times`} style={{ width: 70 }} />}</td>
-        <td>{(any || DATES.has(r.target)) && <input className="input mono" value={r.date_format} onChange={(ev) => set(i, { date_format: ev.target.value })} aria-label={`${r.target} date format`} placeholder="%d-%b-%Y" style={{ width: 110 }} />}</td>
+        <td><input className="input mono" list={list} value={r.source} onChange={(ev) => set(i, { source: ev.target.value })} aria-label={`${r.target} from`} placeholder={app ? "the same field" : json ? "customer.code" : "Item Code"} /></td>
+        <td><input className="input mono" value={r.codes} onChange={(ev) => set(i, { codes: ev.target.value })} aria-label={`${r.target} codes`}
+          placeholder={app === "tally" ? "Tin White 1L=TIN-W" : "WH-01=P; *=?"} style={{ minWidth: 180 }} /></td>
+        {!app && <td>{(any || NUMBERS.has(r.target)) && <input className="input num" inputMode="decimal" value={r.factor} onChange={(ev) => set(i, { factor: ev.target.value })} aria-label={`${r.target} times`} style={{ width: 70 }} />}</td>}
+        {!app && <td>{(any || DATES.has(r.target)) && <input className="input mono" value={r.date_format} onChange={(ev) => set(i, { date_format: ev.target.value })} aria-label={`${r.target} date format`} placeholder="%d-%b-%Y" style={{ width: 110 }} />}</td>}
         <td><input className="input" value={r.value} onChange={(ev) => set(i, { value: ev.target.value })} aria-label={`${r.target} if empty`} style={{ width: 90 }} /></td>
         <td><button type="button" className="btn sm ghost" aria-label={`Leave out ${r.target}`} onClick={() => onChange({ rows: rows.filter((_, j) => j !== i) })}>×</button></td>
       </tr>)}</tbody>
@@ -95,8 +102,10 @@ export function MappingEditor({ kind, fields, json, items, each, rows, columns, 
     {left.length > 0 && <label className="row small">Add a field
       <select className="select" value="" aria-label="Add a field" style={{ width: "auto" }} onChange={(ev) => ev.target.value && onChange({ rows: [...rows, blankRow(ev.target.value)] })}>
         <option value="">choose…</option>{left.map((f) => <option key={f} value={f}>{FIELD_NAMES[f] ?? f.replace(/_/g, " ")}</option>)}</select></label>}
-    <span className="faint small">Codes are translated one by one (<code>*</code> for any other); dates use <code>%d</code> day, <code>%m</code> or <code>%b</code> month,
-      <code>%Y</code> year. A field left out is not changed.</span>
+    {app && <span className="faint small">A name {app === "tally" ? "Tally" : "Zoho"} gives that is not translated becomes the code here as it is (spaces and other
+      characters a code cannot have become hyphens). {kind.startsWith("send:") && "Sending, each code here goes as the first name translated to it."}</span>}
+    <span className="faint small">Codes are translated one by one (<code>*</code> for any other){!app && <>; dates use <code>%d</code> day, <code>%m</code> or <code>%b</code> month,
+      <code>%Y</code> year</>}. A field left out is not changed.</span>
   </div>;
 }
 
@@ -143,5 +152,57 @@ export function TryResult({ t, onColumn }: { t: Tried; onColumn?: (c: string) =>
       {m.items.length > 0 && <table className="t small"><tbody>{m.items.map((it, j) => <tr key={j}>
         <td className="nowrap"><b>{it.ref || "—"}</b></td><td><Badge sev={ITEM[it.status]}>{ITEM_WORD[it.status] ?? it.status}</Badge></td><td>{it.message}</td></tr>)}</tbody></table>}
     </div>)}
+  </div>;
+}
+
+// ---- named connectors (ENTERPRISE_PLAN 3.2) --------------------------------------------------------------------
+export const APP_NAMES: Record<string, string> = { tally: "Tally Prime", zoho: "Zoho Inventory" };
+const ZOHO_DC: [string, string][] = [["in", "zoho.in (India)"], ["com", "zoho.com (US)"], ["eu", "zoho.eu"], ["com.au", "zoho.com.au"],
+  ["jp", "zoho.jp"], ["ca", "zohocloud.ca"], ["sa", "zoho.sa"]];
+
+/** What Tally or Zoho needs beyond its address: the company in Tally, the place stock is at, Zoho's credentials. */
+export function AppFields({ app, kind, value, onChange, places, secrets, kept, onSecrets }: {
+  app: string; kind: string; value: Partial<AppSettings>; onChange: (s: Partial<AppSettings>) => void; places: { id: string; name: string }[];
+  secrets: Record<string, string>; kept: string[]; onSecrets: (s: Record<string, string>) => void;
+}) {
+  const set = (p: Partial<AppSettings>) => onChange({ ...value, ...p });
+  const SECRET: Record<string, string> = { client_id: "Client ID", client_secret: "Client secret", refresh_token: "Refresh token" };
+  return <div className="stack" style={{ gap: 8 }} role="group" aria-label={`${APP_NAMES[app]} settings`}>
+    <div className="qrow">
+      {app === "tally" && <label className="qf"><span className="qf-l">Company in Tally</span>
+        <input className="input" value={value.company ?? ""} onChange={(ev) => set({ company: ev.target.value })} aria-label="Company in Tally" placeholder="the one open in Tally" />
+        <span className="qf-h">as Tally names it (Gateway of Tally → the company's name)</span></label>}
+      {app === "zoho" && <label className="qf"><span className="qf-l">Data centre</span>
+        <select className="select" value={value.data_centre ?? "in"} onChange={(ev) => set({ data_centre: ev.target.value as AppSettings["data_centre"] })} aria-label="Data centre">
+          {ZOHO_DC.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select>
+        <span className="qf-h">where you sign in to Zoho</span></label>}
+      {kind === "stock" && <label className="qf"><span className="qf-l">Stock is at</span>
+        <select className="select" value={value.place ?? ""} onChange={(ev) => set({ place: ev.target.value })} aria-label="Stock is at">
+          <option value="">choose a place…</option>{places.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}</select>
+        <span className="qf-h">{app === "tally" ? "Tally's closing balance of each item is counted here" : "each tracked item's stock on hand is counted here"}</span></label>}
+      {kind === "records:products" && <label className="qf"><span className="qf-l">A new product is</span>
+        <select className="select" value={value.product_type ?? "FG"} onChange={(ev) => set({ product_type: ev.target.value as AppSettings["product_type"] })} aria-label="New product type">
+          <option value="FG">a finished good</option><option value="SFG">a sub-assembly</option><option value="RM">a raw material</option><option value="PKG">packaging</option></select>
+        <span className="qf-h">a product kept here keeps its type and unit</span></label>}
+      {kind === "orders" && <label className="qf"><span className="qf-l">{app === "tally" ? "Vouchers of the last" : "First read: changed in the last"}</span>
+        <input className="input num" type="number" min={1} max={730} value={value.days_back ?? 90} onChange={(ev) => set({ days_back: Number(ev.target.value) || 90 })} aria-label="Days back" style={{ width: 90 }} />
+        <span className="qf-h">days{app === "zoho" && "; after that, what changed since the last good run"}</span></label>}
+      {app === "tally" && kind === "orders" && <label className="qf"><span className="qf-l">Voucher type</span>
+        <input className="input" value={value.order_type ?? "Sales Order"} onChange={(ev) => set({ order_type: ev.target.value })} aria-label="Order voucher type" /></label>}
+      {app === "tally" && kind.startsWith("send:") && <>
+        <label className="qf"><span className="qf-l">Voucher type</span>
+          <input className="input" value={value.purchase_type ?? "Purchase Order"} onChange={(ev) => set({ purchase_type: ev.target.value })} aria-label="Purchase voucher type" /></label>
+        <label className="qf"><span className="qf-l">Booked to the ledger</span>
+          <input className="input" value={value.purchase_ledger ?? "Purchase"} onChange={(ev) => set({ purchase_ledger: ev.target.value })} aria-label="Purchase ledger" /></label></>}
+    </div>
+    {app === "zoho" && <div className="qrow">
+      {Object.entries(SECRET).map(([k, label]) => <label key={k} className="qf"><span className="qf-l">{label}</span>
+        <input className="input mono" type={k === "client_id" ? "text" : "password"} autoComplete="off" value={secrets[k] ?? ""} aria-label={label}
+          onChange={(ev) => onSecrets({ ...secrets, [k]: ev.target.value })} placeholder={kept.includes(k) ? "kept as it is" : ""} /></label>)}
+      <span className="qf-h" style={{ flexBasis: "100%" }}>From a <i>self client</i> in Zoho's API console (api-console.zoho.{value.data_centre ?? "in"}), with the scope
+        <code> ZohoInventory.FullAccess.all</code>; kept on the server for this organisation and never shown again.</span>
+    </div>}
+    {app === "tally" && <span className="faint small">Tally answers on its port (F1 Help → Settings → Connectivity: Tally acts as a server, port 9000). It sits on your own network:
+      the server's administrator allows it by name (<code>SCP_IMPORT_HOSTS</code>) for the server to reach it.</span>}
   </div>;
 }

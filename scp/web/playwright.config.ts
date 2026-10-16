@@ -4,7 +4,8 @@ import { importDir } from "./e2e/paths";
 // The engine serves the built client (run `npm run build` first). Locally a pre-installed Chromium
 // can be used via PW_CHROMIUM=/path/to/chrome; CI installs Playwright's own browser.
 const port = 8765;
-// a second server that sends mail, to a mail server kept by the tests (e2e/smtp_sink.py), for e2e/mail.spec.ts
+// a second server that sends mail, to a mail server kept by the tests (e2e/smtp_sink.py), for e2e/mail.spec.ts, and
+// reads from a Tally on this machine, for e2e/connectors.spec.ts
 const mailPort = 8766;
 export default defineConfig({
   testDir: "e2e",
@@ -36,7 +37,9 @@ export default defineConfig({
       cwd: "../engine",
       env: { SCP_DB: ":memory:", SCP_SMTP_HOST: "127.0.0.1", SCP_SMTP_PORT: "2525", SCP_SMTP_TLS: "none",
              SCP_SMTP_FROM: "plan@scp.example", SCP_PUBLIC_URL: `http://127.0.0.1:${mailPort}`, SCP_SCHEDULER: "0",
-             SCP_AUTH_RATE: "0", SCP_ANON_RATE: "0", SCP_MAIL_OPEN_SIGNUP: "1" },
+             SCP_AUTH_RATE: "0", SCP_ANON_RATE: "0", SCP_MAIL_OPEN_SIGNUP: "1",
+             // e2e/connectors.spec.ts: a Tally the test runs on this machine, allowed by name as a company's own is
+             SCP_IMPORT_HOSTS: "localhost" },
       url: `http://127.0.0.1:${mailPort}/api/health`,
       reuseExistingServer: false,
       timeout: 60_000,

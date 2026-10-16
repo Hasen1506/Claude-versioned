@@ -2521,6 +2521,60 @@ export interface components {
             /** Token */
             token: string | null;
         };
+        /**
+         * AppSettings
+         * @description What a connector needs to know beyond its address and credentials.
+         */
+        AppSettings: {
+            /**
+             * Company
+             * @description Tally: the company's name in Tally (empty: the one open in Tally)
+             * @default
+             */
+            company: string;
+            /**
+             * Place
+             * @description Stock: the place here it is at, unless a godown or warehouse is translated (the mapping's location)
+             * @default
+             */
+            place: string;
+            /**
+             * @description The type a new product gets here
+             * @default FG
+             */
+            product_type: components["schemas"]["ProductType"];
+            /**
+             * Days Back
+             * @description Tally orders: the vouchers of this many days back are read (a changed one is changed here)
+             * @default 90
+             */
+            days_back: number;
+            /**
+             * Order Type
+             * @description Tally: the voucher type read as customer orders
+             * @default Sales Order
+             */
+            order_type: string;
+            /**
+             * Purchase Type
+             * @description Tally: the voucher type purchase orders are made as
+             * @default Purchase Order
+             */
+            purchase_type: string;
+            /**
+             * Purchase Ledger
+             * @description Tally: the ledger a purchase order is booked to
+             * @default Purchase
+             */
+            purchase_ledger: string;
+            /**
+             * Data Centre
+             * @description Zoho: where the organisation is kept (zoho.in, zoho.com, …)
+             * @default in
+             * @enum {string}
+             */
+            data_centre: "in" | "com" | "eu" | "com.au" | "jp" | "ca" | "sa";
+        };
         /** AppliedOrder */
         AppliedOrder: {
             /** Order */
@@ -5398,6 +5452,7 @@ export interface components {
             paging: components["schemas"]["Paging"] | null;
             /** Since */
             since: string | null;
+            app: components["schemas"]["AppSettings"] | null;
         };
         /** ImportJobs */
         ImportJobs: {
@@ -5414,6 +5469,20 @@ export interface components {
              * @default {}
              */
             fields: {
+                [key: string]: string[];
+            };
+            /**
+             * Apps
+             * @default {}
+             */
+            apps: {
+                [key: string]: string[];
+            };
+            /**
+             * Secrets
+             * @default {}
+             */
+            secrets: {
                 [key: string]: string[];
             };
         };
@@ -5967,12 +6036,21 @@ export interface components {
              * Source Type
              * @enum {string}
              */
-            source_type: "url" | "folder" | "api";
+            source_type: "url" | "folder" | "api" | "tally" | "zoho";
             /**
              * Source
-             * @description The web address, or the file pattern in the folder; {since} in an address is the time the last good run started (only what changed since)
+             * @description The web address, or the file pattern in the folder; {since} in an address is the time the last good run started (only what changed since); Tally: its address (http://tally-pc:9000); Zoho: the organisation ID
              */
             source: string;
+            /** @description Tally or Zoho: what the connector needs beyond its source */
+            app?: components["schemas"]["AppSettings"] | null;
+            /**
+             * Secrets
+             * @description Zoho: client_id, client_secret and refresh_token; omitted (or a value left empty) keeps the one kept for the same organisation
+             */
+            secrets?: {
+                [key: string]: string;
+            } | null;
             /** @description Which column or field there fills each field here; none: columns are recognised by their names */
             mapping?: components["schemas"]["Mapping"] | null;
             /** @description api: how the answer comes page by page */

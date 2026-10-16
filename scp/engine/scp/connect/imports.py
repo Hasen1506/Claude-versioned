@@ -48,6 +48,8 @@ from ..model.common import Model, Out
 from .erp import (
     ErpOrder, ErpPosting, ErpStock, ItemResult, apply_orders, apply_postings, apply_records, apply_stock, record_lists,
 )
+from . import apps
+from .apps import AppSettings
 from .mapping import Mapping, columns, dig, fields_of, json_items, records, sample
 from .mapping import apply as map_rows
 from .mapping import check as check_mapping
@@ -105,10 +107,16 @@ SINCE = "{since}"
 class JobInput(Model):
     name: str = Field(min_length=1, max_length=60)
     kind: str = Field(description="orders, stock, postings or records:<list>")
-    source_type: Literal["url", "folder", "api"]
+    source_type: Literal["url", "folder", "api", "tally", "zoho"]
     source: str = Field(min_length=1, max_length=500, description="The web address, or the file pattern in the "
                                                                   "folder; {since} in an address is the time the last "
-                                                                  "good run started (only what changed since)")
+                                                                  "good run started (only what changed since); Tally: "
+                                                                  "its address (http://tally-pc:9000); Zoho: the "
+                                                                  "organisation ID")
+    app: AppSettings | None = Field(None, description="Tally or Zoho: what the connector needs beyond its source")
+    secrets: dict[str, str] | None = Field(None, description="Zoho: client_id, client_secret and refresh_token; "
+                                                             "omitted (or a value left empty) keeps the one kept for "
+                                                             "the same organisation")
     mapping: Mapping | None = Field(None, description="Which column or field there fills each field here; none: "
                                                       "columns are recognised by their names")
     paging: Paging | None = Field(None, description="api: how the answer comes page by page")
@@ -143,6 +151,7 @@ class ImportJob(Out):
     mapping: Mapping | None = None
     paging: Paging | None = None
     since: str | None = None       # {since}: the start of the last good run (only what changed after it is read)
+    app: AppSettings | None = None   # Tally or Zoho: the connector's settings
 
 
 class ImportJobs(Out):
@@ -151,6 +160,8 @@ class ImportJobs(Out):
     timezone: str
     kinds: list[str]
     fields: dict[str, list[str]] = {}   # the fields a mapping can fill, by kind
+    apps: dict[str, list[str]] = {}     # Tally and Zoho: the kinds each reads (or, send:…, sends)
+    secrets: dict[str, list[str]] = {}  # the credentials each keeps
 
 
 class Tried(Out):
@@ -164,7 +175,7 @@ def _ensure(c: Companies) -> None:
     if not getattr(c, "_imports_ready", False):
         c.db.executescript(SCHEMA)
         have = {r[1] for r in c.db.execute("PRAGMA table_info(import_jobs)")}
-        for col in ("mapping", "paging", "cursor"):        # ENTERPRISE_PLAN 3.1: connectors
+        for col in ("mapping", "paging", "cursor", "app"):   # ENTERPRISE_PLAN 3.1–3.2: connectors
             if col not in have:
                 c.db.execute(f"ALTER TABLE import_jobs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
         c._imports_ready = True  # type: ignore[attr-defined]
@@ -208,7 +219,10 @@ def next_run(every: str, at: str, weekday: int, after: dt.datetime, zone: str | 
 
 
 def _check(c: Companies, cid: str, body: JobInput) -> None:
-    if body.kind not in kinds():
+    if body.source_type in apps.APPS:
+        if body.kind not in apps.kinds(body.source_type):
+            raise CompanyError(f"{apps.NAMES[body.source_type]} gives {', '.join(apps.kinds(body.source_type))}", 422)
+    elif body.kind not in kinds():
         raise CompanyError(f"an import is one of {', '.join(kinds())}", 422)
     if body.mapping is not None:
         try:
@@ -219,7 +233,9 @@ def _check(c: Companies, cid: str, body: JobInput) -> None:
         raise CompanyError("pages are read from a web API (from: a web API)", 422)
     if body.source_type == "api" and body.format != "json":
         raise CompanyError("a web API answers in JSON", 422)
-    if body.source_type in ("url", "api"):
+    if body.source_type == "zoho":
+        return
+    if body.source_type in ("url", "api", "tally"):
         u = urlparse(body.source.replace(SINCE, ""))
         if u.scheme not in ("http", "https") or not u.hostname:
             raise CompanyError("a web address starts with https:// (or http://)", 422)
@@ -237,6 +253,45 @@ def _check(c: Companies, cid: str, body: JobInput) -> None:
             raise CompanyError("a file pattern names files in the company's folder (stock-*.csv), not other folders", 422)
 
 
+def _check_app(body: JobInput, secrets: dict[str, str]) -> None:
+    """A connector that cannot work with what it was given (its credentials as they will be kept)."""
+    if body.source_type in apps.APPS:
+        try:
+            apps.check(body.source_type, body.kind, body.source, body.app or AppSettings(), secrets, body.mapping)
+        except ValueError as e:
+            raise CompanyError(str(e), 422) from None
+
+
+def _given(body: JobInput) -> dict[str, str] | None:
+    """The headers (a web address, Tally) or the credentials (Zoho) sent with a job."""
+    return body.secrets if body.source_type == "zoho" else body.headers
+
+
+def _kept(old: Any, body: JobInput) -> dict[str, str]:
+    """The headers or credentials a job keeps: those sent, else (or for a value left empty) the ones kept for the
+    same place, the same address or the same Zoho organisation in the same data centre."""
+    given = _given(body)
+    if body.source_type == "folder":
+        return {}
+    same = _same(old, body)
+    before = json.loads(old["headers"]) if same and old is not None else {}
+    if given is None:
+        return before
+    return {k: (v if v.strip() or k not in before else before[k]) for k, v in given.items()
+            if v.strip() or k in before} if body.source_type == "zoho" else given
+
+
+def _same(old: Any, body: JobInput) -> bool:
+    if old is None or old["source_type"] == "folder" or body.source_type == "folder":
+        return False
+    if (old["source_type"] == "zoho") != (body.source_type == "zoho"):
+        return False
+    if body.source_type == "zoho":
+        was = AppSettings.model_validate_json(old["app"]) if old["app"] else AppSettings()
+        return old["source"].strip() == body.source.strip() and was.data_centre == (body.app or AppSettings()).data_centre
+    return _origin(old["source"]) == _origin(body.source)
+
+
 def _job(c: Companies, r: Any) -> ImportJob:
     return ImportJob(id=r["id"], name=r["name"], kind=r["kind"], source_type=r["source_type"], source=r["source"],
                      header_names=sorted(json.loads(r["headers"])), format=r["format"], day_first=bool(r["day_first"]),
@@ -244,7 +299,8 @@ def _job(c: Companies, r: Any) -> ImportJob:
                      run_as=c._name(r["run_as"]), next_run=r["next_run"], last_run=r["last_run"],
                      last_status=r["last_status"], last_summary=r["last_summary"], mapping=_mapping(r),
                      paging=Paging.model_validate_json(r["paging"]) if r["paging"] else None,
-                     since=r["cursor"] or None)
+                     since=r["cursor"] or None,
+                     app=AppSettings.model_validate_json(r["app"]) if r["app"] else None)
 
 
 def _mapping(r: Any) -> Mapping | None:
@@ -263,7 +319,8 @@ def jobs(c: Companies, user: User, cid: str) -> ImportJobs:
         rows = c.db.execute("SELECT * FROM import_jobs WHERE company_id = ? AND deleted = 0 ORDER BY id", (cid,)).fetchall()
         f = folder_of(cid)
         return ImportJobs(jobs=[_job(c, r) for r in rows], folder=str(f) if f else None, timezone=company_timezone(c, cid),
-                          kinds=kinds(), fields={k: fields_of(k) for k in kinds()})
+                          kinds=kinds(), fields={k: fields_of(k) for k in [*kinds(), *apps.SENDS]},
+                          apps={a: apps.kinds(a) for a in apps.APPS}, secrets={a: apps.secrets_of(a) for a in apps.APPS})
 
 
 def save_job(c: Companies, user: User, cid: str, body: JobInput, jid: str | None = None,
@@ -281,11 +338,12 @@ def save_job(c: Companies, user: User, cid: str, body: JobInput, jid: str | None
             while c.db.execute("SELECT 1 FROM import_jobs WHERE id = ?", (jid,)).fetchone():
                 n += 1
                 jid = f"J{n:04d}"
+            kept = _kept(None, body)
+            _check_app(body, kept)
             c.db.execute("INSERT INTO import_jobs (id, company_id, name, kind, source_type, source, headers, format, "
-                         "day_first, every, at, weekday, enabled, run_as, created_at, next_run, mapping, paging) VALUES "
-                         "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (jid, cid, body.name, body.kind, body.source_type, body.source,
-                          json.dumps((body.headers or {}) if body.source_type != "folder" else {}),
+                         "day_first, every, at, weekday, enabled, run_as, created_at, next_run, mapping, paging, app) "
+                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (jid, cid, body.name, body.kind, body.source_type, body.source, json.dumps(kept),
                           body.format, int(body.day_first), body.every, body.at, body.weekday, int(body.enabled),
                           user.id, _iso(now), nxt, *_extras(body)))
             c._log(cid, None, user.id, "member", f"import {jid} “{body.name}” made: {body.kind} every {body.every}")
@@ -294,16 +352,13 @@ def save_job(c: Companies, user: User, cid: str, body: JobInput, jid: str | None
                              (jid, cid)).fetchone()
             if r is None:
                 raise CompanyError(f"no import {jid} in this company", 404)
-            same_origin = (r["source_type"] != "folder" and body.source_type != "folder"
-                           and _origin(r["source"]) == _origin(body.source))
-            headers = body.headers if body.headers is not None else json.loads(r["headers"]) if same_origin else {}
-            if body.source_type == "folder":
-                headers = {}
+            headers = _kept(r, body)
+            _check_app(body, headers)
             # another address or another kind of record: what changed since is read again from the start
-            cursor = r["cursor"] if same_origin and r["kind"] == body.kind else ""
+            cursor = r["cursor"] if _same(r, body) and r["kind"] == body.kind else ""
             c.db.execute("UPDATE import_jobs SET name = ?, kind = ?, source_type = ?, source = ?, headers = ?, format = ?, "
                          "day_first = ?, every = ?, at = ?, weekday = ?, enabled = ?, run_as = ?, next_run = ?, "
-                         "mapping = ?, paging = ?, cursor = ? WHERE id = ?",
+                         "mapping = ?, paging = ?, app = ?, cursor = ? WHERE id = ?",
                          (body.name, body.kind, body.source_type, body.source, json.dumps(headers), body.format,
                           int(body.day_first), body.every, body.at, body.weekday, int(body.enabled), user.id, nxt,
                           *_extras(body), cursor, jid))
@@ -312,11 +367,12 @@ def save_job(c: Companies, user: User, cid: str, body: JobInput, jid: str | None
     return jobs(c, user, cid)
 
 
-def _extras(body: JobInput) -> tuple[str, str]:
-    """The mapping and the paging as kept: an empty mapping is none."""
+def _extras(body: JobInput) -> tuple[str, str, str]:
+    """The mapping, the paging and a connector's settings as kept: an empty mapping is none."""
     m = body.mapping
     return (m.model_dump_json() if m is not None and (m.fields or m.items) else "",
-            body.paging.model_dump_json() if body.paging is not None and body.source_type == "api" else "")
+            body.paging.model_dump_json() if body.paging is not None and body.source_type == "api" else "",
+            (body.app or AppSettings()).model_dump_json() if body.source_type in apps.APPS else "")
 
 
 def delete_job(c: Companies, user: User, cid: str, jid: str) -> ImportJobs:
@@ -557,7 +613,7 @@ def _typed(kind: str, items: list[Any]) -> tuple[list[Any], list[ItemResult]]:
     return good, bad
 
 
-def applier(kind: str, items: list[Any]) -> Callable:
+def applier(kind: str, items: list[Any], add_only: frozenset[str] = frozenset()) -> Callable:
     good, bad = _typed(kind, items)
 
     def change(ds):
@@ -568,7 +624,7 @@ def applier(kind: str, items: list[Any]) -> Callable:
         elif kind == "postings":
             new, res = apply_postings(ds, good)
         else:
-            new, res = apply_records(ds, kind.split(":", 1)[1], good)
+            new, res = apply_records(ds, kind.split(":", 1)[1], good, add_only)
         return new, [*bad, *res]
     return change
 
@@ -701,12 +757,42 @@ def _fetch(url: str, headers: dict[str, str]) -> bytes:
 
 #: tests replace this to serve a file without a network
 fetch: Fetch = _fetch
+Http = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]]
+
+
+def _http(method: str, url: str, headers: dict[str, str], body: bytes | None = None) -> tuple[int, bytes]:
+    """A request a connector makes (ENTERPRISE_PLAN 3.2): to an address a job may read, as :func:`_fetch` is, and
+    answered with its status and body (an error's body too: Zoho says why in it)."""
+    import urllib.error
+    reachable(url)
+    req = urllib.request.Request(url, data=body, method=method, headers={"User-Agent": "scp-connector/1"})
+    for k, v in headers.items():
+        req.add_unredirected_header(k, v)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _PinnedHTTPHandler, _PinnedHTTPSHandler,
+                                         _Redirect)
+    try:
+        with opener.open(req, timeout=60) as r:
+            status, data = r.status, r.read(MAX_BYTES + 1)
+    except urllib.error.HTTPError as e:
+        status, data = e.code, e.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        raise ValueError(f"the answer is larger than {MAX_BYTES // (1024 * 1024)} MB")
+    return status, data
+
+
+#: tests replace this to answer as Tally or Zoho would
+http: Http = _http
 
 
 def _apply(c: Companies, user: User, cid: str, job: dict, raw: bytes, source: str, dry: bool = False) -> MessageAnswer:
     fingerprint = hashlib.sha256(raw).hexdigest()[:24]
-    items = parse(job["kind"], job["format"], raw, bool(job["day_first"]), _mapping_of(job))
-    return receive(c, user, cid, job["kind"], f"{job['id']}:{fingerprint}", applier(job["kind"], items),
+    if job["source_type"] in apps.APPS:
+        items = apps.items(job, raw, _mapping_of(job), bool(job["day_first"]))
+    else:
+        items = parse(job["kind"], job["format"], raw, bool(job["day_first"]), _mapping_of(job))
+    return receive(c, user, cid, job["kind"], f"{job['id']}:{fingerprint}",
+                   applier(job["kind"], items, apps.ADD_ONLY.get(job["kind"], frozenset()) if job["source_type"]
+                           in apps.APPS else frozenset()),
                    source=f"{job['id']} {job['name']}: {source}", sample=sample(raw), dry_run=dry)
 
 
@@ -775,6 +861,11 @@ def read_api(job: dict) -> bytes:
 
 
 def _read(job: dict) -> bytes:
+    if job["source_type"] in apps.APPS:
+        kept = json.loads(job["headers"])
+        zoho = job["source_type"] == "zoho"
+        return apps.module(job["source_type"]).read(job, apps.settings_of(job), kept if zoho else {},
+                                                    {} if zoho else kept)
     if job["source_type"] == "api":
         return read_api(job)
     return fetch(since(job["source"], job["cursor"]), json.loads(job["headers"]))
@@ -794,7 +885,10 @@ def _run(c: Companies, job: dict, runner: User, dry: bool = False) -> list[tuple
     with what was read."""
     cid = job["company_id"]
     out: list[tuple[MessageRow, bytes]] = []
-    if job["source_type"] in ("url", "api"):
+    if job["kind"].startswith("send:"):
+        from .apps import send
+        return send.run(c, job, runner, dry)
+    if job["source_type"] in ("url", "api", *apps.APPS):
         try:
             raw = _read(job)
         except Exception as e:  # noqa: BLE001 - the log says what went wrong
@@ -867,12 +961,18 @@ def _tried(job: dict, rows: list[tuple[MessageRow, bytes]]) -> Tried:
     raw = next((r for _row, r in rows if r), b"")
     cols: list[str] = []
     shown: list[dict[str, Any]] = []
-    if raw:
+    if raw and job["kind"].startswith("send:"):
+        pass
+    elif raw:
         m = _mapping_of(job)
         try:
-            cols = columns(records(job["kind"], job["format"], raw, m), m.each if m else "")
-            shown = [x if isinstance(x, dict) else {"value": x}
-                     for x in parse(job["kind"], job["format"], raw, bool(job["day_first"]), m)[:10]]
+            if job["source_type"] in apps.APPS:
+                cols = apps.columns(job, raw)
+                got = apps.items(job, raw, m, bool(job["day_first"]))
+            else:
+                cols = columns(records(job["kind"], job["format"], raw, m), m.each if m else "")
+                got = parse(job["kind"], job["format"], raw, bool(job["day_first"]), m)
+            shown = [x if isinstance(x, dict) else {"value": x} for x in got[:10]]
         except Exception:  # noqa: BLE001 - the message already says why it cannot be read
             pass
     return Tried(messages=[r for r, _raw in rows], columns=cols, rows=shown)
@@ -909,15 +1009,16 @@ def try_job(c: Companies, user: User, cid: str, body: TryInput) -> Tried:
                                  (body.id, cid)).fetchone()
             if saved is None:
                 raise CompanyError(f"no import {body.id} in this company", 404)
-    same = saved is not None and saved["source_type"] != "folder" and j.source_type != "folder" \
-        and _origin(saved["source"]) == _origin(j.source)
-    headers = j.headers if j.headers is not None else json.loads(saved["headers"]) if same and saved else {}
-    mapping, paging = _extras(j)
+    same = _same(saved, j)
+    headers = _kept(saved, j)
+    if body.content is None or j.kind.startswith("send:"):
+        _check_app(j, headers)
+    mapping, paging, app = _extras(j)
     job = {"id": body.id or "new", "company_id": cid, "name": j.name, "kind": j.kind, "source_type": j.source_type,
-           "source": j.source, "headers": json.dumps(headers if j.source_type != "folder" else {}), "format": j.format,
-           "day_first": int(j.day_first), "run_as": user.id, "mapping": mapping, "paging": paging,
+           "source": j.source, "headers": json.dumps(headers), "format": j.format,
+           "day_first": int(j.day_first), "run_as": user.id, "mapping": mapping, "paging": paging, "app": app,
            "cursor": saved["cursor"] if same and saved and saved["kind"] == j.kind else ""}
-    if body.content is None:
+    if body.content is None or j.kind.startswith("send:"):
         return _tried(job, _run(c, job, user, dry=True))
     raw = body.content.encode()
     if j.source_type == "api":   # a sample of one page: its records are where the mapping says
