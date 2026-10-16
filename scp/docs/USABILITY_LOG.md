@@ -671,6 +671,44 @@ of Odoo 19). The connectors are checked against those formats, not against a liv
 | N220 | Shopify's buyers are one customer here, so promises and margins are per channel, not per buyer. | Minor | By design for a shop; B2B buyers come through an ERP. |
 | N221 | Odoo's lots and Shopify's per-location committed stock are not read; stock is on hand only. | Minor | Open. |
 
+## Enterprise plan, phase 4: demand and S&OP depth (16 October 2026)
+
+### 4.1: The monthly S&OP cycle
+
+ENTERPRISE_PLAN 4.1, through the engine and in a browser: the Kaveri Kitchenware example in this browser, and a small
+company kept on the server by a signed-in owner. The example now carries the year's budget by product family.
+
+* *Budget* (input: Data → Budgets, a month's units and revenue for the mixer grinders and the kettles; output: a
+  table with the month, what it is for and both figures).
+* *The cycle* (input: Capacity plan → Monthly cycle, *Start the October 2026 cycle*; processing: five steps, each
+  signed in order; output, step by step):
+  1. *Data*: no blocking problems, 0 warnings, sales history to 21 September; signed.
+  2. *Demand review*: the demand plan month by month against the budget. October is 20,697 units against 20,750
+     (−0.3 %), but +6.2 % in revenue: more mixer grinders, fewer kettles. The six months are 4.8 % under the budget
+     in units, and kettles are 5.6 % under. Signed: the company as it stood was kept as plan version V0002.
+  3. *Supply review*: the capacity plan, solved by month, supplies 100 % of that demand. Signed.
+  4. *Pre-S&OP* would not sign without its minutes; signed with "Kettles below budget in Q1: promotion proposed for
+     January".
+  5. *Executive S&OP*: signed with the decision, which closed the month.
+* *Through the month* (output: a table with one row per signed step: units and revenue planned against the budget,
+  how much was supplied, and the plan version each step was kept as).
+* *Reopened* (input: the supply review, "Copper supplier cut its November capacity"; output: the supply review,
+  pre-S&OP and the executive step open again, their versions kept, the log saying who reopened them and why).
+* *In a company* (the owner names the demand review's owner from the members; the sign-offs carry their e-mail. In
+  the engine: a planner cannot sign another's step, a viewer signs nothing, and an executive step with no owner takes
+  an owner of the company. Next month's cycle starts with the same owners.)
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N222 | After a sign-off the page stayed on the signed step; the next step's button was one click away and easy to miss. | Minor | **Fixed.** A sign-off moves on to the next step. |
+| N223 | Reopening a step of a closed month answered with the month still closed. | Major | **Fixed** before it shipped (a test caught it): the answer is read after the change. |
+| N224 | With a demand lever on the capacity plan (demand × 1.5), the supply review showed more supply than demand. | Major | **Fixed.** The supply steps show the demand that plan supplies, and say it is scaled. |
+| N225 | A plan starting on 5 October set 27 days of demand against a whole month's budget. | Major | **Fixed** before it shipped: a month partly inside the plan counts that part of its budget ("from 5 Oct 2026"), and says so. |
+| N226 | On a phone the month names wrapped onto four lines. | Minor | **Fixed.** |
+| N227 | An executive step without an owner can be signed only by an owner of the company. | Minor | By design: the plan the business runs on is approved by someone who answers for the company. |
+| N228 | Signing a supply step solves the capacity plan again on the server; at 5,000 products a sign-off waits as long as the plan. | Minor | Open: reuse the page's last solve of the same data. |
+| N229 | A budget is by month for a product, a family or the company; not by customer, region or channel. | Minor | Open. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

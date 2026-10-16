@@ -1181,6 +1181,113 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sop/cycles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Cycles */
+        get: operations["list_cycles_api_sop_cycles_get"];
+        put?: never;
+        /** Create Cycle */
+        post: operations["create_cycle_api_sop_cycles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sop/cycles/{cid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Cycle */
+        get: operations["get_cycle_api_sop_cycles__cid__get"];
+        put?: never;
+        post?: never;
+        /** Delete Cycle */
+        delete: operations["delete_cycle_api_sop_cycles__cid__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sop/cycles/{cid}/steps/{step}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Step Owner */
+        put: operations["set_step_owner_api_sop_cycles__cid__steps__step__owner_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sop/cycles/{cid}/steps/{step}/sign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign Step */
+        post: operations["sign_step_api_sop_cycles__cid__steps__step__sign_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sop/cycles/{cid}/steps/{step}/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reopen Step */
+        post: operations["reopen_step_api_sop_cycles__cid__steps__step__reopen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sop/figures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Step Figures
+         * @description A step's figures for the company as it is now: what signing it would record (nothing is kept).
+         */
+        post: operations["step_figures_api_sop_figures_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -2983,6 +3090,40 @@ export interface components {
             /** Estimate */
             estimate: number;
         };
+        /**
+         * Budget
+         * @description A month's budget: what the company planned to sell, for a product, a product family or the whole company.
+         *     The monthly S&OP cycle sets the demand plan and the supply plan against it, volume and revenue.
+         */
+        Budget: {
+            /**
+             * Month
+             * Format: date
+             * @description The month it is for (any day of it; read as the month)
+             */
+            month: string;
+            /**
+             * Product
+             * @description The product it budgets (or give a family, or neither for the whole company)
+             */
+            product?: string | null;
+            /**
+             * Family
+             * @description The product family it budgets
+             */
+            family?: string | null;
+            /**
+             * Qty
+             * @description Units planned to sell in the month
+             * @default 0
+             */
+            qty: number;
+            /**
+             * Revenue
+             * @description Sales planned in the month, in the company currency. Empty = the units at the product's price (a product's budget), else no revenue budget
+             */
+            revenue?: number | null;
+        };
         /** Calendar */
         Calendar: {
             /** Id */
@@ -3875,6 +4016,75 @@ export interface components {
             /** Suggested */
             suggested: number;
         };
+        /** Cycle */
+        Cycle: {
+            /** Id */
+            id: string;
+            /** Month */
+            month: string;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Next */
+            next: string | null;
+            /** Steps */
+            steps: components["schemas"]["CycleStep"][];
+            /** Log */
+            log: components["schemas"]["CycleLog"][];
+        };
+        /** CycleLog */
+        CycleLog: {
+            /** At */
+            at: string;
+            /** Actor */
+            actor: string;
+            /** Action */
+            action: string;
+            /** Detail */
+            detail: string;
+        };
+        /** CycleStep */
+        CycleStep: {
+            /** Step */
+            step: string;
+            /** Label */
+            label: string;
+            /** Owner */
+            owner: string;
+            /** Status */
+            status: string;
+            /**
+             * Signed By
+             * @default
+             */
+            signed_by: string;
+            /** Signed At */
+            signed_at: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /** Version Id */
+            version_id: string | null;
+            figures: components["schemas"]["Figures"] | null;
+        };
+        /** CycleSummary */
+        CycleSummary: {
+            /** Id */
+            id: string;
+            /** Month */
+            month: string;
+            /** Status */
+            status: string;
+            /** Next */
+            next: string | null;
+            /** Signed */
+            signed: number;
+        };
         /** DataQualityRow */
         DataQualityRow: {
             /** Code */
@@ -3968,6 +4178,8 @@ export interface components {
             sop?: components["schemas"]["SopSettings"];
             /** Stock Targets */
             stock_targets?: components["schemas"]["StockTarget"][];
+            /** Budgets */
+            budgets?: components["schemas"]["Budget"][];
             /** Changeovers */
             changeovers?: components["schemas"]["Changeover"][];
             scheduling?: components["schemas"]["ScheduleSettings"];
@@ -4711,6 +4923,23 @@ export interface components {
              */
             promise_firms: boolean;
         };
+        /** FamilyFigures */
+        FamilyFigures: {
+            /** Family */
+            family: string;
+            /** Budget Qty */
+            budget_qty: number;
+            /** Budget Revenue */
+            budget_revenue: number;
+            /** Demand Qty */
+            demand_qty: number;
+            /** Demand Revenue */
+            demand_revenue: number;
+            /** Supply Qty */
+            supply_qty: number | null;
+            /** Supply Revenue */
+            supply_revenue: number | null;
+        };
         /** FieldChange */
         FieldChange: {
             /** Path */
@@ -4795,6 +5024,59 @@ export interface components {
              * @default
              */
             date_format: string;
+        };
+        /** Figures */
+        Figures: {
+            /** Step */
+            step: string;
+            /** Currency */
+            currency: string;
+            /**
+             * Planning Start
+             * Format: date
+             */
+            planning_start: string;
+            /** Months */
+            months: components["schemas"]["MonthFigures"][];
+            /** Families */
+            families: components["schemas"]["FamilyFigures"][];
+            /** Blocking */
+            blocking: number;
+            /** Warnings */
+            warnings: number;
+            /** History To */
+            history_to: string | null;
+            /** Fill Rate */
+            fill_rate: number | null;
+            /**
+             * Limits
+             * @default []
+             */
+            limits: string[];
+            /**
+             * Unpriced
+             * @default []
+             */
+            unpriced: string[];
+            /**
+             * Budgets
+             * @default 0
+             */
+            budgets: number;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /** FiguresRequest */
+        FiguresRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Step
+             * @description One of data, demand, supply, pre, exec
+             */
+            step: string;
         };
         /** FinanceResult */
         FinanceResult: {
@@ -7223,6 +7505,27 @@ export interface components {
             /** Rank */
             rank: number | null;
         };
+        /** MonthFigures */
+        MonthFigures: {
+            /** Month */
+            month: string;
+            /** Label */
+            label: string;
+            /** Share */
+            share: number;
+            /** Budget Qty */
+            budget_qty: number;
+            /** Budget Revenue */
+            budget_revenue: number;
+            /** Demand Qty */
+            demand_qty: number;
+            /** Demand Revenue */
+            demand_revenue: number;
+            /** Supply Qty */
+            supply_qty: number | null;
+            /** Supply Revenue */
+            supply_revenue: number | null;
+        };
         /**
          * MovementType
          * @enum {string}
@@ -7385,6 +7688,14 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** NewCycle */
+        NewCycle: {
+            /**
+             * Month
+             * @description The month of the cycle, YYYY-MM
+             */
+            month: string;
         };
         /** NewKey */
         NewKey: {
@@ -8166,6 +8477,15 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** OwnerRequest */
+        OwnerRequest: {
+            /**
+             * Owner
+             * @description Who signs the step (a member's e-mail); empty = nobody
+             * @default
+             */
+            owner: string;
         };
         /**
          * OwnerRule
@@ -9918,6 +10238,14 @@ export interface components {
             at: string;
             /** Weekdays */
             weekdays?: number[];
+        };
+        /** ReopenRequest */
+        ReopenRequest: {
+            /**
+             * Note
+             * @description Why it is reopened
+             */
+            note: string;
         };
         /** Requirement */
         Requirement: {
@@ -12088,6 +12416,16 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+        };
+        /** SignRequest */
+        SignRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Note
+             * @description What was agreed (the pre-S&OP and executive steps need it)
+             * @default
+             */
+            note: string;
         };
         /** SignUp */
         SignUp: {
@@ -15887,6 +16225,262 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessageRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_cycles_api_sop_cycles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CycleSummary"][];
+                };
+            };
+        };
+    };
+    create_cycle_api_sop_cycles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewCycle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_cycle_api_sop_cycles__cid__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_cycle_api_sop_cycles__cid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CycleSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_step_owner_api_sop_cycles__cid__steps__step__owner_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                step: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sign_step_api_sop_cycles__cid__steps__step__sign_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                step: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reopen_step_api_sop_cycles__cid__steps__step__reopen_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                step: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReopenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    step_figures_api_sop_figures_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FiguresRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Figures"];
                 };
             };
             /** @description Validation Error */

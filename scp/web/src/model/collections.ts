@@ -9,7 +9,7 @@ export type CollectionKey =
   | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
   | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
   | "customers" | "payment_terms" | "sales_orders" | "quotations" | "deliveries" | "invoices" | "returns"
-  | "contracts" | "supplier_invoices" | "supplier_returns";
+  | "contracts" | "supplier_invoices" | "supplier_returns" | "budgets";
 
 export interface Column {
   label: string;
@@ -303,6 +303,17 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Customers", get: (o) => ((o.customers as string[]) ?? []).join(", ") || "all" },
       { label: "From", get: (o) => s(o.start) }, { label: "To", get: (o) => s(o.end) },
       { label: "Qty", get: (o) => o.qty as number, num: true },
+    ],
+  },
+  {
+    key: "budgets", label: "Budgets", singular: "budget", defName: "Budget", issueType: "budget",
+    group: "Demand inputs", keyOf: (o) => `${s(o.month).slice(0, 7)}/${s(o.product ?? o.family ?? "*")}`,
+    blurb: "What the company planned to sell each month, for a product, a product family or the whole company. The monthly S&OP cycle sets the demand and supply plans against it, volume and revenue.",
+    columns: [
+      { label: "Month", get: (o) => s(o.month).slice(0, 7) },
+      { label: "For", get: (o) => (o.product ? s(o.product) : o.family ? `family ${s(o.family)}` : "the company") },
+      { label: "Units", get: (o) => o.qty as number, num: true },
+      { label: "Revenue", get: (o) => (o.revenue ?? null) as number | null, num: true },
     ],
   },
   {

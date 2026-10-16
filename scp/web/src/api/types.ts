@@ -71,6 +71,11 @@ export type DdmrpRow = S["DdmrpRow"];
 export type PoolingRow = S["PoolingRow"];
 
 export type SopResult = S["SopResult"];
+export type Budget = S["Budget"];
+export type Cycle = S["Cycle"];
+export type CycleStep = S["CycleStep"];
+export type CycleSummary = S["CycleSummary"];
+export type CycleFigures = S["Figures"];
 export type SopReleaseResponse = S["SopReleaseResponse"];
 export type PlacementResponse = S["PlacementResponse"];
 export type SopDemandLine = S["DemandLine"];

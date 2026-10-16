@@ -1,4 +1,5 @@
 import type {
+  Cycle, CycleFigures, CycleSummary,
   ProductionUsageInput,
   Comparison, FinanceResult, FixResult, KeepResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   PlanTrace, ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
@@ -472,6 +473,18 @@ export const api = {
   promote: (id: string, name?: string) =>
     call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, { method: "POST", body: JSON.stringify({ name: name ?? null }) }),
   compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`).then(done("whatif")),
+  /** The monthly S&OP cycle (enterprise 4.1): its steps are signed in order, each freezing the company. */
+  cycles: () => call<CycleSummary[]>("/api/sop/cycles"),
+  cycle: (id: string) => call<Cycle>(`/api/sop/cycles/${encodeURIComponent(id)}`),
+  newCycle: (month: string) => call<Cycle>("/api/sop/cycles", { method: "POST", body: JSON.stringify({ month }) }),
+  dropCycle: (id: string) => call<CycleSummary[]>(`/api/sop/cycles/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  stepOwner: (id: string, step: string, owner: string) =>
+    call<Cycle>(`/api/sop/cycles/${encodeURIComponent(id)}/steps/${step}/owner`, { method: "PUT", body: JSON.stringify({ owner }) }),
+  signStep: (id: string, step: string, ds: Dataset, note: string) =>
+    withDataset<Cycle>(`/api/sop/cycles/${encodeURIComponent(id)}/steps/${step}/sign`, ds, { note }),
+  reopenStep: (id: string, step: string, note: string) =>
+    call<Cycle>(`/api/sop/cycles/${encodeURIComponent(id)}/steps/${step}/reopen`, { method: "POST", body: JSON.stringify({ note }) }),
+  cycleFigures: (ds: Dataset, step: string) => withDataset<CycleFigures>("/api/sop/figures", ds, { step }),
   /** Roadmap H: example cases (fictional teaching datasets) with their brief and ready-made what-if scenarios. */
   cases: () => call<CaseInfo[]>("/api/cases"),
   /** Roadmap E: plan 2–4 scenarios from one base (chips) and compare them side by side. */

@@ -26,7 +26,7 @@ from .sales import (
     SalesOrder, SalesSettings,
 )
 from .schedule import Changeover, ScheduleSettings
-from .sop import SopMode, SopSettings, StockTarget
+from .sop import Budget, SopMode, SopSettings, StockTarget
 from .master import (
     BomAlternative, BomItem, Calendar, CapacityChange, CoProduct, CustomerPrice, LaneMode, Location, LocationProduct, LotSizing, MrpGroup, Operation, Product,
     OrderStock, ProductionSource, PurchasingSource, Resource, SafetyStockPolicy, Settings, Shift, Subcontract, TransportLane,
@@ -35,6 +35,7 @@ from .master import (
 from .transactional import DemandRecord, Reservation, SalesHistory, ConfirmedDelivery, ScheduledReceipt
 
 __all__ = [
+    "Budget",
     "Customer", "Delivery", "DeliveryLine", "Invoice", "InvoiceLine", "PaymentTerms", "Payment", "QuoteLine",
     "Quotation", "ReturnOrder", "SalesOrder", "SalesSettings",
     "Approval", "ContractLine", "PriceScale", "PurchaseContract", "PurchaseOrder", "PurchasingSettings", "ReleaseLevel",

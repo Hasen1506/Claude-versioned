@@ -19,7 +19,7 @@ KEYS: dict[str, tuple[str, ...]] = {
     "demand": ("id", "location", "product", "date", "kind"), "confirmations": ("order", "ship_from", "ship_date"),
     "changeovers": ("resource", "from_group", "to_group"), "closed_orders": ("kind", "id"),
     "accuracy": ("location", "product", "start"), "customer_prices": ("customer", "product"), "vendors": ("supplier",),
-    "purchase_orders": ("id",), "stock_targets": ("location", "product", "date"), "rolled_weeks": ("start",),
+    "purchase_orders": ("id",), "stock_targets": ("location", "product", "date"), "budgets": ("month", "product", "family"), "rolled_weeks": ("start",),
     "customers": ("customer",), "payment_terms": ("id",), "sales_orders": ("id",), "quotations": ("id",),
     "deliveries": ("id",), "invoices": ("id",), "returns": ("id",), "contracts": ("id",), "supplier_invoices": ("id",),
     "supplier_returns": ("id",),

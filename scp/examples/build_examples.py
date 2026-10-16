@@ -331,6 +331,14 @@ def kitchenware() -> dict:
             {"id": "AL-ECOM-KT-NOV", "product": "KT-15", "customers": ["CUS-ECOM"], "start": "2026-11-01",
              "end": "2026-12-01", "qty": 1800, "fallback": "next_period"},
         ],
+        # the year's sales budget by product family, which the monthly S&OP cycle sets the plan against
+        "budgets": [
+            {"month": f"{y}-{m:02d}-01", "family": fam, "qty": qty, "revenue": rev}
+            for (y, m), lift in (((2026, 10), 1.25), ((2026, 11), 1.1), ((2026, 12), 1.0), ((2027, 1), 0.9),
+                                 ((2027, 2), 0.9), ((2027, 3), 1.0))
+            for fam, qty, rev in (("Mixer grinders", round(9200 * lift), round(30_500_000 * lift, -4)),
+                                  ("Kettles", round(7400 * lift), round(8_800_000 * lift, -4)))
+        ],
         # capacity investments appraised against the S&OP plan (P9)
         "finance": {"capacity_options": [
             {"id": "CAP-L1-SHIFT3", "name": "Third shift on assembly line 1", "resource": "PUNE-L1",

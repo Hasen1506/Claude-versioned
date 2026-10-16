@@ -757,3 +757,11 @@ textarea.input { height: auto; min-height: 4.6em; padding-block: 6px; line-heigh
 .recovery-codes code { font-size: 14px; letter-spacing: .04em; }
 .recovery-box { text-align: left; align-items: stretch; justify-content: flex-start; }
 .recovery-box > .row { justify-content: flex-start; }
+
+/* the monthly S&OP cycle: five steps signed in order */
+.cycle-track { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.cycle-step { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left;
+  padding: 8px 10px; background: var(--surface); color: var(--text); border: 1.5px solid var(--border); font: 13px var(--font); cursor: pointer; }
+.cycle-step.signed { border-color: var(--good); }
+.cycle-step.on { border-color: var(--ink); box-shadow: inset 0 -3px 0 var(--hl); }
+.cycle-step span { overflow-wrap: anywhere; }

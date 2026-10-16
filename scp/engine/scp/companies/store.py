@@ -168,7 +168,7 @@ LABELS = {
     "cancelled_purchase_orders": "purchase order cancellations",
     "sales": "sales settings",
     "demand": "orders and forecasts", "receipts": "open orders", "history": "sales history", "events": "events",
-    "npi": "new products", "overrides": "forecast overrides", "stock_targets": "stock targets",
+    "npi": "new products", "overrides": "forecast overrides", "stock_targets": "stock targets", "budgets": "budgets",
     "changeovers": "changeovers", "allocations": "allocations", "confirmations": "promises", "movements": "goods movements",
     "batches": "batches", "inventory_docs": "physical inventory documents",
     "closed_orders": "closed orders", "accuracy": "forecast accuracy", "rolled_weeks": "weeks moved forward",

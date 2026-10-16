@@ -164,6 +164,11 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         if n > 1:
             c.add("DUP_ID", "customer_price", f"{cu}/{prod}", f"{prod} has {n} prices for {cu}; the first is used",
                   "Keep one price per customer and product")
+    for (mon, prod, fam), n in Counter((b.month.replace(day=1), b.product, b.family) for b in ds.budgets).items():
+        if n > 1:
+            what = f"{prod}" if prod else f"family {fam}" if fam else "the company"
+            c.add("DUP_ID", "budget", f"{mon:%Y-%m}/{prod or fam or '*'}",
+                  f"{what} has {n} budgets for {mon:%B %Y}", "Keep one budget per month and product, family or company")
     for (loc, prod), n in Counter((lp.location, lp.product) for lp in ds.location_products).items():
         if n > 1:
             c.add("DUP_LOCATION_PRODUCT", "location_product", f"{loc}/{prod}",
@@ -299,6 +304,10 @@ def _references(ds: Dataset, c: _Collector) -> None:
         _ref(ds, c, "family", a.family, "allocation", a.id, "family")
         for cu in a.customers:
             _ref(ds, c, "location", cu, "allocation", a.id, "customers")
+    for b in ds.budgets:
+        bid = f"{b.month:%Y-%m}/{b.product or b.family or '*'}"
+        _ref(ds, c, "product", b.product, "budget", bid, "product")
+        _ref(ds, c, "family", b.family, "budget", bid, "family")
     for i, cf in enumerate(ds.confirmations):
         _ref(ds, c, "location", cf.ship_from, "confirmation", f"#{i}", "ship_from")
         if cf.order not in so_ids:

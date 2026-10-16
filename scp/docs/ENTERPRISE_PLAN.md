@@ -45,6 +45,8 @@ Done: 3.1 (N200–N206), 3.2 (N207–N213; godown and warehouse stock and goods 
 | 3.3 | Online sellers and ERPs | Shopify (orders, stock, locations) and Odoo (JSON-RPC: products, BOMs, stock, orders); outbound purchase and production orders to each |
 
 ## Phase 4: Demand and S&OP depth
+Done: 4.1 (N222–N229; budgets by customer or region, and reusing the page's solve at sign-off, open).
+
 | # | Gap (guide §) | Build |
 |---|---|---|
 | 4.1 | No consensus cycle (§4) | A monthly S&OP cycle: data → demand review → supply review → pre-S&OP → executive, each with an owner, sign-off and a frozen snapshot; volume and revenue against budget |

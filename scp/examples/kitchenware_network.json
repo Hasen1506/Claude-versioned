@@ -8142,6 +8142,80 @@
    "fallback": "next_period"
   }
  ],
+ "budgets": [
+  {
+   "month": "2026-10-01",
+   "family": "Mixer grinders",
+   "qty": 11500,
+   "revenue": 38120000.0
+  },
+  {
+   "month": "2026-10-01",
+   "family": "Kettles",
+   "qty": 9250,
+   "revenue": 11000000.0
+  },
+  {
+   "month": "2026-11-01",
+   "family": "Mixer grinders",
+   "qty": 10120,
+   "revenue": 33550000.0
+  },
+  {
+   "month": "2026-11-01",
+   "family": "Kettles",
+   "qty": 8140,
+   "revenue": 9680000.0
+  },
+  {
+   "month": "2026-12-01",
+   "family": "Mixer grinders",
+   "qty": 9200,
+   "revenue": 30500000.0
+  },
+  {
+   "month": "2026-12-01",
+   "family": "Kettles",
+   "qty": 7400,
+   "revenue": 8800000.0
+  },
+  {
+   "month": "2027-01-01",
+   "family": "Mixer grinders",
+   "qty": 8280,
+   "revenue": 27450000.0
+  },
+  {
+   "month": "2027-01-01",
+   "family": "Kettles",
+   "qty": 6660,
+   "revenue": 7920000.0
+  },
+  {
+   "month": "2027-02-01",
+   "family": "Mixer grinders",
+   "qty": 8280,
+   "revenue": 27450000.0
+  },
+  {
+   "month": "2027-02-01",
+   "family": "Kettles",
+   "qty": 6660,
+   "revenue": 7920000.0
+  },
+  {
+   "month": "2027-03-01",
+   "family": "Mixer grinders",
+   "qty": 9200,
+   "revenue": 30500000.0
+  },
+  {
+   "month": "2027-03-01",
+   "family": "Kettles",
+   "qty": 7400,
+   "revenue": 8800000.0
+  }
+ ],
  "finance": {
   "capacity_options": [
    {
