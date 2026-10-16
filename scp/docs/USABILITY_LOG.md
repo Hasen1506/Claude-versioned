@@ -910,10 +910,60 @@ and kept by the person as one change, or a what-if kept as a stored scenario.
 | N264 | "Who is responsible for the mixer grinders?" found no problem: the words also named *Assembly line 1 (mixer grinders)*, so it looked for problems on both the products and the line. | Major | **Fixed:** a word said names one kind of record: the kind whose names share the most of the words takes them (products before places before machines), and the next kind is read from the words left. |
 | N265 | For the kettle (KT-15) and the 500 W mixer grinder the inbox's one-click *expedite* is offered, but pulling the firm transfer in by a day leaves the demand late; *Try it* says so ("stays late"). | Minor | Open: proposals are not tried before they are offered (each try is a plan of the whole company). |
 | N266 | "What if the kettle line is down 3 days?" changes nothing on time: the plan does not wait for machines unless capacity-constrained planning is on. | Minor | By design: the answer says so and where the change shows (the machine's load). |
-| N267 | "What if steel prices rise 10 %?" is not read: no what-if changes a supplier's price. | Minor | Open: a purchase-price change belongs with the what-if chips (5.3). |
+| N267 | "What if steel prices rise 10 %?" is not read: no what-if changes a supplier's price. | Minor | **Fixed in 5.3:** a purchase-price chip (a supplier's, or some products'), read by *Ask the plan* when a supplier or a bought product is named with a price and a per cent. |
 | N268 | Time words are not read: "Is anything going to be late next week?" answers for the whole horizon. | Minor | Open. |
 | N270 | At 5,000 × 20 a what-if question takes 3 minutes: the company is planned again whole with the change. | Minor | Open: a change to one product's demand or one supplier could be planned again from the kept work (5.1) instead. |
 | N269 | "Which orders are late", "show me shortages" and "goes bust" were not read as asked (the first as *what is at risk*, the others not at all); "1 days of lead time". | Minor | **Fixed.** |
+
+### 5.3: What-if smaller than the leaders'
+
+ENTERPRISE_PLAN 5.3, in a browser on the Kaveri Kitchenware example (*What if… side by side*, its new tab *Sweep one
+change*) and through the engine on the Chennai pumps example and the generated company of 5,000 products. One change
+is planned at two to eight sizes and read against today; a stored version is a column of the side-by-side, read on
+the server for the company that asks; and every scenario's sales projected late are given by the period their
+demand is due.
+
+* *Sweep a lever. Input:* safety stock at 0, 2, 5, 10 and 20 days of cover, every product at every place.
+  *Processing:* the company is planned at each size; each plan is read for its cost, the plan's own on-time service
+  and the service to *expect* when demand misses its forecast: at every stocking place that ships to a customer,
+  β = 1 − σ·G(SS/σ)/Q with σ the spread of demand over the lead time (the same variance safety stock is sized with),
+  SS the plan's safety stock, Q the typical lot and G the normal loss function, weighted by the demand each serves.
+  *Output:* "expected service 93.7 % to 100.0 % (today 99.8 %), cost 63,407,292 INR to 88,955,232 INR"; "the
+  cheapest service is from 0 d to 2 d: 6.0 points at 797,138 INR a point", from 2 d to 5 d a point costs
+  12,074,536 INR, 10 d "costs 5,183,907 INR more than 5 d and buys no expected service", and *Not worth it: 10 d,
+  20 d*. The chart puts cost against expected service, a dot a size, today as a ring and the sizes worth their money
+  joined; a click on a row shows that size's money at risk over time beside today's; *Keep as a version* stores it.
+* *Sweep an exposure. Input:* every supplier's lead time −7, +7, +14, +21 days on the Chennai pumps (in the
+  browser, the copper supplier's on Kaveri).
+  *Output:* "Service holds within half a point of today up to −7 d; at +7 d it is 96.5 % with 5,004,433 INR of sales
+  projected late (today 3,686,267 INR)", the most at risk at +21 d (13,442,933 INR). No frontier is drawn: a longer
+  lead time is not something bought.
+* *A stored version as a column. Input:* the working copy saved as *Plan as is*, then compared with the working copy
+  and *Busy season* (demand +20 %). *Output:* the column reads *stored version V0001*, with *same service* and no
+  cost difference against the baseline, and no *Keep* button (it is stored already); chips can go on top of it. A
+  version of another company is refused (404), as is a browser with no key of its own.
+* *Money at risk over time.* Under the side-by-side, one line a scenario by week, the baseline dashed and drawn on
+  top, with the figures by period: Busy season puts 10.56 L at risk in the first week and 24.42 L in the second,
+  against 8.8 L today. Each scenario's periods add up to its *sales at risk* row.
+* *A supplier's prices.* A new chip, *Purchase prices +10 % at SUP-COPPER*: its prices, price scales and contract
+  lines (+15.01 L of cost, the same service); it can be swept, and *Ask the plan* reads "What if Hindalco raises prices
+  10 %?" and "What if copper wire costs 10 % more?" as it.
+* *At 5,000 × 20:* each size is a plan of the whole company; expected service adds 1.5 s. Safety stock at 0 and 7
+  days (today and two sizes, three plans) took 4 min 54 s at a peak of 10.7 GB, one plan held at a time. Today's mix
+  of policies gives 100.0 % expected service; none at all gives 93.6 % for 32.4 Cr less, and 7 days on every product
+  costs 64.9 Cr more for no more service (*not worth it*).
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N271 | A sweep of safety stock had nothing to read: the plan takes the forecast as certain, so its on-time service never rises with safety stock (Kaveri: 99.6 % at 0 d and at 5 d). | Major | **Fixed:** safety stock is read against the service to expect when demand misses its forecast (the loss-function fill rate where stock meets customer demand); the plan's own service is shown beside it. |
+| N272 | More safety stock *lowered* the plan's on-time service (Kaveri, 30 days: 99.6 % to 84.0 %): the whole top-up is ordered now, in one lot with the demand that falls due while it is made (12,450 mixer grinders at Pune, waiting for 23,452 motors and their copper wire), so that demand waits for the larger lot. | Major | By design in MRP (a shortfall below safety stock is a requirement today), and said in the sweep with what to do instead (raise it in steps over several weeks). Open: a raised safety stock phased in over weeks. |
+| N273 | The safety stock chip replaced each product's policy whole, dropping its measured forecast error and review period. | Major | **Fixed:** both are kept; they describe the demand, not the policy. |
+| N274 | A demand sweep read "Demand −10 % costs more than the step before it and buys no service: the money goes to stock". | Minor | **Fixed:** only a lever bought for service (safety stock) is read as cost against service; every other change as an exposure (how far before service falls, what it puts at risk). |
+| N275 | The labels of dots at 100 % were cut off at the top of the chart; a scenario with the same money at risk as the baseline hid the baseline's line. | Minor | **Fixed:** room above the plot; the baseline is dashed and drawn last. |
+| N276 | The sweep's sentences give whole amounts with the currency code (63,407,292 INR) while the page beside them compacts (₹6.34 Cr), as *Ask the plan* does. | Minor | Open: the engine's sentences take the page's money format. |
+| N278 | "What if kettle prices rise 5 %?" was first read as the purchase price of the kettle body: "kettle" names the kettle we make and the body we buy. | Minor | **Fixed:** a price is read as a purchase price only when a supplier is named, or every product named is one we buy. |
+| N279 | At 5,000 × 20 the first sweep ran out of memory and was stopped without a word: each scenario's plan was still held while the next was made, two plans of about 11 GB. | Major | **Fixed:** a plan is let go once its figures are read, in the side-by-side and the sweep alike: one plan in memory at a time (10.7 GB at the peak). |
+| N277 | At 5,000 × 20 each size of a sweep plans the whole company again, one after another. | Minor | Open, as N270: a change to some products' or one supplier's data could be planned again from the kept work (5.1), and the sizes side by side on more cores. |
 
 ## Found in the second reality check (after Phase E)
 

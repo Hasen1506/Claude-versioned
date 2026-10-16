@@ -59,7 +59,8 @@ the spread on transfers and production, open). Phase 4 is done.
 
 ## Phase 5: Speed and an assistant
 Done: 5.1 (N255–N261; capacity-constrained plans and co-products planned whole, open); 5.2 (N262–N270; fixes offered
-before they are tried, a supplier price change and time words, open).
+before they are tried and time words, open; a supplier price change done in 5.3); 5.3 (N271–N279, with N267; a raised
+safety stock phased in over weeks, the engine's money format and sizes planned from the kept work, open).
 
 | # | Gap | Build |
 |---|---|---|

@@ -8,7 +8,7 @@ import type {
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
   User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
-  WhatIfChip, WhatIfResult, CaseInfo,
+  WhatIfChip, WhatIfResult, SweepResult, CaseInfo,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
 import { done } from "../lib/guide";
@@ -491,8 +491,10 @@ export const api = {
   /** Keep a what-if scenario as a stored scenario of the working copy's version (stored as a base first when it has none). */
   keepWhatIf: (base: Dataset, label: string, chips: WhatIfChip[], parent: string | null, baseName = "") =>
     call<KeepResult>("/api/whatif/keep", { method: "POST", body: JSON.stringify({ base: clean(base), label, chips, parent, base_name: baseName }) }),
-  whatif: (base: Dataset, scenarios: { label: string; chips: WhatIfChip[] }[]) =>
+  whatif: (base: Dataset, scenarios: { label: string; chips: WhatIfChip[]; version?: string | null }[]) =>
     call<WhatIfResult>("/api/whatif", { method: "POST", body: JSON.stringify({ base: clean(base), scenarios }) }).then(done("whatif")),
+  sweep: (base: Dataset, chip: WhatIfChip, values: number[]) =>
+    call<SweepResult>("/api/whatif/sweep", { method: "POST", body: JSON.stringify({ base: clean(base), chip, values }) }).then(done("whatif")),
   compare: (a: Dataset, b: Dataset, labelA: string, labelB: string) =>
     call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a: clean(a), b: clean(b), label_a: labelA, label_b: labelB }) }).then(done("whatif")),
   finance: (ds: Dataset) => planPost<FinanceResult>("/api/finance", ds),

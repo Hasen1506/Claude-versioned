@@ -59,7 +59,10 @@ from ..validate import RULES, Issue, validate
 from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, lenient_checked, plain_errors
 from ..validate.setup import SetupItem, checklist
 from ..cases import CASES, CaseInfo
-from ..whatif import KeepRequest, KeepResult, WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios, keep_scenario
+from ..whatif import (
+    KeepRequest, KeepResult, SweepRequest, SweepResult, WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios,
+    keep_scenario, sweep_chip,
+)
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
 from .connect import router as connect_router
@@ -67,7 +70,7 @@ from .cycle import router as cycle_router
 from .companies import (
     CORS_ORIGINS,
     Scope, StoredEditScope, StoredScope, company_error, edit_scope, gate, is_company, production_guard, require_signin,
-    router as companies_router, signup_policy, who_asks,
+    router as companies_router, signup_policy, stored_scope, who_asks,
 )
 from .working import PlanData, answer, is_ref, read as read_ref, respond, send
 from .monitor import STARTED, commit as build_commit, metrics_page, observe, setup_logging
@@ -1092,11 +1095,22 @@ def compare_versions(a: str, b: str, sc: StoredScope) -> Comparison:
 
 
 @app.post("/api/whatif", response_model=WhatIfResult)
-def post_whatif(req: WhatIfRequest) -> WhatIfResult:
-    """Roadmap E: plan 2–4 scenarios (the base with quick-change chips, or whole datasets) and compare them side by
-    side: cost, service, inventory, capacity, late units, their deltas against the first, and cost per service point."""
+def post_whatif(req: WhatIfRequest, request: Request) -> WhatIfResult:
+    """Roadmap E: plan 2–4 scenarios (the base with quick-change chips, whole datasets, or stored versions of the
+    caller's company, read here) and compare them side by side: cost, service, inventory, capacity, late units, their
+    deltas against the first, cost per service point, and money at risk in each period."""
     try:
-        return compare_scenarios(req)
+        return compare_scenarios(req, lambda vid: get_store().dataset(vid, stored_scope(request)))
+    except WhatIfError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@app.post("/api/whatif/sweep", response_model=SweepResult)
+def post_whatif_sweep(req: SweepRequest) -> SweepResult:
+    """Enterprise plan 5.3: one change at 2–8 sizes, each planned in full, read as cost against service (safety stock,
+    against the service expected when demand misses its forecast) or as an exposure (how far before service falls)."""
+    try:
+        return sweep_chip(req)
     except WhatIfError as e:
         raise HTTPException(422, str(e)) from None
 

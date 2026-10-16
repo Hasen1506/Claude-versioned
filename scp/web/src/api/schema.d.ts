@@ -2261,10 +2261,32 @@ export interface paths {
         put?: never;
         /**
          * Post Whatif
-         * @description Roadmap E: plan 2–4 scenarios (the base with quick-change chips, or whole datasets) and compare them side by
-         *     side: cost, service, inventory, capacity, late units, their deltas against the first, and cost per service point.
+         * @description Roadmap E: plan 2–4 scenarios (the base with quick-change chips, whole datasets, or stored versions of the
+         *     caller's company, read here) and compare them side by side: cost, service, inventory, capacity, late units, their
+         *     deltas against the first, cost per service point, and money at risk in each period.
          */
         post: operations["post_whatif_api_whatif_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/whatif/sweep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Whatif Sweep
+         * @description Enterprise plan 5.3: one change at 2–8 sizes, each planned in full, read as cost against service (safety stock,
+         *     against the service expected when demand misses its forecast) or as an exposure (how far before service falls).
+         */
+        post: operations["post_whatif_sweep_api_whatif_sweep_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6673,7 +6695,7 @@ export interface components {
             /** Label */
             label: string;
             /** Chips */
-            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"])[];
+            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"] | components["schemas"]["SupplierPriceChip-Input"])[];
             /** Parent */
             parent?: string | null;
             /**
@@ -8991,6 +9013,21 @@ export interface components {
             /** At */
             at: string;
         };
+        /** Period */
+        Period: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Label */
+            label: string;
+        };
         /** PlacementApplied */
         PlacementApplied: {
             /** Changes */
@@ -10004,7 +10041,7 @@ export interface components {
              * Chips
              * @default []
              */
-            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"] | components["schemas"]["MachineDownChip-Output"] | components["schemas"]["CustomerPriceChip-Output"] | components["schemas"]["SafetyDaysChip-Output"] | components["schemas"]["FxChip-Output"])[];
+            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"] | components["schemas"]["MachineDownChip-Output"] | components["schemas"]["CustomerPriceChip-Output"] | components["schemas"]["SafetyDaysChip-Output"] | components["schemas"]["FxChip-Output"] | components["schemas"]["SupplierPriceChip-Output"])[];
             /**
              * Name
              * @default
@@ -11640,8 +11677,10 @@ export interface components {
              * Chips
              * @default []
              */
-            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"])[];
+            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"] | components["schemas"]["SupplierPriceChip-Input"])[];
             dataset?: components["schemas"]["Dataset"] | null;
+            /** Version */
+            version?: string | null;
         };
         /** ScenarioIn */
         "ScenarioIn-Output": {
@@ -11651,8 +11690,10 @@ export interface components {
              * Chips
              * @default []
              */
-            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"] | components["schemas"]["MachineDownChip-Output"] | components["schemas"]["CustomerPriceChip-Output"] | components["schemas"]["SafetyDaysChip-Output"] | components["schemas"]["FxChip-Output"])[];
+            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"] | components["schemas"]["MachineDownChip-Output"] | components["schemas"]["CustomerPriceChip-Output"] | components["schemas"]["SafetyDaysChip-Output"] | components["schemas"]["FxChip-Output"] | components["schemas"]["SupplierPriceChip-Output"])[];
             dataset: components["schemas"]["Dataset"] | null;
+            /** Version */
+            version: string | null;
         };
         /** ScenarioInfo */
         ScenarioInfo: {
@@ -11735,6 +11776,13 @@ export interface components {
              * @default 0
              */
             errors: number;
+            /**
+             * At Risk
+             * @default []
+             */
+            at_risk: number[];
+            /** Expected Service */
+            expected_service: number | null;
             /** Cost Delta */
             cost_delta: number | null;
             /** Service Delta */
@@ -13552,6 +13600,40 @@ export interface components {
             /** Supplier */
             supplier: string;
         };
+        /** SupplierPriceChip */
+        "SupplierPriceChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "supplier_price";
+            /** Pct */
+            pct: number;
+            /** Supplier */
+            supplier?: string | null;
+            /**
+             * Products
+             * @default []
+             */
+            products: string[];
+        };
+        /** SupplierPriceChip */
+        "SupplierPriceChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "supplier_price";
+            /** Pct */
+            pct: number;
+            /** Supplier */
+            supplier: string | null;
+            /**
+             * Products
+             * @default []
+             */
+            products: string[];
+        };
         /**
          * SupplierReturn
          * @description Goods sent back to the supplier (≈ return delivery): taken out of stock against the order line, so the line
@@ -13668,6 +13750,139 @@ export interface components {
             ss_shortfall: number[];
             /** Unit Value */
             unit_value: number;
+        };
+        /** SweepPoint */
+        SweepPoint: {
+            /** Label */
+            label: string;
+            /** Ok */
+            ok: boolean;
+            /**
+             * Levers
+             * @default []
+             */
+            levers: components["schemas"]["Lever"][];
+            /**
+             * Total Cost
+             * @default 0
+             */
+            total_cost: number;
+            /**
+             * Service
+             * @default 0
+             */
+            service: number;
+            /**
+             * Inventory Value Avg
+             * @default 0
+             */
+            inventory_value_avg: number;
+            /**
+             * Capacity Peak
+             * @default 0
+             */
+            capacity_peak: number;
+            /**
+             * Late Units
+             * @default 0
+             */
+            late_units: number;
+            /**
+             * Late Revenue
+             * @default 0
+             */
+            late_revenue: number;
+            /**
+             * Sales Value
+             * @default 0
+             */
+            sales_value: number;
+            /**
+             * Orders
+             * @default 0
+             */
+            orders: number;
+            /**
+             * Errors
+             * @default 0
+             */
+            errors: number;
+            /**
+             * At Risk
+             * @default []
+             */
+            at_risk: number[];
+            /** Expected Service */
+            expected_service: number | null;
+            /** Cost Delta */
+            cost_delta: number | null;
+            /** Service Delta */
+            service_delta: number | null;
+            /** Inventory Delta */
+            inventory_delta: number | null;
+            /** Late Units Delta */
+            late_units_delta: number | null;
+            /** Sales Delta */
+            sales_delta: number | null;
+            /** Cost Per Service Point */
+            cost_per_service_point: number | null;
+            /**
+             * Verdict
+             * @default
+             */
+            verdict: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /**
+             * Value
+             * @default 0
+             */
+            value: number;
+            /** Step Cost Per Point */
+            step_cost_per_point: number | null;
+            /**
+             * Frontier
+             * @default false
+             */
+            frontier: boolean;
+        };
+        /** SweepRequest */
+        SweepRequest: {
+            base: components["schemas"]["Dataset"];
+            /** Chip */
+            chip: components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"] | components["schemas"]["SupplierPriceChip-Input"];
+            /** Values */
+            values: number[];
+        };
+        /** SweepResult */
+        SweepResult: {
+            /** Currency */
+            currency: string;
+            /** Kind */
+            kind: string;
+            /** Field */
+            field: string;
+            /**
+             * Lever
+             * @default false
+             */
+            lever: boolean;
+            baseline: components["schemas"]["ScenarioOut"];
+            /** Points */
+            points: components["schemas"]["SweepPoint"][];
+            /**
+             * Periods
+             * @default []
+             */
+            periods: components["schemas"]["Period"][];
+            /**
+             * Read
+             * @default []
+             */
+            read: string[];
         };
         /** TaxPart */
         TaxPart: {
@@ -14388,6 +14603,11 @@ export interface components {
             currency: string;
             /** Scenarios */
             scenarios: components["schemas"]["ScenarioOut"][];
+            /**
+             * Periods
+             * @default []
+             */
+            periods: components["schemas"]["Period"][];
             /**
              * Best Service
              * @default
@@ -18748,6 +18968,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WhatIfResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_whatif_sweep_api_whatif_sweep_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SweepRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweepResult"];
                 };
             };
             /** @description Validation Error */

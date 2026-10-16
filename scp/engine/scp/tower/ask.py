@@ -38,8 +38,8 @@ from ..plan.result import LateDemand, Peg, PlannedOrder, Requirement
 from ..plan.trace import TraceIndex, index as trace_index
 from ..time.capacity import hours_between, overtime_between
 from ..whatif import (AddShiftChip, Chip, CustomerPriceChip, DemandChip, FxChip, LaneDelayChip, LeadTimeChip,
-                      MachineDownChip, SafetyDaysChip, ScenarioOut, SupplierOutChip, WhatIfError, _metrics,
-                      apply_chips, chip_label)
+                      MachineDownChip, SafetyDaysChip, ScenarioOut, SupplierOutChip, SupplierPriceChip, WhatIfError,
+                      _metrics, apply_chips, chip_label)
 from .result import WorkItem
 
 Intent = Literal["why_late", "what_if", "who_owns", "at_risk", "unknown"]
@@ -752,13 +752,14 @@ class _Ask:
         res = [e.id for e in ents if e.kind == "resource"]
         curs = [e.id for e in ents if e.kind == "currency"]
         out: list[Chip] = []
+        priced = re.search(r"\bprices?\b|\bpricing\b|\bcosts?\b|\bdearer\b|\bcheaper\b|\bexpensive\b", low)
         if re.search(r"\bdemand\b|\bsales\b|\borders?\b|\bforecast\b|\bsell\b|\bvolume\b", low) and pct is not None \
                 and not re.search(r"\bprices?\b|\bpricing\b", low) and not curs:
             out.append(DemandChip(pct=pct, products=prods))
         for s in sups:
             if days is not None and re.search(r"\blate\b|\blead\s?times?\b|\bslips?\b|\bdelay", low):
                 out.append(LeadTimeChip(days=days, supplier=s))
-            elif re.search(r"\bout\b|\bstops?\b|\bfails?\b|\bdown\b|\bbankrupt|\bcan'?t\b|\bcannot\b|\bno longer\b"
+            elif not (pct is not None and priced) and re.search(r"\bout\b|\bstops?\b|\bfails?\b|\bdown\b|\bbankrupt|\bcan'?t\b|\bcannot\b|\bno longer\b"
                            r"|\blost\b|\bloses?\b|\bstrike\b|\bclos(es|ed)\b|\bshuts?\b|\bgone\b|\bdrops? out\b"
                            r"|\bbust\b|\bgoes under\b|\bcollapses?\b|\bunavailable\b|\bstops? supplying\b", low):
                 out.append(SupplierOutChip(supplier=s))
@@ -776,9 +777,15 @@ class _Ask:
         if days is not None and days >= 0 and re.search(
                 r"\broutes?\b|\blanes?\b|\btransit\b|\bshipping\b|\bports?\b|\bfreight\b|\btrucks?\b|\btransport\b", low):
             out.append(LaneDelayChip(days=days, location=(places + custs + sups)[0] if (places + custs + sups) else None))
-        if pct is not None and re.search(r"\bprices?\b|\bpricing\b", low):
+        if pct is not None and priced:
             for c in custs:
                 out.append(CustomerPriceChip(customer=c, pct=pct))
+            # what we pay: a supplier's prices, or the prices of products we buy (N267)
+            # only when every product named is bought: "kettle prices" names the kettle too, not just its body
+            bought = [p for p in prods if any(ps.product == p for ps in self.ds.purchasing_sources)]
+            if sups or (bought and len(bought) == len(prods) and not custs):
+                for s in sups or [None]:
+                    out.append(SupplierPriceChip(pct=pct, supplier=s, products=bought))
         if days is not None and days >= 0 and re.search(r"\bsafety\b", low):
             out.append(SafetyDaysChip(days=days, products=prods))
         if pct is not None:
@@ -797,8 +804,8 @@ class _Ask:
             return self.done("what_if", "What if …?",
                              "I could not tell which change to try. Name one: demand up or down by a per cent, a "
                              "supplier out or late by some days, a machine down for some days or with another shift, "
-                             "routes slower by some days, a customer's prices by a per cent, safety stock in days, or a "
-                             "currency by a per cent.", suggestions=self.suggest())
+                             "routes slower by some days, a customer's prices or a supplier's by a per cent, safety "
+                             "stock in days, or a currency by a per cent.", suggestions=self.suggest())
         label = " · ".join(chip_label(c) for c in chips)
         notes: list[str] = []
         try:

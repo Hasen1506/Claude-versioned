@@ -281,6 +281,7 @@ warehouses; 11,635 planning policies), two years of weekly sales history (624,00
 | Money | 17 s | |
 | Performance | 12 s | 6.7 GB |
 | Ask the plan (the worklist read, then the answer; a what-if question plans the company again, about 3 min) | 13–21 s | |
+| What-if sweep (one change at 2–8 sizes, and today: a plan of the whole company each, one after another) | about 100 s a size | 10.7 GB |
 | Saving a change (only what changed is sent) | 5–7 s | |
 
 *Plan everything* takes about five and a half minutes the first time for a company that size, and seconds when asked

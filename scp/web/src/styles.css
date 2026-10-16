@@ -469,6 +469,8 @@ button.tile.choice.on { border: 1px solid var(--ink); box-shadow: inset 4px 0 0 
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font: 11px var(--mono); color: var(--text-2); }
 .legend .key { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; }
 .legend .key.box { height: 10px; width: 10px; }
+.legend .key.dot { height: 10px; width: 10px; border-radius: 50%; }
+.legend .key.ring { height: 10px; width: 10px; border-radius: 50%; border: 2px solid var(--ink); background: var(--surface); box-sizing: border-box; }
 .legend .key.dash { background: repeating-linear-gradient(90deg, currentColor 0 4px, transparent 4px 7px) !important; }
 
 .empty { padding: 48px 24px; text-align: center; color: var(--text-2); }
@@ -784,3 +786,6 @@ table.t td.num.bad { color: var(--critical-text); }
 .cite:hover { text-decoration: underline; }
 .ask-proposal { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
 .ask-proposal:last-child { border-bottom: 0; padding-bottom: 0; }
+/* enterprise plan 5.3: what a sweep says, above its cost-against-service chart */
+.t tr.hl td { background: var(--accent-soft); }
+.sweep-read { margin: 0 0 12px; padding-left: 18px; display: grid; gap: 4px; max-width: 80ch; }

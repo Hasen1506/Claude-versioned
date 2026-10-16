@@ -85,6 +85,7 @@ ANON_COSTS: dict[str, int] = {
     "/api/promise": 5, "/api/promise/bop": 5, "/api/promise/check": 5, "/api/tower": 10, "/api/actuals": 5,
     "/api/purchasing": 5, "/api/sales": 5, "/api/network": 2, "/api/validate": 1,
     "/api/whatif": 80,                       # roadmap E: up to four full plans in one call
+    "/api/whatif/sweep": 160,                # enterprise 5.3: up to nine full plans (today and eight sizes)
     "/api/ask": 40,                          # a plan and the worklist; a what-if question plans a copy too
     "/api/tower/fix": 30,                    # two plans and their exceptions
 }
