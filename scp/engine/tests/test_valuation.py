@@ -272,3 +272,14 @@ def test_kaveri_classes_its_warehouses_by_what_their_customers_bought():
     assert p.notes and "sales history" in p.notes[0]
     assert {r.cls for r in p.rows} == {"A"}                   # three products, each under 80 % before it
     assert not [i for i in validate(x) if i.code.startswith("CYCLE")]
+
+
+def test_a_dc_whose_sales_history_is_its_own_is_classed_by_it_not_by_the_plant_that_supplies_it():
+    d = shop()
+    d["locations"].append({"id": "PL", "type": "plant"})
+    d["location_products"] += [{"location": "PL", "product": p, "on_hand": 0} for p in ("A1", "C2")]
+    d["lanes"] = [{"id": "L-PL-ST", "origin": "PL", "destination": "ST", "modes": [{"transit_days": 1}]}]
+    d["history"] = [{"location": "ST", "product": m["product"], "date": "2026-02-01", "qty": m["qty"]} for m in d.pop("movements")]
+    p = cycle_plan(ds(d))
+    assert {r.product: r.cls for r in p.rows if r.location == "ST"} == {"A1": "A", "A2": "A", "B1": "A", "C1": "B", "C2": "C"}
+    assert {r.cls for r in p.rows if r.location == "PL"} == {"C"}      # the plant sold nothing itself

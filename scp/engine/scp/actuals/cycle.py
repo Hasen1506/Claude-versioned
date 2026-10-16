@@ -97,9 +97,12 @@ def cycle_plan(ds: Dataset, location: str | None = None, as_of: date | None = No
         for h in ds.history if g is not None else []:
             if not since < h.date <= day:
                 continue
-            opts = g.options.get((h.location, h.product)) or []
-            src = next((o for o in opts if o.kind == "transfer"), None)
-            ship = ds.lane_by_id[src.source_id].origin if src is not None else h.location
+            if h.location in places:
+                ship = h.location               # sold from the place itself: its own lane in is where it gets supply
+            else:                               # a customer or market: the place that ships to it
+                opts = g.options.get((h.location, h.product)) or []
+                src = next((o for o in opts if o.kind == "transfer"), None)
+                ship = ds.lane_by_id[src.source_id].origin if src is not None else h.location
             if ship in quiet:
                 used[(ship, h.product)] += h.qty
                 nodes.add((ship, h.product))

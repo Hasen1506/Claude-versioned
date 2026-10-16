@@ -65,7 +65,7 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
   const nm = namesOf(ds);
   const waiting = pay.to_invoice.filter((g) => g.qty > 1e-6);
   const [pick, setPick] = useState<Set<string> | null>(null);
-  const chosen = pick ?? new Set(waiting.filter((g) => !po || g.po === po).map((g) => g.order));
+  const chosen = pick ?? new Set(waiting.filter((g) => !po || g.po === po || g.order === po).map((g) => g.order));
   const picked = waiting.filter((g) => chosen.has(g.order));
   const suppliers = new Set(picked.map((g) => g.supplier));
   const [edit, setEdit] = useState<Record<string, { qty: string; price: string }>>({});
@@ -81,6 +81,14 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
   const vendor = (ds.vendors ?? []).find((v) => v.supplier === supplier);
   const rate = vendor?.tax_rate ?? ds.purchasing?.tax_rate ?? 0;
   const toggle = (o: string) => { const n = new Set(chosen); if (n.has(o)) n.delete(o); else n.add(o); setPick(n); };
+  // a quantity or price typed on a line bills that line
+  const type = (o: string, v: Partial<{ qty: string; price: string }>) => {
+    setEdit({ ...edit, [o]: { ...line(o), ...v } });
+    if (!chosen.has(o)) setPick(new Set([...chosen, o]));
+  };
+  // the invoice is in the supplier's currency: the lines' own when they share one
+  const curs = new Set(picked.map((g) => g.currency ?? res.currency));
+  const billCur = curs.size === 1 ? [...curs][0] : res.currency;
   const enter = () => run("enter_invoice", "", {
     supplier, date: on, reference: ref, tax: tax === "" ? null : Number(tax), delivery_costs: Number(freight || 0),
     lines: picked.map((g) => ({ id: g.order, order: g.order, final: false, qty: Number(line(g.order).qty || g.qty),
@@ -108,7 +116,7 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
           placeholder={String(round2(net * rate))} value={tax} onChange={(e) => setTax(e.target.value)} /></label>
         <Edits><button className="btn accent" disabled={busy || !picked.length || suppliers.size !== 1} onClick={enter}
           title={suppliers.size > 1 ? "One invoice is from one supplier: tick lines of one supplier" : undefined}>
-          {busy ? "Checking…" : `Enter the invoice (${exactMoney(round2(net + (tax === "" ? net * rate : Number(tax))), res.currency)})`}</button></Edits>
+          {busy ? "Checking…" : `Enter the invoice (${exactMoney(round2(net + (tax === "" ? net * rate : Number(tax))), billCur)})`}</button></Edits>
       </>}>
         {waiting.length === 0 ? <Empty title="Nothing waiting for an invoice">Every goods receipt is invoiced. A supplier's credit memo for goods sent back is entered on Returns.</Empty> : (
           <div className="table-wrap" style={{ maxHeight: 360 }}>
@@ -123,11 +131,11 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
                     <td><Loc id={g.supplier} /></td><td><Prod id={g.product} /></td>
                     <td className="num">{qty(g.received)}</td><td className="num">{g.invoiced ? qty(g.invoiced) : ""}</td>
                     <td className="num"><input className="input num" style={{ width: 80 }} type="number" min={0} aria-label={`Billed quantity ${g.order}`}
-                      placeholder={String(g.qty)} value={line(g.order).qty} onChange={(e) => setEdit({ ...edit, [g.order]: { ...line(g.order), qty: e.target.value } })} /></td>
+                      placeholder={String(g.qty)} value={line(g.order).qty} onChange={(e) => type(g.order, { qty: e.target.value })} /></td>
                     <td className="num">{g.price != null ? unitMoney(g.price, g.currency) : "—"}</td>
                     <td className="num"><input className="input num" style={{ width: 80 }} type="number" min={0} step="any" aria-label={`Billed price ${g.order}`}
                       placeholder={g.price != null ? String(g.price) : ""} value={line(g.order).price}
-                      onChange={(e) => setEdit({ ...edit, [g.order]: { ...line(g.order), price: e.target.value } })} /></td>
+                      onChange={(e) => type(g.order, { price: e.target.value })} /></td>
                     <td>{g.last_receipt ? day(g.last_receipt) : "—"}</td>
                   </tr>
                 ))}

@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, ValuationRow } from "../api/types";
 import { Badge, Edits, Empty, Panel, StatTile } from "../components/ui";
-import { day, money, plural, qty, unitMoney } from "../lib/format";
+import { day, exactPrice, money, plural, qty } from "../lib/format";
 import { useLatest } from "../lib/latest";
 import { Msg, useNames } from "../lib/names";
 import { store } from "../state/store";
@@ -75,8 +75,8 @@ export function Books({ ds }: { ds: Dataset }) {
         <tbody>{v.entries.map((e, i) => <tr key={i}><td>{day(e.date)}</td><td>{nm.prod(e.product)}</td><td>{nm.loc(e.location)}</td>
           <td><Msg text={e.what} />{e.reference ? <span className="faint small"> · {e.reference}</span> : null}</td>
           <td className="num">{e.qty ? qty(e.qty) : "—"}</td><td className="num">{money(e.amount, cur)}</td>
-          <td className="num">{e.price_before != null ? unitMoney(e.price_before, cur) : "—"}</td>
-          <td className="num">{e.price_after != null ? unitMoney(e.price_after, cur) : "—"}</td></tr>)}</tbody>
+          <td className="num">{e.price_before != null ? exactPrice(e.price_before, cur) : "—"}</td>
+          <td className="num">{e.price_after != null ? exactPrice(e.price_after, cur) : "—"}</td></tr>)}</tbody>
       </table></div> : <Empty title="No postings yet">The journal holds no goods movements.</Empty>}
     </Panel>}
   </div>;
@@ -87,6 +87,6 @@ function Row({ r, cur }: { r: ValuationRow; cur: string }) {
   const away = r.control === "moving_average" ? (r.price ?? r.standard) - r.standard : 0;
   return <tr><td>{nm.prod(r.product)}</td><td>{nm.loc(r.location)}</td><td>{CONTROL[r.control as Control]}</td>
     <td className="num">{qty(r.qty)}</td><td className="num">{money(r.value, cur)}</td>
-    <td className="num">{r.price != null ? unitMoney(r.price, cur) : "—"}</td><td className="num">{unitMoney(r.standard, cur)}</td>
-    <td className="num">{Math.abs(away) > 0.005 ? `${away > 0 ? "+" : "−"}${unitMoney(Math.abs(away), cur)}` : "—"}</td></tr>;
+    <td className="num">{r.price != null ? exactPrice(r.price, cur) : "—"}</td><td className="num">{exactPrice(r.standard, cur)}</td>
+    <td className="num">{Math.abs(away) > 0.005 ? `${away > 0 ? "+" : "−"}${exactPrice(Math.abs(away), cur)}` : "—"}</td></tr>;
 }

@@ -42,6 +42,14 @@ export function unitMoney(v: number | null | undefined, currency = "INR"): strin
   return `${v < 0 ? "−" : ""}${sym}${qty(Math.abs(v))}`;
 }
 
+/** A price to the paisa or cent, where the books move it by less than a unit (a moving average). */
+const fx2 = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export function exactPrice(v: number | null | undefined, currency = "INR"): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  const sym = currency === "INR" ? "₹" : currency === "USD" ? "$" : currency === "EUR" ? "€" : `${currency} `;
+  return `${v < 0 ? "−" : ""}${sym}${fx2.format(Math.abs(v))}`;
+}
+
 export function pct(v: number | null | undefined, digits = 1): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
   if (!Number.isFinite(v)) return "∞";

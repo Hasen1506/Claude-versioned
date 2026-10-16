@@ -71,6 +71,7 @@ safety stock phased in over weeks, the engine's money format and sizes planned f
 ## Phase 6: Warehouse and transport (EWM and TM, small)
 Done: 6.1 (N281–N288; counts by bin, staging for production, a camera reader for every phone and replenishment of
 picking bins, open).
+Done: 6.2 (N292–N297; postings to accounts with 7.4, a price change by hand and split valuation, open).
 
 | # | Gap (guide §) | Build |
 |---|---|---|

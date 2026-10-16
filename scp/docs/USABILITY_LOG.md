@@ -1010,6 +1010,40 @@ to the shelves, then the rack.
 | N287 | Reading a label with the phone's camera needs the browser's barcode reader, which Chrome on Android has and Safari on iPhone does not. A hand-held scanner works everywhere: it types the code and Enter into the field. | Minor | Open: a reader that does not depend on the browser. |
 | N288 | Picking bins are refilled from the reserve by a bin move made by hand; nothing proposes it when a shelf runs low. | Minor | Open: replenishment by minimum and maximum quantities per picking bin. |
 
+### 6.2: Stock in the books and cycle counts by ABC class
+
+ENTERPRISE_PLAN 6.2, in a browser on the Kaveri Kitchenware example (*Money → Stock in the books*, *Buying →
+Purchase orders → Supplier invoices*, *Stock & actuals → Count stock*), through the API, and through the engine on
+the generated company of 5,000 products.
+
+* *Valued at a moving average. Input:* the price control set to *a moving average of what it cost*, at the top of
+  the books. The 10,000 concealed heating elements on PO-4500012871 are received at Pune. Shenzhen's invoice SZ-771
+  bills 1.50 USD an element against the order's 1.35. *Processing:* the receipt goes in at what it lands at: the
+  order price in rupees, the duty, the lane's freight per unit and the handling. The invoice's difference times
+  (1 + duty) goes to the stock, by the share of what it bills that is still in stock; the rest is a price
+  difference. *Output:* before the receipt, 14,000 elements at ₹141.65. After it, 24,000 at ₹141.65 (it cost what
+  was planned). After the invoice, ₹147.97, +₹6.31 against the standard, and the invoice SI-00001 is among the
+  postings. Nothing had left the stock, so there is no price difference.
+* *The books as they stand.* At the standard price, on 3 Oct, Kaveri's stock is worth ₹2.93 Cr, the cost of sales
+  ₹48.3 L, the count differences −₹7,835 and the scrap ₹8,831. Planning keeps its planned unit value either way.
+* *A cycle count. Input:* the Delhi NCR DC, 12, 4 and 1 counts a year for A, B and C. *Processing:* the journal
+  holds no issues there yet, so the products are classed by what the DC's customers bought (sales history). The two
+  grinders make 63 % and 38 % of the value used up and are A; the kettle used nothing up there and is C. Nothing
+  was ever counted, so all three are due. *Output:* "Cycle count: 2 A, 1 C. PI-00001: 3 lines to count on Mon 28
+  Sep, book stock frozen." The 500 W grinder is counted 2 short and the differences posted. Class A then reads 2
+  counted, 50 % found as booked, −₹2.7K; C 100 %. Nothing is due, and the grinders are next due on Thu 29 Oct.
+* *At 5,000 × 20:* the books over 10,633 products at places in 1.7 s (0.4 s again), the cycle plan of one DC (346
+  products: 171 A, 85 B, 90 C) in 0.8 s, of every place in 1.0 s.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N292 | At a moving average a purchase came in at the bare order price, without the duty, freight and handling the planned value includes. The heater's price fell from ₹141.65 to ₹130 on a receipt that cost exactly what was planned. | Major | **Fixed:** a purchase comes in at its landed cost, and an invoice difference takes the duty with it. |
+| N293 | Unit prices in the books were rounded to the rupee (₹142), so a moving average that moved by paise looked unmoved. | Minor | **Fixed:** the books show prices to the paisa. |
+| N294 | *Enter the invoice*, opened from a purchase order imported without a document header (all of Kaveri's), ticked none of its lines. A price typed on an unticked line was ignored: "Enter the invoice (₹0.00)", greyed out. | Major | **Fixed:** the order's line is ticked when it is the order itself, and typing a quantity or price on a line ticks it. |
+| N295 | The invoice total on the button was always in rupees: a 15,000 USD bill read "₹15,000.00". | Major | **Fixed:** the total is in the supplier's currency when the lines share one. |
+| N296 | Where sales history is recorded at the DC itself (the generated company), the cycle count followed the DC's own supply lane back to the plant: every product at the DC used nothing up and was C. | Major | **Fixed:** history at a stocking place counts for that place. Only a customer's or market's history goes to the place that ships to it. |
+| N297 | A price difference is a figure on the page, not a posting to an account; a moving price cannot be revalued by hand (S/4 MR21); there is one price per product at a place, not per batch or valuation type. | Minor | Open: the account postings come with the double-entry journal (7.4); a price change by hand and split valuation, open. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution
