@@ -183,11 +183,13 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
 def _ref(ds: Dataset, c: _Collector, kind: str, value: str | None, typ: str, oid: str, field: str) -> bool:
     if value is None:
         return True
-    index = {"location": ds.location_by_id, "product": ds.product_by_id,
-             "calendar": ds.calendar_by_id, "resource": ds.resource_by_id,
-             "mrp_group": {g.id: g for g in ds.mrp_groups},
-             "payment_terms": ds.payment_terms_by_id,
-             "family": {p.family: p for p in ds.products if p.family}}[kind]
+    if kind == "mrp_group":
+        index = {g.id for g in ds.mrp_groups}
+    elif kind == "family":
+        index = {p.family for p in ds.products if p.family}
+    else:
+        index = {"location": ds.location_by_id, "product": ds.product_by_id, "calendar": ds.calendar_by_id,
+                 "resource": ds.resource_by_id, "payment_terms": ds.payment_terms_by_id}[kind]
     if value not in index:
         c.add("REF_UNKNOWN", typ, oid, f"{field} refers to unknown {kind} '{value}'",
               f"Create {kind} '{value}' or fix the reference", field)
