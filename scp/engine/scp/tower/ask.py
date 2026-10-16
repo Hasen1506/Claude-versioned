@@ -890,16 +890,22 @@ class _Ask:
                          proposals=proposals or [], suggestions=suggestions or [], scenario=scenario, currency=self.cur)
 
 
-def ask(ds: Dataset, plan: PlanResult, items: list[WorkItem], question: str, ix: TraceIndex | None = None) -> AskAnswer:
+def vocabulary(ds: Dataset, plan: PlanResult) -> _Vocab:
+    """The names and ids a question is read against (kept beside the plan between questions)."""
+    return _Vocab(ds, plan)
+
+
+def ask(ds: Dataset, plan: PlanResult, items: list[WorkItem], question: str, ix: TraceIndex | None = None,
+        vocab: _Vocab | None = None) -> AskAnswer:
     """Answer ``question`` from ``plan`` (of ``ds``) and the open worklist ``items`` (as the inbox ranks them).
-    ``ix``: the plan's pegging index when one is kept (plan/trace.py), else it is built when a question needs it."""
+    ``ix``: the plan's pegging index when one is kept (plan/trace.py), else it is built when a question needs it;
+    ``vocab``: the names read, likewise."""
     a = _Ask(ds, plan, items, question.strip())
     a._ix = ix
     if not plan.ok:
         return a.done("unknown", question, "The plan is blocked by readiness errors, so there is nothing to ask it yet: "
                       + "; ".join(i.message for i in plan.issues[:3]))
-    vocab = _Vocab(ds, plan)
-    ents = vocab.find(question)
+    ents = (vocab or _Vocab(ds, plan)).find(question)
     low = " ".join(question.lower().split())
     intent = _intent(low, ents)
     if intent == "what_if":

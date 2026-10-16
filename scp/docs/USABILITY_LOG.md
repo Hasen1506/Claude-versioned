@@ -898,7 +898,10 @@ and kept by the person as one change, or a what-if kept as a stored scenario.
   on both mixer grinders (by owner rule), and the rule that routes new ones; "What is at risk?" is the inbox's top six
   with owner and action. A question it cannot read ("tell me a joke") is answered with questions this company's data
   can answer, each of which it reads.
-* *At 5,000 × 20:* measured in the next change.
+* *At 5,000 × 20* (the plan kept on the server, 125 s to make here): reading the open worklist takes 12 s (10,943
+  open problems), then "Why is FG-00008 late?", "Who owns FG-00008?" and "Why is anything late?" (368,825 units
+  across 4,394 demands) are answered in 1–3 s, "What is at risk?" in 9 s. A what-if question plans the company
+  again with the change: 3 minutes and 11 GB at the peak, as the what-if page.
 
 | # | Found | Severity | Outcome |
 |---|---|---|---|
@@ -909,6 +912,7 @@ and kept by the person as one change, or a what-if kept as a stored scenario.
 | N266 | "What if the kettle line is down 3 days?" changes nothing on time: the plan does not wait for machines unless capacity-constrained planning is on. | Minor | By design: the answer says so and where the change shows (the machine's load). |
 | N267 | "What if steel prices rise 10 %?" is not read: no what-if changes a supplier's price. | Minor | Open: a purchase-price change belongs with the what-if chips (5.3). |
 | N268 | Time words are not read: "Is anything going to be late next week?" answers for the whole horizon. | Minor | Open. |
+| N270 | At 5,000 × 20 a what-if question takes 3 minutes: the company is planned again whole with the change. | Minor | Open: a change to one product's demand or one supplier could be planned again from the kept work (5.1) instead. |
 | N269 | "Which orders are late", "show me shortages" and "goes bust" were not read as asked (the first as *what is at risk*, the others not at all); "1 days of lead time". | Minor | **Fixed.** |
 
 ## Found in the second reality check (after Phase E)

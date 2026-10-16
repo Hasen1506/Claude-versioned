@@ -28,7 +28,7 @@ from ..actuals.post import production_usage
 from ..demand import ForecastResult, ReleaseResult, ValueAdd, release, run_forecast, value_add
 from ..finance import FinanceResult, run_finance
 from ..tower import FixError, FixResult, TowerResult, WorkItem, get_tracker, open_items, run_tower, try_inbox_fix
-from ..tower.ask import AskAnswer, AskRequest, ask
+from ..tower.ask import AskAnswer, AskRequest, ask, vocabulary
 from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
@@ -1047,7 +1047,8 @@ def post_ask(req: AskBody, sc: Scope) -> Response:
     plan = run_mrp(req.dataset)
     items = open_items(req.dataset, plan, scope=sc or "anon:-") if plan.ok else []
     ix = with_kept_plan(req.dataset, plan, "trace", lambda: trace_index(plan)) if plan.ok else None
-    return send(ask(req.dataset, plan, items, req.question, ix))
+    vocab = with_kept_plan(req.dataset, plan, "ask", lambda: vocabulary(req.dataset, plan)) if plan.ok else None
+    return send(ask(req.dataset, plan, items, req.question, ix, vocab))
 
 
 class WorkItemUpdate(Out):
