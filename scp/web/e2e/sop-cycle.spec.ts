@@ -31,7 +31,7 @@ test("a month of S&OP: budget in, five sign-offs, the plan against the budget, t
   await expect(page.getByRole("tab", { name: "October 2026 · 0 of 5" })).toBeVisible();
 
   // 1 data: no blocking problems
-  await expect(page.getByText("No blocking problems")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("No blocking problems", { exact: true })).toBeVisible({ timeout: 30_000 });
   await sign(page, "data");
 
   // 2 demand review: the demand plan month by month against the budget (October: 20,697 against 20,750)
