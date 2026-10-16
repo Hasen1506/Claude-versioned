@@ -114,6 +114,7 @@ class Summary(Out):
     abc: dict[str, int] = {}
     patterns: dict[str, int] = {}
     total_final: float = 0.0
+    total_high: float = 0.0            # what a release writes as the high end (P90 at the default 80 % interval)
 
 
 class ForecastResult(Out):

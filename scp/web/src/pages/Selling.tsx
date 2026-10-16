@@ -11,6 +11,7 @@ import {
 } from "../components/ui";
 import { addDays, day, exactMoney, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Msg, Prod, namesOf, useNames } from "../lib/names";
+import { highEnd, safeWords } from "../lib/safe";
 import { confirmationDocument, customerAddresses, customerEmail, invoiceDocument, openItems, statementDocument } from "../lib/sodoc";
 import { ServerSend } from "../components/ServerSend";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
@@ -316,10 +317,11 @@ function LinesForm({ ds, customer, busy, submit, onSubmit, second }: {
   };
   const verdict = (c: NonNullable<typeof fresh>[number]) => {
     const last = c.lines.reduce((a, x) => (x.date > a ? x.date : a), "");
-    if (c.status === "on_time") return <><Badge sev="ok">on time</Badge> <span className="small">{day(last)}</span></>;
+    const high = c.safe && <div className="faint small">If demand runs high ({highEnd(ds)}): {safeWords(c.safe, c.qty)}</div>;
+    if (c.status === "on_time") return <><Badge sev="ok">on time</Badge> <span className="small">{day(last)}</span>{high}</>;
     if (c.confirmed <= 1e-9) return <><Badge sev="error">cannot be promised</Badge>{c.reason && <div className="faint small">{c.reason}</div>}</>;
     return <><Badge sev="warning">{c.status === "late" ? "late" : `${qty(c.confirmed)} of ${qty(c.qty)}`}</Badge> <span className="small">
-      {c.on_time > 1e-9 ? `${qty(c.on_time)} on time, ` : ""}the rest by {day(last)}</span>{c.reason && <div className="faint small">{c.reason}</div>}</>;
+      {c.on_time > 1e-9 ? `${qty(c.on_time)} on time, ` : ""}the rest by {day(last)}</span>{c.reason && <div className="faint small">{c.reason}</div>}{high}</>;
   };
   return <div className="stack">
     <div className="table-wrap"><table className="t">

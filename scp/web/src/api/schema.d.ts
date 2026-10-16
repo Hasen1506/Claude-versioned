@@ -4712,6 +4712,11 @@ export interface components {
              */
             original_qty?: number | null;
             /**
+             * High Qty
+             * @description Forecast only: the high end of the forecast's interval over the record (P90 at the default 80 % interval), written by a forecast release. An order check keeps it for the orders still to come to give a safe date beside the expected one. Empty: no spread is known
+             */
+            high_qty?: number | null;
+            /**
              * Released
              * @description Forecast only: written by a forecast release. Releasing every series again replaces it, so a series the new forecast no longer has does not stay in demand
              * @default false
@@ -5993,6 +5998,12 @@ export interface components {
             rounding_qty: number | null;
             /** Lead Time Days */
             lead_time_days: number;
+            /**
+             * Lead Time Std Days
+             * @default 0
+             */
+            lead_time_std_days: number;
+            measured: components["schemas"]["LeadTimeSpread"] | null;
             /** Valid From */
             valid_from: string | null;
             /** Valid To */
@@ -6898,6 +6909,17 @@ export interface components {
             days: number;
             /** Supplier */
             supplier: string | null;
+        };
+        /** LeadTimeSpread */
+        LeadTimeSpread: {
+            /** Lines */
+            lines: number;
+            /** Mean Days Late */
+            mean_days_late: number;
+            /** Std Days */
+            std_days: number;
+            /** Basis */
+            basis: string;
         };
         /** LevelMove */
         LevelMove: {
@@ -8433,6 +8455,7 @@ export interface components {
             value: number | null;
             /** Why */
             why: components["schemas"]["WhyStep"][];
+            safe: components["schemas"]["SafeView"] | null;
             /**
              * Shipped
              * @default 0
@@ -10909,6 +10932,28 @@ export interface components {
             /** Description */
             description: string;
         };
+        /**
+         * SafeView
+         * @description The order checked again with the forecast's high end kept first: what it gets if the customers still to order
+         *     before its date order at the top of the forecast's interval (P90 at the default 80 % interval).
+         */
+        SafeView: {
+            /** Reserved */
+            reserved: number;
+            /** Confirmed */
+            confirmed: number;
+            /** On Time */
+            on_time: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "on_time" | "late" | "partial" | "unconfirmed";
+            /** Date */
+            date: string | null;
+            /** Lines */
+            lines: components["schemas"]["ScheduleLine"][];
+        };
         /** SafetyDaysChip */
         "SafetyDaysChip-Input": {
             /**
@@ -13132,6 +13177,11 @@ export interface components {
              * @default 0
              */
             total_final: number;
+            /**
+             * Total High
+             * @default 0
+             */
+            total_high: number;
         };
         /**
          * SupplierInvoice

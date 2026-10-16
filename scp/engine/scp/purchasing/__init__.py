@@ -38,6 +38,7 @@ from .payables import (
 )
 from .payables import received as _received_net
 from .payables import returned as _returned
+from .spread import measured_spreads
 from .result import (
     ActionReport, CreatedPo, CreateReport, InfoRecord, PoLine, PoView, PurchasingTotals, PurchasingView, Requisition,
     SourceChoice, VendorRow,
@@ -894,6 +895,7 @@ def _view(ds: Dataset, pid: str, header: bool, po: PurchaseOrder | None, supplie
 def vendor_rows(ds: Dataset, orders: list[PoView]) -> list[VendorRow]:
     tol = ds.execution.delivery_tolerance
     sups = [loc for loc in ds.locations if loc.type.value == "supplier"]
+    spread = measured_spreads(ds)
     out = []
     for loc in sups:
         v = ds.vendor(loc.id)
@@ -910,7 +912,8 @@ def vendor_rows(ds: Dataset, orders: list[PoView]) -> list[VendorRow]:
         confirmed_late = sum(1 for p in mine for x in p.lines if x.confirmed_date is not None and x.confirmed_date > x.due_date)
         recs = [InfoRecord(source_id=pu.id, product=pu.product, location=pu.location, price=pu.price,
                            currency=_currency(ds, ds.price_currency(pu)), price_scales=pu.price_scales, moq=pu.moq,
-                           rounding_qty=pu.rounding_qty, lead_time_days=pu.lead_time_days, valid_from=pu.valid_from,
+                           rounding_qty=pu.rounding_qty, lead_time_days=pu.lead_time_days,
+                           lead_time_std_days=pu.lead_time_std_days, measured=spread.get(pu.id), valid_from=pu.valid_from,
                            valid_to=pu.valid_to, fixed=pu.fixed, blocked=pu.blocked, priority=pu.priority,
                            quota=pu.quota, vendor_material=pu.vendor_material)
                 for pu in ds.purchasing_sources if pu.supplier == loc.id]

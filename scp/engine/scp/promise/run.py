@@ -11,16 +11,19 @@
 """
 from __future__ import annotations
 
+import math
 from collections import defaultdict
+from datetime import date
 
-from ..model import ConfirmationStrategy, Dataset, DemandKind, DemandRecord
+from ..model import ConfirmationStrategy, Dataset, DemandKind, DemandRecord, Strategy
 from ..model.promise import Confirmation
 from ..actuals.post import delivered, ordered_now
 from ..plan import run_mrp
+from ..plan.rates import independent_demand
 from ..validate import has_errors, validate
 from .atp import EPS
 from .engine import OrderPromise, Promiser, finish, sales_orders, segment_of, sort_key
-from .result import AllocationUse, BopRow, PromiseKpis, PromiseResult, ScheduleLine
+from .result import AllocationUse, BopRow, PromiseKpis, PromiseResult, SafeView, ScheduleLine
 
 
 def _start(ds: Dataset, mode: str) -> tuple[PromiseResult, Promiser | None]:
@@ -277,6 +280,65 @@ def run_bop(ds: Dataset) -> PromiseResult:
     return _finish(ds, P, res, orders)
 
 
+def _high_end(ds: Dataset, lines: list[DemandRecord]) -> dict[str, list[DemandRecord]]:
+    """Per product checked, the forecast still to be ordered up to its latest requested date, at the high end of the
+    forecast's interval: what is left of each forecast once the orders, the checked lines among them, have used it
+    up (as they do under make to stock too, the forecast being every order to come), plus its spread above the
+    expected quantity. Products without a high end on their forecast, and nodes made to order (the forecast plans
+    nothing there), are left out."""
+    until: dict[str, date] = {}
+    for ln in lines:
+        until[ln.product] = max(until.get(ln.product, ln.date), ln.date)
+    # only the products checked (and their variants, whose orders use up their forecast) are worked out, each record
+    # named as the plan names it
+    keep = set(until) | {p.id for p in ds.products if p.planning_material in until}
+    recs = [d if d.id else d.model_copy(update={"id": f"#{i}"}) for i, d in enumerate(ds.demand) if d.product in keep]
+    checked = [ln.model_copy(update={"id": f"CHECKED {j}"}) for j, ln in enumerate(lines)]
+    with_lines = ds.model_copy(update={"demand": recs + checked})
+    open_qty = {r.source_ref: r.qty for reqs in independent_demand(with_lines, orders_consume=True).values()
+                for r, _ in reqs if r.kind == "forecast"}
+    out: dict[str, list[DemandRecord]] = {}
+    for i, d in enumerate(ds.demand):
+        if (d.kind is not DemandKind.FORECAST or d.product not in until or d.high_qty is None
+                or ds.location_type(d.location) is None or ds.demand_lp((d.location, d.product)).strategy is Strategy.MTO):
+            continue
+        out.setdefault(d.product, [])
+        # the part of the forecast's period up to the requested date (the whole of it once the date is past its end)
+        span = max(1, d.period_days or 1)
+        share = min(span, max(0, (until[d.product] - d.date).days + 1)) / span
+        qty = (open_qty.get(d.id or f"#{i}", 0.0) + max(0.0, d.high_qty - d.qty)) * share
+        if ds.whole(d.product):
+            qty = math.ceil(qty - 1e-6)
+        if qty > EPS:
+            out[d.product].append(DemandRecord(location=d.location, product=d.product,
+                                               date=max(d.date, ds.settings.planning_start), qty=round(qty, 6),
+                                               kind=DemandKind.SALES_ORDER, priority=d.priority))
+    return out
+
+
+def _safe(ds: Dataset, P: Promiser, lines: list[DemandRecord], keys: list[str]) -> list[SafeView | None]:
+    """Each line checked again after the orders already promised and the high-end forecast before it."""
+    high = _high_end(ds, lines)
+    if not high:
+        return [None] * len(lines)
+    S = Promiser(ds, P.plan, P.g)
+    _entry(ds, S)
+    reserved: dict[str, float] = {}
+    for prod, recs in high.items():
+        for j, r in enumerate(sorted(recs, key=lambda r: (r.date, r.priority, r.location))):
+            S.check(r, f"HIGH {prod} {j + 1}")
+        reserved[prod] = round(sum(r.qty for r in recs), 6)
+    out: list[SafeView | None] = []
+    for ln, key in zip(lines, keys, strict=True):
+        if ln.product not in high:
+            out.append(None)
+            continue
+        c = S.check(ln, key)
+        out.append(SafeView(reserved=reserved[ln.product], confirmed=c.confirmed, on_time=c.on_time, status=c.status,
+                            date=max((x.date for x in c.lines), default=None), lines=c.lines))
+    return out
+
+
 def check_order(ds: Dataset, order: DemandRecord) -> PromiseResult:
     res, P = _start(ds, "check")
     if P is None:
@@ -286,6 +348,7 @@ def check_order(ds: Dataset, order: DemandRecord) -> PromiseResult:
     checked = P.check(rec, rec.id or "SIMULATION")
     _value(ds, rec, checked)
     res = _finish(ds, P, res, orders)
+    checked.safe = _safe(ds, P, [rec], [rec.id or "SIMULATION"])[0]
     res.checked = checked
     res.mode = "check"
     return res
@@ -298,13 +361,17 @@ def check_lines(ds: Dataset, lines: list[DemandRecord]) -> PromiseResult:
     if P is None:
         return res
     orders = _entry(ds, P)
-    out = []
+    out, recs, keys = [], [], []
     for i, ln in enumerate(lines):
         rec = ln.model_copy(update={"kind": DemandKind.SALES_ORDER})
         c = P.check(rec, rec.id or f"LINE {10 * (i + 1)}")
         _value(ds, rec, c)
         out.append(c)
+        recs.append(rec)
+        keys.append(rec.id or f"LINE {10 * (i + 1)}")
     res = _finish(ds, P, res, orders)
+    for c, safe in zip(out, _safe(ds, P, recs, keys), strict=True):
+        c.safe = safe
     res.checked = out[0] if out else None
     res.checked_lines = out
     res.mode = "check"

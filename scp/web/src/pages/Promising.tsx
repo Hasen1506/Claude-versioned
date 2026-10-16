@@ -8,6 +8,7 @@ import {
 import { addDays, day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Prod, namesOf, useNames } from "../lib/names";
 import { orderProblems, orderWarnings } from "../lib/orderchecks";
+import { highEnd, safeWords } from "../lib/safe";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useFreshResult, useStore } from "../state/store";
@@ -569,7 +570,13 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
             <StatTile label="Confirmed" value={qty(c.confirmed)} sub={c.unconfirmed > 1e-6 ? `${qty(c.unconfirmed)} cannot be promised` : "full quantity"} />
             <StatTile label="Last delivery" value={c.lines.length ? day(c.lines[c.lines.length - 1].date) : "—"} sub={c.lines.length > 1 ? `${c.lines.length} schedule lines` : "one line"} />
             {c.allocation_capped > 0 && <StatTile label="Allocation withheld" value={qty(c.allocation_capped)} sub="on the requested date" />}
+            {c.safe && <StatTile label={`High demand (${highEnd(ds)})`} value={c.safe.status === "on_time" ? "On time" : c.safe.date ? day(c.safe.date) : "—"}
+              sub={c.safe.status === "on_time" ? "the date holds" : safeWords(c.safe, c.qty)} tone={c.safe.status === "on_time" ? undefined : "hl"} />}
           </div>
+          {c.safe && <p className="small muted" style={{ margin: 0 }}>{c.safe.reserved > 1e-9
+            ? <>The second answer first promises the {qty(c.safe.reserved)} more that other customers would order by {day(c.requested)} if they ordered at
+              the high end of their forecast ({highEnd(ds)}). {c.safe.status === "on_time" ? "The date holds even then: it is safe to give." : "A date given from the first answer may cost an order later; the second is safe to give."}</>
+            : <>No forecast is still to be ordered by {day(c.requested)}, so the date holds when demand runs high too.</>}</p>}
           <OrderCard o={c} currency={out!.currency} />
         </>}
       </div>

@@ -4,7 +4,7 @@ Ideas met while implementing the roadmap from the UX audit of 7 Oct 2026 (PRs A�
 candidate for a later PR. Newest at the bottom of each group.
 
 ## Promising and planning
-- **Promise against a P90 demand view.** Run ATP with the forecast's upper interval so sales sees a "safe" date beside
+- **Promise against a P90 demand view.** (built, ENTERPRISE_PLAN 4.4) Run ATP with the forecast's upper interval so sales sees a "safe" date beside
   the expected one.
 - **Plan around a loop instead of blocking.** Data check blocks the whole plan for one circular route; plan the rest
   and mark the loop's nodes.
@@ -107,7 +107,7 @@ recorded only.
   sent to the job worker are tracked as stock at the supplier (special stock O) and consumed when the finished part
   comes back; today a subcontracted step only adds days and a price, and the parts never leave the plant's stock.
   High value for Indian manufacturers (job work under GST); large.
-- **Supplier lead-time deviation.** §11 outputs / §18.2: actual (PO date → goods receipt) vs planned lead time per
+- **Supplier lead-time deviation.** (built, ENTERPRISE_PLAN 4.4) §11 outputs / §18.2: actual (PO date → goods receipt) vs planned lead time per
   supplier and product, shown beside supplier reliability and offered as `lead_time_std_days`, so safety stock uses a
   measured spread.
 

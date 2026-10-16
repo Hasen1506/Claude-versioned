@@ -790,6 +790,49 @@ that uses two), and a pump shop in the engine tests (a pump made to order from t
 | N243 | The advisor follows the preferred source and nominal lead times: no queue, capacity or alternative source shortens or lengthens them. | Minor | By design: it compares the planned times the plan itself uses. |
 | N244 | The Kaveri example was not the same file on every machine: OpenBLAS picks its kernel per processor, and the kept forecasts fitted on an AVX-512 machine and an AVX2 one differed by a tenth, so CI (AVX2) rounded a kettle week to 640 where this machine wrote 641. | Major | **Fixed.** The example builder sets one kernel (Haswell, single thread) on every x86 machine before numpy loads. |
 
+### 4.4: Demand with a spread, and lead times as measured
+
+ENTERPRISE_PLAN 4.4, through the engine and in a browser on the Kaveri Kitchenware example: its forecast used again
+from the Demand page, a new order checked on the order page and on a several-line order, and the supplier scorecard
+on the Buying page. Small companies in the engine tests cover the arithmetic.
+
+* *The high end with the forecast* (input: the forecast's interval, 80 % by default; processing: each released
+  period keeps the top of its interval over the part in the horizon, never below the forecast, in whole units for a
+  product counted in each; output): Kaveri's Demand page reads "Customers are expected to order 92,370 units over the
+  next 26 weeks, across 9 products and places, up to 1,14,798 at the high end (P90, which about one period in 10 goes
+  over)". *Use this forecast in the supply plan* writes each period's high end beside its quantity.
+* *A safe date beside the expected one* (input: an order checked before it is taken; processing: the order is
+  checked a second time after the forecast still to be ordered up to its date is promised first, at the high end:
+  what is left of each forecast once the orders, this one among them, have used it up, plus its spread, for the part
+  of its period up to the date; output):
+  * 400 mixer grinders 500 W for the north trade on 5 October: Delhi has 300 for that day, the rest by 11 October.
+    The tile *High demand (P90)* reads "Sun 11 Oct, 245 on time, the rest by Sun 11 Oct", and the page says the second
+    answer first promises the 644 more that other customers would order by 5 October if they ordered at the high end:
+    a date from the first answer may cost an order later; the second is safe to give.
+  * The same on Selling → New order: the line says "If demand runs high (P90): 245 on time, the rest by Sun 11 Oct".
+  * Small cases: another customer's week of 60 (90 at the high end) keeps 77.1 of 100 first; the order's own
+    customer's forecast is used up by the order first (34.3 kept, not 77.1); a forecast that starts after the date keeps
+    nothing; made to order or no high end, no second answer; lines of one order keep it once.
+* *Lead times as measured* (input: the purchase lines the roll-forward closed; processing: receipt less due date per
+  line over the last year, its sample standard deviation, from the source's own lines once it has three, else from
+  all its supplier's; output): Shenzhen electro-components delivered four lines, three a day early and one a week
+  late: "± 4.0 d over 4 receipts of all its parts, 1.0 d late on average" beside the "± 3.0 d" planned. *Plan with
+  ± 4.0 d* sets it; the switches' lead time at Pune reads 14 d ± 6.4 with the sea lane, not ± 5.8, and their safety
+  stock goes from 8,647 to 9,114. The copper supplier, two lines so far, says "too few receipts yet".
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N245 | After *Plan with ± 4.0 d* the supplier table still showed ± 3.0 planned and the button, until the Buying page was recalculated. | Minor | **Fixed** before it shipped: the planned spread is read from the company's data, so the click shows at once. |
+| N246 | "First promises the 644 other customers would still order" read as 644 customers. | Cosmetic | **Fixed:** "the 644 more that other customers would order". |
+| N247 | At phone width the tile label "If demand runs high (P90)" was cut off. | Cosmetic | **Fixed:** *High demand (P90)*. |
+| N248 | The Inventory stages table showed place codes, and the lead time without its spread. | Cosmetic | **Fixed:** names, and "14 d ± 6.4". |
+| N249 | The safe date keeps first only the forecast of the product ordered: other products that share its parts or machines, and a planning material's forecast for an order of its variant, are not kept first. | Minor | Open. |
+| N250 | Kaveri's forecast as shipped has no high end, so there is no second answer until the forecast is used again; S&OP releases and forecasts typed by hand have none unless *high_qty* is given. | Minor | By design: the high end comes with a release of the statistical forecast. |
+| N251 | "Up to … at the high end" adds each period's P90; the P90 of the whole horizon is lower. | Minor | By design: the page says one period in 10 goes over, each on its own, which is what the second answer keeps. |
+| N252 | The measured spread is of purchase lines only; a transfer lane's transit spread and production times are still typed in. | Minor | Open. |
+| N253 | A supplier late on average (Shenzhen, a day) shows its mean delay but it is not offered as a longer lead time. | Minor | By design: the page says a mean delay needs a longer lead time and leaves the choice to the buyer. |
+| N254 | A line delivered in parts is measured from its last receipt, when it was there in full. | Minor | By design: that is when the plan had it. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

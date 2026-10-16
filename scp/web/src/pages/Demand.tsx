@@ -11,6 +11,7 @@ import {
   MoreRows, ROW_LIMIT,
 } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
+import { highEnd, overEvery } from "../lib/safe";
 import { Loc, namesOf, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
@@ -59,7 +60,8 @@ export function Demand({ route }: { route: string[] }) {
         borrow a similar product's history, and consensus overrides adjust it. Using the forecast in the supply plan writes it into
         your demand data as forecast records (undoable).</>}
       answer={view !== "plan" && fc?.ok && fc.series.length > 0 && fc.summary && <>Customers are expected to order {qty(Math.round(fc.summary.total_final))} units over the next {plural(fc.periods.length, fc.period)},
-        across {plural(fc.summary.series, "product and place", "products and places")}.{fc.summary.wape !== null && <> Tested on past sales it misses by about {pct(fc.summary.wape, 0)}
+        across {plural(fc.summary.series, "product and place", "products and places")}{fc.summary.total_high > fc.summary.total_final + 0.5
+          ? <>, up to {qty(Math.round(fc.summary.total_high))} at the high end ({highEnd(ds)}, which about one period in {overEvery(ds)} goes over)</> : null}.{fc.summary.wape !== null && <> Tested on past sales it misses by about {pct(fc.summary.wape, 0)}
         {fc.summary.bias !== null && Math.abs(fc.summary.bias) >= 0.05 ? <> and runs {fc.summary.bias > 0 ? "high" : "low"} by {pct(Math.abs(fc.summary.bias), 0)}</> : null}.</>}</>}
       right={view === "plan" ? undefined : <>
       {fc && <Provenance kind="solved" at={run.at} stale={stale} />}

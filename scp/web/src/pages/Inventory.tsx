@@ -245,12 +245,12 @@ function Placement({ res, ds }: { res: InventoryResult; ds: Dataset }) {
                 return (
                   <tr key={k} className={sel.has(k) ? "selected" : ""}>
                     <td>{n.role === "stocking" && <input type="checkbox" aria-label={`Select ${nm.prod(n.product)} at ${nm.loc(n.location)}`} checked={sel.has(k)} onChange={() => toggle(k)} />}</td>
-                    <td>{n.location}{n.demand_facing && <span className="faint small"> · faces demand</span>}</td>
+                    <td><Loc id={n.location} />{n.demand_facing && <span className="faint small"> · faces demand</span>}</td>
                     <td><b><Prod id={n.product} /></b>{!lpExists && <span className="faint small"> · no policy yet</span>}</td>
                     <td>{n.decision === "buffer" ? <Badge sev="ok">buffer</Badge> : n.decision === "no_stock" ? <Badge>make to order</Badge> : <Badge>pass through</Badge>}</td>
                     <td className="num">{qty(n.mean_daily)}</td>
                     <td className="num" title={`source: ${n.cv_source}`}>{n.cv_weekly.toFixed(2)}<span className="faint small"> {n.cv_source === "policy" ? "measured" : n.cv_source}</span></td>
-                    <td className="num">{days(n.lead_time_days)}</td>
+                    <td className="num">{days(n.lead_time_days)}{n.lead_time_std_days >= 0.05 && <span className="faint small"> ± {n.lead_time_std_days.toFixed(1)}</span>}</td>
                     <td className="num">{n.meio_inbound_days}</td>
                     <td className="num">{n.meio_service_days}{n.max_service_days !== null && <span className="faint small"> ≤{n.max_service_days}</span>}</td>
                     <td className="num"><b>{n.meio_net_days}</b></td>
@@ -265,7 +265,7 @@ function Placement({ res, ds }: { res: InventoryResult; ds: Dataset }) {
           </table>
         </div>
       </Panel>
-      <Reading formula="SI = inbound service time (the longest service quoted by its suppliers); S = outbound service time; τ = SI + T − S days of demand covered from stock."
+      <Reading formula="SI = inbound service time (the longest service quoted by its suppliers); S = outbound service time; τ = SI + T − S days of demand covered from stock. Lead time ± its spread (σ_L): the supplier's, as planned on the purchasing source, with the lane's."
         soWhat="Applying writes a fixed safety-stock quantity to each approved location-product, so the supply plan holds exactly this stock. Re-optimise after demand or lead times change." />
     </div>
   );

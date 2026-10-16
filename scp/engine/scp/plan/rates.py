@@ -50,9 +50,11 @@ def _lp(ds: Dataset, node: Node) -> LocationProduct:
     return ds.planning_lp(node)
 
 
-def independent_demand(ds: Dataset) -> dict[Node, list[tuple[IndependentReq, int]]]:
+def independent_demand(ds: Dataset, orders_consume: bool = False) -> dict[Node, list[tuple[IndependentReq, int]]]:
     """Each node's independent requirements as MRP plans them (forecast after consumption by sales orders,
-    plus the orders, by planning strategy), each with the days it spreads over (an order: one)."""
+    plus the orders, by planning strategy), each with the days it spreads over (an order: one). With
+    ``orders_consume``, orders use up the forecast under make to stock too (what of the forecast is still to be
+    ordered, whatever the strategy plans)."""
     recs: dict[Node, list] = defaultdict(list)
     for i, d in enumerate(ds.demand):
         recs[(d.location, d.product)].append((d.id or f"#{i}", d))
@@ -65,8 +67,9 @@ def independent_demand(ds: Dataset) -> dict[Node, list[tuple[IndependentReq, int
     for node, rs in recs.items():
         lp = ds.demand_lp(node)
         period = {rid: (r.period_days or 1) for rid, r in rs}
+        strategy = Strategy.MTS_CONSUME if orders_consume and lp.strategy is Strategy.MTS else lp.strategy
         out[node] = [(r, period[r.source_ref] if r.kind == "forecast" else 1)
-                     for r in effective_demand(rs, lp.strategy, lp.consumption_backward_days,
+                     for r in effective_demand(rs, strategy, lp.consumption_backward_days,
                                                lp.consumption_forward_days, ds=ds, node=node,
                                                variants=variants.get(node, ()))]
     return out

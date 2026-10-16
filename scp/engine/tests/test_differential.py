@@ -132,6 +132,23 @@ INTENTIONAL += [
       '    override_reason: str = ""\n    override_author: str = ""\n')),
 ]
 
+# ENTERPRISE_PLAN 4.4: the forecast summary adds up what a release writes as the high end of each period (P90)
+_PIPE = "scp/demand/pipeline.py"
+INTENTIONAL += [
+    ("Demand spread: the forecast summary's high end (field)", "scp/demand/result.py",
+     ("    total_final: float = 0.0\n",
+      _engine_passage("scp/demand/result.py", "    total_final: float", "\n\nclass ForecastResult"))),
+    ("Demand spread: math for rounding the high end up", _PIPE, ("import copy\n", "import copy\nimport math\n")),
+    ("Demand spread: the summary is given the dataset", _PIPE, ("summary=_summary(out)", "summary=_summary(out, ds)")),
+    ("Demand spread: the high end of a period, as a release writes it", _PIPE,
+     ("def _summary(series: list[Series]) -> Summary:\n",
+      _engine_passage(_PIPE, "def high_end(", "    abs_err = act = bias"))),
+    ("Demand spread: the summary adds it up", _PIPE,
+     ("total_final=sum(p.released_qty for s in series for p in s.forecast))",
+      _engine_passage(_PIPE, "total_final=sum(", "\n\n"))),
+]
+
+
 def _git(*args: str, cwd: Path = ENGINE) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, timeout=120)
 

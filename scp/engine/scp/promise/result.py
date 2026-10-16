@@ -43,6 +43,17 @@ class WhyStep(Out):
     note: str = ""                   # in plain words, with ids as they are
 
 
+class SafeView(Out):
+    """The order checked again with the forecast's high end kept first: what it gets if the customers still to order
+    before its date order at the top of the forecast's interval (P90 at the default 80 % interval)."""
+    reserved: float                  # high-end forecast still open up to the requested date, promised ahead of it
+    confirmed: float
+    on_time: float
+    status: Literal["on_time", "late", "partial", "unconfirmed"]
+    date: dt.date | None             # the last confirmed delivery (None: nothing confirmed)
+    lines: list[ScheduleLine] = Field(default_factory=list)
+
+
 class OrderPromise(Out):
     order: str
     location: str
@@ -68,6 +79,7 @@ class OrderPromise(Out):
     price: float | None = None       # per unit: the order's own, else the customer's, else the product's
     value: float | None = None       # qty × price (empty without a price)
     why: list[WhyStep] = Field(default_factory=list)   # what sets the latest confirmed date
+    safe: SafeView | None = None     # an order check only, when its product's forecast has a high end
     shipped: float = 0.0             # delivered in the journal and not yet booked by starting a new week: the plan
                                      # still counts it as open until then, the Selling page already as delivered
 

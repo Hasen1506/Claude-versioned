@@ -8,6 +8,7 @@ so a planner can see why a number is what it is.
 from __future__ import annotations
 
 import copy
+import math
 import hashlib
 import os
 import threading
@@ -339,7 +340,7 @@ def run_forecast(ds: Dataset) -> ForecastResult:
 
     out = sorted(series.values(), key=lambda s: (s.location, s.product))
     return ForecastResult(ok=True, period=period.value, season_length=m, periods=[p.label for p in fut], issues=issues,
-                          series=out, summary=_summary(out), foundation=foundation_status)
+                          series=out, summary=_summary(out, ds), foundation=foundation_status)
 
 
 PARALLEL_MIN_SERIES = 24
@@ -558,7 +559,14 @@ def _whole(s: Series) -> None:
         p.final = q if p.share >= 1 else float(round(p.final))
 
 
-def _summary(series: list[Series]) -> Summary:
+def high_end(p: ForecastPoint, whole: bool) -> float:
+    """What a release writes as the high end of a period: the top of its interval over the part in the horizon, never
+    below the forecast itself, rounded up to a whole unit for a product counted in each."""
+    high = max(p.released_qty, p.upper * p.share)
+    return float(math.ceil(high - 1e-6)) if whole else round(high, 4)
+
+
+def _summary(series: list[Series], ds: Dataset) -> Summary:
     abs_err = act = bias = naive_err = 0.0
     champions: dict[str, int] = defaultdict(int)
     abc: dict[str, int] = defaultdict(int)
@@ -577,7 +585,8 @@ def _summary(series: list[Series]) -> Summary:
                 naive_err += naive.wape * a
     return Summary(series=len(series), wape=abs_err / act if act else None, bias=bias / act if act else None,
                    fva=(naive_err - abs_err) / act if act else None, champions=dict(champions), abc=dict(abc),
-                   patterns=dict(patterns), total_final=sum(p.released_qty for s in series for p in s.forecast))
+                   patterns=dict(patterns), total_final=sum(p.released_qty for s in series for p in s.forecast),
+                   total_high=sum(high_end(p, ds.whole(s.product)) for s in series for p in s.forecast if p.released_qty > 0))
 
 
 # ---- release --------------------------------------------------------------------------------------
@@ -636,8 +645,9 @@ def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) 
                 continue
             frm = max(p.start, ds.settings.planning_start)
             days = max(1, round(p.share * (p.end - p.start).days))
+            high = high_end(p, ds.whole(s.product))
             new.append(DemandRecord(location=s.location, product=s.product, date=frm, qty=qty,
-                                    kind=DemandKind.FORECAST, period_days=days, released=True))
+                                    kind=DemandKind.FORECAST, period_days=days, released=True, high_qty=high))
     out = ds.model_copy(update={"demand": kept + new, "forecast_snapshots": _kept(ds, result, chosen),
                                 "forecasting": ds.forecasting.model_copy(
         update={"released_inputs": ds.forecast_inputs()})})
