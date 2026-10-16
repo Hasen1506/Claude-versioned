@@ -355,6 +355,9 @@ function OrdersView({ plan, sel }: { plan: PlanResult; sel?: string }) {
 function OrderTable({ plan, orders, sel, onSelect, compact }: {
   plan: PlanResult; orders: PlannedOrder[]; sel: string | null; onSelect: (id: string) => void; compact?: boolean;
 }) {
+  const products = useStore((s) => s.dataset?.products);
+  // a planning material is never made itself: its orders only plan the parts its variants share
+  const bases = useMemo(() => new Set((products ?? []).map((p) => p.planning_material).filter(Boolean)), [products]);
   return (
     <table className="t nowrap">
       <thead><tr>
@@ -365,7 +368,7 @@ function OrderTable({ plan, orders, sel, onSelect, compact }: {
         {orders.map((o) => (
           <tr key={o.id} className={`clickable ${sel === o.id ? "selected" : ""}`} onClick={() => onSelect(o.id)}>
             <td><span className="mono">{o.id}</span> <span className="faint small">{ORDER_LABEL[o.kind]}</span>
-              {!o.convertible && <> <Badge>ATO</Badge></>}</td>
+              {!o.convertible && <> <Badge>{bases.has(o.product) ? "Planning only" : "ATO"}</Badge></>}</td>
             {!compact && <td><Prod id={o.product} /></td>}
             {!compact && <td><Loc id={o.location} /></td>}
             <td className="small">{o.origin ?? o.source_id}</td>

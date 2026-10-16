@@ -107,11 +107,13 @@ def _sales(ds: Dataset, period: ForecastPeriod) -> tuple[dict[tuple[str, str, dt
     horizon = period_start(ds.settings.planning_start, period, ws)
     out: dict[tuple[str, str, dt.date], float] = defaultdict(float)
     last: dt.date | None = None
+    base = ds.planning_base
     for r in ds.history:
+        b, factor = base.get(r.product, (r.product, 1.0))   # a variant sells for its planning material's forecast
         for ps, q in _spread(r.date, r.qty, r.period_days, period, ws):
             if ps >= horizon:
                 continue
-            out[(r.location, r.product, ps)] += q
+            out[(r.location, b, ps)] += q * factor
             last = ps if last is None or ps > last else last
     return out, (min(next_start(last, period), horizon) if last is not None else None)
 

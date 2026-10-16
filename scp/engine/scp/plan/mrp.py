@@ -43,7 +43,7 @@ from ..time import Buckets
 from ..time.capacity import NoWorkingTime, day_capacity, hours_between, overtime_between
 from ..validate import has_errors, validate
 from . import costing, rates
-from .consumption import effective_demand
+from .consumption import _consume
 from .leadtime import (
     Schedule, batch_multiple, gr_after, lead_time_std_days, location_calendar, nominal_lead_time_days,
     resource_calendar, schedule, schedule_make, supplier_lane,
@@ -81,6 +81,8 @@ class _NodeState:
     lead_time: float | None = None
     fixed: list[tuple[_Supply, str, float]] = field(default_factory=list)   # sales-order stock pegged to its order
     netted: list[Requirement] | None = None   # the requirements left once the sales orders' own supply is counted
+    forecasts: list[tuple[str, date, int, list[str]]] = field(default_factory=list)   # strategy 70: each forecast's
+    # (id, first day, days, the ids of the daily requirements it was spread into)
 
 
 class _Fresh:
@@ -192,19 +194,14 @@ class _Planner:
             st = self.state.get((t.location, t.product))
             if st is not None and not self.is_customer((t.location, t.product)):
                 st.targets.append((t.date, t.qty))
-        by_node: dict[Node, list] = defaultdict(list)
-        for i, d in enumerate(self.ds.demand):
-            by_node[(d.location, d.product)].append((d.id or f"#{i}", d))
-        for node, recs in by_node.items():
+        for node, reqs in rates.independent_demand(self.ds).items():
             st = self.state.get(node)
             if st is None:
                 continue
-            lp = self.ds.demand_lp(node)
-            period = {rid: rec.period_days for rid, rec in recs}
-            for r in effective_demand(recs, lp.strategy, lp.consumption_backward_days, lp.consumption_forward_days,
-                                          ds=self.ds, node=node):
-                for i, (d, q) in enumerate(self._split(node, r.date, r.qty, period.get(r.source_ref)
-                                                        if r.kind == "forecast" else None)):
+            parts = st.lp.strategy is Strategy.ASSEMBLY
+            for r, days in reqs:
+                ids: list[str] = []
+                for i, (d, q) in enumerate(self._split(node, r.date, r.qty, days if r.kind == "forecast" else None)):
                     if d >= self.b.end:
                         continue  # beyond horizon (validator warned)
                     rid = r.id if i == 0 else f"{r.id}~{i}"
@@ -212,6 +209,9 @@ class _Planner:
                                       qty=q, kind=r.kind, priority=r.priority,
                                       consumed_forecast=r.consumed if i == 0 else 0.0, past_due=d < self.start)
                     self._add_req(node, req)
+                    ids.append(rid)
+                if parts and r.kind == "forecast" and ids:
+                    st.forecasts.append((r.id, r.date, days, ids))
         for rc in self.ds.receipts:
             node = (rc.location, rc.product)
             st = self.state.get(node)
@@ -334,6 +334,8 @@ class _Planner:
         direct = lp.direct_production and not self.is_customer(node)
         if direct:   # special procurement: made for each order that needs it, never from stock, lot-for-lot
             lp = st.lp = lp.model_copy(update={"strategy": Strategy.MTO, "safety_stock": SafetyStockPolicy()})
+        if lp.strategy is Strategy.ASSEMBLY:
+            self._consume_by_parents(node, st)
         self.safety_stock(node, st)
         mto = lp.strategy is Strategy.MTO
         onhand = 0.0 if self.is_customer(node) or direct else lp.on_hand
@@ -529,6 +531,42 @@ class _Planner:
         found = {self.sales_order_of(self.req_by_id[p.requirement_id]) for p in self._pegs_of.get(o.id, ())
                  if p.requirement_id in self.req_by_id}
         return found.pop() if len(found) == 1 else None
+
+    def _consume_by_parents(self, node: Node, st: _NodeState) -> None:
+        """Strategy 70 (S/4 planning at assembly level, §5.2): a forecast on an assembly builds it ahead of its parents'
+        orders. What the parents need of it (the dependent requirements of their planned and firm orders) uses that
+        forecast up, within the consumption windows, backward first, as a sales order uses up a forecast, so the
+        assembly is planned once, not for its forecast and again for its parents. What no forecast in reach covers is
+        planned on top; what is left of a forecast stays spread evenly over its working days."""
+        deps = sorted((r.date, r.id, r.qty) for r in st.reqs
+                      if r.kind == "dependent" and r.parent_order is not None and r.qty > EPS)
+        if not deps or not st.forecasts:
+            return
+        by_id = {r.id: r for r in st.reqs}
+        cap = {fid: sum(by_id[x].qty for x in ids if x in by_id) for fid, _, _, ids in st.forecasts}
+        fcs = sorted(((fid, first, days) for fid, first, days, _ in st.forecasts), key=lambda f: (f[1], f[0]))
+        lp = st.lp
+        took = _consume(fcs, cap, [(d, q) for d, _, q in deps], lp.consumption_backward_days,
+                        lp.consumption_forward_days)
+        gone: set[str] = set()
+        for fid, _, _, ids in st.forecasts:
+            t = took.get(fid, 0.0)
+            if t <= EPS or cap[fid] <= EPS:
+                continue
+            keep = max(0.0, 1.0 - t / cap[fid])
+            for x in ids:
+                req = by_id.get(x)
+                if req is None:
+                    continue
+                req.qty *= keep
+                if req.qty <= EPS:
+                    gone.add(x)
+            if ids[0] in by_id:
+                by_id[ids[0]].consumed_forecast += t
+        if gone:
+            st.reqs[:] = [r for r in st.reqs if r.id not in gone]
+            for x in gone:
+                self.req_by_id.pop(x, None)
 
     def _segments(self, node: Node, st: _NodeState) -> list[Requirement]:
         """Sales-order stock and fixed pegging (S/4 §16.2 make-to-order segment, account assignment E): stock and firm
@@ -1375,6 +1413,11 @@ class _Planner:
             forecast_reqs = {r.id for r in st.reqs if r.kind == "forecast"}
             for p in self.pegs[first_peg:]:
                 if p.supply_kind == "order" and p.requirement_id in forecast_reqs:
+                    self.order_by_id[p.supply_id].convertible = False
+        if node[1] in self.ds.variants_of:
+            # a planning material is never made or shipped itself: its orders plan the parts its variants share
+            for p in self.pegs[first_peg:]:
+                if p.supply_kind == "order":
                     self.order_by_id[p.supply_id].convertible = False
 
     def _add_peg(self, p: Peg) -> None:

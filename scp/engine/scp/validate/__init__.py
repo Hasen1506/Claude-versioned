@@ -87,6 +87,10 @@ RULES: dict[str, tuple[Severity, str]] = {
     "PO_LINE_MISMATCH": ("error", "Purchase order line that does not match its order"),
     "FIXED_SOURCE_TWICE": ("warning", "More than one fixed source for a product at a place"),
     "OPEN_PO_BLOCKED_SUPPLIER": ("warning", "Open purchase order with a blocked supplier"),
+    "PLANNING_MATERIAL_CHAIN": ("warning", "A planning material that is itself a variant: nothing is planned "
+                                           "through it"),
+    "VARIANT_FORECAST": ("warning", "Forecast on a variant forecast through its planning material: both are "
+                                    "planned"),
 }
 
 
@@ -219,6 +223,15 @@ def _references(ds: Dataset, c: _Collector) -> None:
             if lp.withdraw_from:
                 _loc_type(ds, c, lp.withdraw_from, STOCKING_LOCATION_TYPES, "location_product", oid, "withdraw_from",
                           "parts are withdrawn from a place that keeps stock")
+    for p in ds.products:
+        if _ref(ds, c, "product", p.planning_material, "product", p.id, "planning_material") and p.planning_material:
+            base = ds.product_by_id[p.planning_material]
+            if base.planning_material is not None:
+                c.add("PLANNING_MATERIAL_CHAIN", "product", p.id,
+                      f"{p.id}'s planning material {base.id} is itself a variant of {base.planning_material}: "
+                      f"{p.id} is forecast and planned on its own",
+                      f"Name {base.planning_material} as {p.id}'s planning material, or clear {base.id}'s",
+                      "planning_material")
     for r in ds.resources:
         if _ref(ds, c, "location", r.location, "resource", r.id, "location"):
             _loc_type(ds, c, r.location, PRODUCTION_LOCATION_TYPES, "resource", r.id, "location",
@@ -688,6 +701,13 @@ def _demand(ds: Dataset, c: _Collector) -> None:
         c.add("DEMAND_OUTSIDE_HORIZON", "demand", "*", f"{outside} demand records are after the end of the plan",
               "Lengthen the plan (Company settings → horizon days) to plan them")
     _consumption_gaps(ds, c, end)
+    base = ds.planning_base
+    for loc, prod in sorted({(d.location, d.product) for d in ds.demand
+                             if d.kind is DemandKind.FORECAST and d.product in base and d.qty > 0}):
+        c.add("VARIANT_FORECAST", "demand", f"{loc}/{prod}",
+              f"{prod} is forecast through its planning material {base[prod][0]}, and has a forecast of its own at "
+              f"{loc}: its orders use up {base[prod][0]}'s forecast, and its own forecast is planned as well",
+              f"Delete {prod}'s own forecast, or clear its planning material")
     for loc, prod in sorted(mto_fc):
         c.add("MTO_WITH_FORECAST", "location_product", f"{loc}/{prod}",
               "Forecast exists but the strategy is MTO", "Use MTS_CONSUME or ATO to pre-plan")
@@ -734,7 +754,9 @@ def _forecasting(ds: Dataset, c: _Collector) -> None:
     if late:
         c.add("HISTORY_AFTER_START", "history", "*", f"{late} history rows are on or after planning start",
               "History ends the day before planning starts; move planning start or drop those rows")
-    with_history = {(h.location, h.product) for h in ds.history if h.date < s.planning_start and h.qty > 0}
+    base = ds.planning_base
+    with_history = {(h.location, base[h.product][0] if h.product in base else h.product)
+                    for h in ds.history if h.date < s.planning_start and h.qty > 0}
     npi_keys = Counter((n.location, n.product) for n in ds.npi)
     for (loc, prod), k in npi_keys.items():
         if k > 1:
@@ -751,6 +773,10 @@ def _forecasting(ds: Dataset, c: _Collector) -> None:
         if not s.planning_start <= o.date < end:
             c.add("OVERRIDE_OUTSIDE_HORIZON", "override", oid, "The override date is outside the plan's dates",
                   "Move it inside the plan or delete it", "date")
+        elif o.product in base:
+            c.add("OVERRIDE_WITHOUT_FORECAST", "override", oid,
+                  f"{o.product} is forecast through its planning material {base[o.product][0]}, so it has no "
+                  "forecast of its own to adjust", f"Adjust {base[o.product][0]}'s forecast instead")
         elif (o.location, o.product) not in with_history and (o.location, o.product) not in npi_keys:
             c.add("OVERRIDE_WITHOUT_FORECAST", "override", oid,
                   f"No history or NPI rule for {o.product} at {o.location}, so there is no forecast to adjust",

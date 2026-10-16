@@ -89,14 +89,17 @@ def _aggregate(ds: Dataset, period: ForecastPeriod, cutoff: date) -> dict[tuple[
     if not usable:
         return {}
     data_end = min(next_start(max(usable), period), horizon_start)
+    base = ds.planning_base
     for r, parts in spans:
-        k = (r.location, r.product)
+        # a variant is forecast through its planning material: its sales count there, in the base's units
+        b, factor = base.get(r.product, (r.product, 1.0))
+        k = (r.location, b)
         prod = ds.product_by_id.get(r.product)
         price = r.price if r.price is not None else (prod.price or prod.standard_cost or 0.0) if prod else 0.0
         for ps, q in parts:
             if ps >= horizon_start:
                 continue
-            qty[k][ps] += q
+            qty[k][ps] += q * factor
             if r.promo:
                 promo[k].add(ps)
             revenue[k] += q * price
@@ -324,6 +327,11 @@ def run_forecast(ds: Dataset) -> ForecastResult:
             series[k].notes.append("NPI rule ignored: the product has enough history for a statistical forecast.")
             continue
         series[k] = _npi_series(ctx, rule, series, pooled, hists.get(k))
+    for (_, prod), s in series.items():
+        if prod in ds.variants_of:
+            s.notes.append("Forecast once for its variants (" + ", ".join(
+                (ds.product_by_id[v].name or v) + ("" if f == 1 else f" × {f:g}") for v, f in ds.variants_of[prod])
+                + "): their sales are counted here, and their orders use this forecast up.")
     _apply_overrides(ds, series, fut)
     for (_, prod), s in series.items():
         if ds.whole(prod):

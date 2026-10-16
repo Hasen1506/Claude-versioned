@@ -746,6 +746,49 @@ with two planners' overrides of the time), and a small shop imported as a file w
 | N235 | A product without sales of its own (a new product) has no naïve forecast; its naïve is its statistical forecast, so the model adds nothing over it. | Minor | By design: there is no yardstick for it. |
 | N236 | Value add is judged at one lag only; the forecast one week ahead and at the lead time cannot be set side by side. Kept forecasts grow by one row per product, place and week, like the sales history, and are never trimmed. | Minor | Open. |
 
+### 4.3: Planning material, assembly forecasts and the strategy advisor
+
+ENTERPRISE_PLAN 4.3, through the engine and in a browser: the Kaveri Kitchenware example (two products now say how
+many days their customers wait), a mixer shop imported as a file (a base mixer with a red variant and a blue twin pack
+that uses two), and a pump shop in the engine tests (a pump made to order from two motor units forecast ahead).
+
+* *Planning material* (input: a variant's *Planning material* and *Units of the planning material one of these uses
+  up*, under Data → Products; processing: the variants' sales are counted in the base's series, × the factor, and their
+  orders, open, delivered or closed, use up the base's forecast where they are sold; output):
+  * Sixteen weeks of 30 red and 10 blue twin packs make one series for the mixer, 50 a week: 300 over the six weeks,
+    one product and place. The series says "Forecast once for its variants (Mixer blue twin pack × 2, Mixer red)".
+  * Against a base forecast of 100 in a week, 30 red and 20 twin packs leave 30 to plan; the motors come to 100, not
+    the 170 of forecast and orders both. The mixer's own orders carry *Planning only* on the plan: they plan the
+    motors the variants share and are never made themselves.
+  * Checks: a variant with a forecast of its own (both are planned), a planning material that is itself a variant
+    (nothing is planned through it), an override on a variant (it goes to the base).
+* *Forecast on an assembly* (strategy *Forecast on an assembly, its parents' needs using it up (70)*; processing: the
+  parents' dependent requirements, from planned and firm orders, use up the assembly's forecast within its
+  consumption windows; output): the pump order needing 60 motor units plans 200 against a forecast of 200, not 260;
+  the week's remaining 40 stay spread at 8 a working day. 260 needed in all plans 260, and an order eleven days past
+  the last forecast week reaches none and is planned on top. The safety-stock rate counts the larger of the forecast
+  and the parents' demand.
+* *Strategy advisor* (Inventory → Strategy; input: *Days customers accept to wait* per product; processing: the
+  preferred path from where it is sold, the last delivery leg, assembling plus delivery, and the longest path through
+  the bill of materials plus delivery; output, for Kaveri):
+  * Every finished good is judged where its slowest path starts, the north trade distributors: 1 day from stock at the
+    Delhi warehouse, 7.3 to make at Pune and deliver, 53.3 from scratch. Customers of the 500 W mixer grinder and the
+    kettle wait two days: made to stock, which meets the wait.
+  * Typing ten days for the 750 W: "Assemble to order. Now made to stock, orders using up the forecast, which meets
+    the wait. Customers wait 10 days: enough to assemble it (7.3 days) but not to get its parts (53.3)". One click on
+    *Assemble to order* sets it where the north trade's demand is planned from, the Delhi warehouse.
+  * Half a day: *Orders late*, and the page says one product is planned in a way that makes orders late.
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N237 | The advisor's button set the strategy at the plant, where the product is made, and nothing changed: Kaveri's trade demand is planned with the strategy of the nearest place upstream with a record of the product, the Delhi warehouse. | Major | **Fixed** before it shipped: the advisor says where the strategy is read (`Dataset.demand_lp_at`), the button sets it there, and the row says "set at Delhi NCR DC". |
+| N238 | At phone width every Inventory tab scrolled sideways: the hidden "out of date" labels for screen readers sat outside the scrolling tab bar and widened the page. | Minor | **Fixed** for every page: those labels are pinned to the corner. |
+| N239 | The series workbench heading and list showed codes ("BASE @ CU"). | Cosmetic | **Fixed.** Names: "Mixer at Trade". |
+| N240 | The S&OP plan reads an assembly's forecast as demand of its own and adds its parents' needs on top: strategy 70 is planned once only by MRP and the safety-stock rates. | Minor | Open. |
+| N241 | A planning material reaches one level: a variant of a variant is forecast on its own (the check says so). | Minor | By design: SAP's planning material is one level too. |
+| N242 | The Kaveri example has no variants and no assembly forecast; those are shown on small imported companies. | Minor | Open. |
+| N243 | The advisor follows the preferred source and nominal lead times: no queue, capacity or alternative source shortens or lengthens them. | Minor | By design: it compares the planned times the plan itself uses. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

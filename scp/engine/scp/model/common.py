@@ -87,6 +87,7 @@ class Strategy(str, Enum):
     MTS_CONSUME = "MTS_CONSUME"  # SAP 40: orders consume forecast within the consumption window
     MTO = "MTO"                  # SAP 20: each sales order drives its own supply, forecast ignored
     ATO = "ATO"                  # SAP 50: forecast pre-plans components; final assembly on order
+    ASSEMBLY = "ASSEMBLY"        # SAP 70: forecast on an assembly; its parents' dependent requirements consume it
 
 
 class MrpType(str, Enum):

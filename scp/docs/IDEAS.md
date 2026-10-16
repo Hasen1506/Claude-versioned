@@ -132,13 +132,13 @@ small or mid-sized planner. None is built.
   - An S&OP release that splits a begun forecast makes its pieces new forecasts, without the original. Deliveries
     made before the split then stop reducing the pieces.
   - A begun forecast edited by hand keeps its original. Decide whether an edit should start a new original.
-- **Planning at a common platform (strategies 60/63 "planning material") (high, L).** Many SMEs sell variants (sizes,
+- **Planning at a common platform (strategies 60/63 "planning material") (high, L) (built, ENTERPRISE_PLAN 4.3).** Many SMEs sell variants (sizes,
   colours, voltages) of one base: forecast the base once, let each variant's orders consume it with a conversion
   factor. Today each variant needs its own forecast.
-- **Forecast on an assembly consumed by dependent demand (strategy 70/74) (med, M).** A forecast on a sub-assembly
+- **Forecast on an assembly consumed by dependent demand (strategy 70/74) (med, M) (built for 70, ENTERPRISE_PLAN 4.3).** A forecast on a sub-assembly
   is planned on top of the dependent requirements from its parents instead of being consumed by them, so pre-building
   long-lead sub-assemblies to forecast double-counts.
-- **Strategy advisor from lead times (§5.4 deep dive) (med, S).** CDT ≥ CLT+ALT → make to order; ALT ≤ CDT <
+- **Strategy advisor from lead times (§5.4 deep dive) (med, S) (built, ENTERPRISE_PLAN 4.3).** CDT ≥ CLT+ALT → make to order; ALT ≤ CDT <
   CLT+ALT → assemble to order; CDT < ALT → make to stock consuming forecast. The engine knows ALT and CLT (lead-time
   model); with a "customer accepts N days" per product it can flag a strategy that cannot meet it.
 - **Consumption mode: forward first, and windows in working days (med, S).** Orders always look back first, then

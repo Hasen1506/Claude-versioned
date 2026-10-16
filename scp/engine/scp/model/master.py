@@ -193,6 +193,17 @@ class Product(Model):
                                               "own rate (an exemption, an export) goes before it")
     setup_group: str | None = Field(None, max_length=40,
                                     description="Sequence-dependent setup family (colour, allergen, grade…)")
+    planning_material: str | None = Ref(
+        "product", default=None,
+        description="Planning material (S/4 strategies 60 and 63): this variant is forecast through the base product "
+                    "named here. Its sales count toward the base's forecast, and its orders use up the base's forecast "
+                    "where they are sold")
+    planning_factor: float = Unit("ratio", gt=0, default=1.0,
+                                  description="Units of the planning material one unit of this variant uses up")
+    customer_wait_days: float | None = Unit(
+        "days", le=365, default=None,
+        description="Days customers accept to wait for it, from their order to delivery: the strategy advisor "
+                    "compares them with the lead times to make it, and to make its parts")
 
     @property
     def batch_managed(self) -> bool:
@@ -202,6 +213,12 @@ class Product(Model):
     def whole(self) -> bool:
         """Quantities of this product are whole numbers."""
         return self.whole_units if self.whole_units is not None else self.base_uom.strip().upper() in COUNT_UNITS
+
+    @model_validator(mode="after")
+    def _variant(self) -> Product:
+        if self.planning_material is not None and self.planning_material == self.id:
+            raise ValueError("a product cannot be its own planning material")
+        return self
 
     @field_validator("conversions")
     @classmethod
@@ -364,12 +381,12 @@ class LocationProduct(Model):
                                                                       "when the company counts them so)")
     consumption_backward_days: float = Unit(
         "days", default=7.0,
-        description="Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days before its "
+        description="Forecast consumption (strategies MTS_CONSUME, ATO and ASSEMBLY): how many calendar days before its "
                     "date a sales order may reach back to eat forecast; a forecast for a period counts on every day of "
                     "it. An order consumes backward first, then forward")
     consumption_forward_days: float = Unit(
         "days", default=7.0,
-        description="Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days after its "
+        description="Forecast consumption (strategies MTS_CONSUME, ATO and ASSEMBLY): how many calendar days after its "
                     "date a sales order may reach forward to eat forecast, once nothing is left backward. What no "
                     "forecast in reach covers is planned on top of the forecast")
     holding_rate: float | None = Unit("fraction", le=2, default=None,

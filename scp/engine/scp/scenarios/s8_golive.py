@@ -44,7 +44,9 @@ def build() -> dict:
              "cold_chain": True},
             {"id": "JAR", "name": "Jar and lid", "type": "PKG", "weight_kg": 0.2, "serial_numbers": True},
             {"id": "SUGAR", "name": "Sugar", "type": "RM", "weight_kg": 1},
-            {"id": "LABEL", "name": "Label", "type": "PKG"},
+            {"id": "LABEL", "name": "Label", "type": "PKG", "planning_material": "LABEL-STD"},   # its own forecast too
+            {"id": "LABEL-STD", "name": "Label, any print", "type": "PKG"},
+            {"id": "LABEL-GOLD", "name": "Gold label", "type": "PKG", "planning_material": "LABEL"},  # a variant's variant
         ],
         "location_products": [
             {"location": "PLANT", "product": "JAM", "safety_stock": {"method": "fixed", "qty": 100},
@@ -167,6 +169,7 @@ WARNINGS = {
     ("STOCK_NOT_SYNCED", "location_product", "PLANT/FRUIT"), ("STOCK_EXPIRED", "location_product", "PLANT/FRUIT"),
     ("BATCH_UNKNOWN", "movement", "GM-3"), ("SERIALS_COUNT", "movement", "GM-3"),
     ("REVERSAL_UNKNOWN", "movement", "GM-4"), ("COLD_CHAIN_LANE", "lane", "L-FARM"),
+    ("PLANNING_MATERIAL_CHAIN", "product", "LABEL-GOLD"), ("VARIANT_FORECAST", "demand", "PLANT/LABEL"),
 }
 
 

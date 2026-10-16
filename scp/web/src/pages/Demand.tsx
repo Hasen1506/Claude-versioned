@@ -287,7 +287,7 @@ function Workbench({ fc, sel }: { fc: ForecastResult; sel?: string }) {
             <tbody>
               {list.slice(0, ROW_LIMIT).map((s) => (
                 <tr key={s.key} className={`clickable ${s.key === current.key ? "selected" : ""}`} onClick={() => go("demand", "series", s.key)}>
-                  <td><b><Prod id={s.product} /></b><div className="faint small">{s.location}</div></td>
+                  <td><b><Prod id={s.product} /></b><div className="faint small"><Loc id={s.location} /></div></td>
                   <td className="num"><Badge>{s.segment.abc}{s.segment.xyz}</Badge></td>
                 </tr>
               ))}
@@ -328,7 +328,7 @@ function SeriesDetail({ s, fc }: { s: ForecastSeries; fc: ForecastResult }) {
   return (
     <div className="stack" style={{ minWidth: 0 }}>
       <Panel title={<div className="row wrap" style={{ gap: 8 }}>
-        <h3>{s.product} @ {s.location}</h3>
+        <h3><Prod id={s.product} /> at <Loc id={s.location} /></h3>
         <Badge sev="info">{s.segment.abc}{s.segment.xyz}</Badge><Badge>{s.segment.pattern}</Badge>
         {s.segment.lifecycle !== "mature" && <Badge sev="warning">{s.segment.lifecycle}</Badge>}
         <span className="faint small">Champion: <b>{s.champion_label || "—"}</b>{champ && <> · WAPE {pct(champ.wape)} · MASE {champ.mase?.toFixed(2)}</>}</span>

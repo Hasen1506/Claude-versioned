@@ -178,6 +178,25 @@ class Dataset(Model):
         """Every (location, product) with a demand record: forecast or customer order."""
         return {(d.location, d.product) for d in self.demand}
 
+    @cached_property
+    def planning_base(self) -> dict[str, tuple[str, float]]:
+        """Variant → (its planning material, the units of it one unit of the variant uses up) (S/4 strategies 60/63).
+        One level: a planning material that names one of its own, or one that is not a product, plans nothing."""
+        out: dict[str, tuple[str, float]] = {}
+        for p in self.products:
+            base = self.product_by_id.get(p.planning_material or "")
+            if base is not None and base.id != p.id and base.planning_material is None:
+                out[p.id] = (base.id, p.planning_factor)
+        return out
+
+    @cached_property
+    def variants_of(self) -> dict[str, list[tuple[str, float]]]:
+        """Planning material → its variants, each with its factor."""
+        out: dict[str, list[tuple[str, float]]] = {}
+        for v, (base, f) in sorted(self.planning_base.items()):
+            out.setdefault(base, []).append((v, f))
+        return out
+
     def lot_sizing(self, lp: LocationProduct) -> LotSizing:
         """The lot-sizing rule planning uses at a node: its own, or the company default where it leaves it empty."""
         ls = lp.lot_sizing
@@ -238,10 +257,11 @@ class Dataset(Model):
             hit = self.lp_memo[("d", node)] = self._demand_lp(node)
         return hit
 
-    def _demand_lp(self, node: tuple[str, str]) -> LocationProduct:
-        lp = self.planning_lp(node)
+    def demand_lp_at(self, node: tuple[str, str]) -> str | None:
+        """The place whose record :meth:`demand_lp` reads for demand at ``node``: the node's own place, or for a
+        customer channel without a record the nearest place upstream that has one (None: no such place)."""
         if node in self.location_product_by_key or self.location_type(node[0]) is not LocationType.CUSTOMER:
-            return lp
+            return node[0]
         seen, level = {node[0]}, [node[0]]
         while level:
             nxt: list[str] = []
@@ -250,15 +270,22 @@ class Dataset(Model):
                     if ln.destination != dest or ln.origin in seen or (ln.products and node[1] not in ln.products):
                         continue
                     if (ln.origin, node[1]) in self.location_product_by_key:
-                        # the upstream policy as planning uses it: an MRP group's strategy and windows apply here too
-                        up = self.planning_lp((ln.origin, node[1]))
-                        return lp.model_copy(update={"strategy": up.strategy,
-                                                     "consumption_backward_days": up.consumption_backward_days,
-                                                     "consumption_forward_days": up.consumption_forward_days})
+                        return ln.origin
                     seen.add(ln.origin)
                     nxt.append(ln.origin)
             level = nxt
-        return lp
+        return None
+
+    def _demand_lp(self, node: tuple[str, str]) -> LocationProduct:
+        lp = self.planning_lp(node)
+        at = self.demand_lp_at(node)
+        if at is None or at == node[0]:
+            return lp
+        # the upstream policy as planning uses it: an MRP group's strategy and windows apply here too
+        up = self.planning_lp((at, node[1]))
+        return lp.model_copy(update={"strategy": up.strategy,
+                                     "consumption_backward_days": up.consumption_backward_days,
+                                     "consumption_forward_days": up.consumption_forward_days})
 
     @cached_property
     def customer_price_by_key(self) -> dict[tuple[str, str], CustomerPrice]:

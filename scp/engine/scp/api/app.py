@@ -39,6 +39,7 @@ from ..plan import PlanResult, run_mrp
 from ..plan.mrp import with_kept_plan
 from ..plan.trace import PlanTrace, index as trace_index, trace
 from ..plan.level import LevelPreview, level_preview
+from ..plan.advisor import StrategyAdvisor, strategy_advice
 from ..purchasing import PurchasingError, act as purchasing_act, create_one_off_po, create_purchase_orders, purchasing_view
 from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..sales import SalesError, act as sales_act, sales_view
@@ -394,6 +395,13 @@ def post_value_add(ds: PlanData) -> ValueAdd:
     """Forecast value add: each layer of the kept forecasts (naïve, statistical, events, overrides) against the sales
     of the periods that have sold, in total, per product family and per planner."""
     return value_add(ds)
+
+
+@app.post("/api/plan/strategy-advice", response_model=StrategyAdvisor)
+def post_strategy_advice(ds: PlanData) -> StrategyAdvisor:
+    """Strategy advisor (S/4 §5.4): for each product sold, the days customers wait against the time to deliver from
+    stock, to assemble from parts and to make from scratch; the strategy that fits, and whether today's does."""
+    return strategy_advice(ds)
 
 
 @app.post("/api/inventory", response_model=InventoryResult)

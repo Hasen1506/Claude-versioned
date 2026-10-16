@@ -600,7 +600,7 @@ table.checks td.v { font: 12px var(--mono); max-width: 260px; overflow-wrap: any
 table.checks td.v .same { color: var(--good-text); }
 table.checks td.v .tol { font-size: 10px; color: var(--text-3); }
 table.checks tr.fail td { background: var(--critical-soft) !important; }
-.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sr { position: absolute; left: 0; top: 0; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }  /* left/top: kept out of the page width when its parent scrolls */
 button.linkish { border: 0; background: none; padding: 0; color: var(--accent-text); font: inherit; cursor: pointer; text-decoration: underline; }
 
 /* ---- "needs you": situations in plain words (supply plan) ---- */

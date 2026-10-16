@@ -9,8 +9,9 @@ import { Loc, namesOf, Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
+import { StrategyView } from "./InventoryStrategy";
 
-type View = "overview" | "placement" | "ddmrp" | "pooling" | "settings";
+type View = "overview" | "placement" | "ddmrp" | "pooling" | "strategy" | "settings";
 const key = (n: { location: string; product: string }) => `${n.location}|${n.product}`;
 const days = (v: number) => `${v.toFixed(v < 10 && v % 1 ? 1 : 0)} d`;
 
@@ -34,6 +35,7 @@ export function Inventory({ route }: { route: string[] }) {
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   if (view === "settings") return body(<><Nav view={view} res={res} /><SettingsView ds={ds} /></>);
+  if (view === "strategy") return body(<><Nav view={view} res={res} /><StrategyView ds={ds} /></>);
   if (run.error) return body(<div className="banner error"><Badge sev="error">Optimisation failed</Badge>{run.error}</div>);
   if (!res) {
     return body(<>
@@ -68,6 +70,7 @@ function Nav({ view, res }: { view: View; res: InventoryResult | null }) {
       { id: "placement", label: "Multi-echelon placement", count: stocking },
       { id: "ddmrp", label: "DDMRP buffers", count: res?.totals?.ddmrp_positions },
       { id: "pooling", label: "Pooling", count: res?.pooling.length },
+      { id: "strategy", label: "Strategy" },
       { id: "settings", label: "Settings" },
     ]} />
   );

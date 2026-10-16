@@ -259,6 +259,16 @@ def _cold_chain(d):
     d["lanes"] = [{"id": "P-DC", "origin": "P", "destination": "DC", "products": ["A"], "modes": [{"transit_days": 1}]}]
 
 
+def _planning_chain(d):
+    d["products"][1]["planning_material"] = "C"
+    d["products"][2]["planning_material"] = "A"
+
+
+def _variant_forecast(d):
+    d["products"].append({"id": "BASE", "type": "FG"})
+    d["products"][0]["planning_material"] = "BASE"
+
+
 MUTATORS = {
     "DUP_ID": _dup_id, "DUP_LOCATION_PRODUCT": _dup_lp, "REF_UNKNOWN": _ref_unknown,
     "REF_WRONG_TYPE": _ref_wrong_type, "FX_MISSING": _fx_missing, "CALENDAR_NO_WORKDAY_IN_HORIZON": _calendar,
@@ -278,6 +288,7 @@ MUTATORS = {
     "FIXED_SOURCE_TWICE": _fixed_twice, "OPEN_PO_BLOCKED_SUPPLIER": _open_po_blocked,
     "STOCK_EXPIRED": _stock_expired, "BATCH_UNKNOWN": _batch_unknown, "REVERSAL_UNKNOWN": _reversal_unknown,
     "SERIALS_COUNT": _serials_count, "COLD_CHAIN_LANE": _cold_chain,
+    "PLANNING_MATERIAL_CHAIN": _planning_chain, "VARIANT_FORECAST": _variant_forecast,
 }
 
 

@@ -1505,6 +1505,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/plan/strategy-advice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Strategy Advice
+         * @description Strategy advisor (S/4 §5.4): for each product sold, the days customers wait against the time to deliver from
+         *     stock, to assemble from parts and to make from scratch; the strategy that fits, and whether today's does.
+         */
+        post: operations["post_strategy_advice_api_plan_strategy_advice_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/inventory": {
         parameters: {
             query?: never;
@@ -7150,13 +7171,13 @@ export interface components {
             gr_processing_days: number;
             /**
              * Consumption Backward Days
-             * @description Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days before its date a sales order may reach back to eat forecast; a forecast for a period counts on every day of it. An order consumes backward first, then forward
+             * @description Forecast consumption (strategies MTS_CONSUME, ATO and ASSEMBLY): how many calendar days before its date a sales order may reach back to eat forecast; a forecast for a period counts on every day of it. An order consumes backward first, then forward
              * @default 7
              */
             consumption_backward_days: number;
             /**
              * Consumption Forward Days
-             * @description Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days after its date a sales order may reach forward to eat forecast, once nothing is left backward. What no forecast in reach covers is planned on top of the forecast
+             * @description Forecast consumption (strategies MTS_CONSUME, ATO and ASSEMBLY): how many calendar days after its date a sales order may reach forward to eat forecast, once nothing is left backward. What no forecast in reach covers is planned on top of the forecast
              * @default 7
              */
             consumption_forward_days: number;
@@ -9508,6 +9529,22 @@ export interface components {
              * @description Sequence-dependent setup family (colour, allergen, grade…)
              */
             setup_group?: string | null;
+            /**
+             * Planning Material
+             * @description Planning material (S/4 strategies 60 and 63): this variant is forecast through the base product named here. Its sales count toward the base's forecast, and its orders use up the base's forecast where they are sold
+             */
+            planning_material?: string | null;
+            /**
+             * Planning Factor
+             * @description Units of the planning material one unit of this variant uses up
+             * @default 1
+             */
+            planning_factor: number;
+            /**
+             * Customer Wait Days
+             * @description Days customers accept to wait for it, from their order to delivery: the strategy advisor compares them with the lead times to make it, and to make its parts
+             */
+            customer_wait_days?: number | null;
         };
         /**
          * ProductType
@@ -12988,7 +13025,55 @@ export interface components {
          * @description Planning strategy (S/4 guide §5.2).
          * @enum {string}
          */
-        Strategy: "MTS" | "MTS_CONSUME" | "MTO" | "ATO";
+        Strategy: "MTS" | "MTS_CONSUME" | "MTO" | "ATO" | "ASSEMBLY";
+        /** StrategyAdvice */
+        StrategyAdvice: {
+            /** Product */
+            product: string;
+            /** Sold At */
+            sold_at: string;
+            /** Kept At */
+            kept_at: string | null;
+            /** Set At */
+            set_at: string | null;
+            /**
+             * Made
+             * @default false
+             */
+            made: boolean;
+            /** Strategy */
+            strategy: string;
+            /** Wait Days */
+            wait_days: number | null;
+            /** From Stock Days */
+            from_stock_days: number;
+            /** Assemble Days */
+            assemble_days: number | null;
+            /** Scratch Days */
+            scratch_days: number;
+            /** Advised */
+            advised: ("MTO" | "ATO" | "MTS_CONSUME") | null;
+            /** Fits */
+            fits: boolean | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
+        /** StrategyAdvisor */
+        StrategyAdvisor: {
+            /**
+             * Rows
+             * @default []
+             */
+            rows: components["schemas"]["StrategyAdvice"][];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
         /**
          * Subcontract
          * @description An operation done outside by a supplier (≈ S/4 external operation): no own resource is loaded.
@@ -17041,6 +17126,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ValueAdd"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_strategy_advice_api_plan_strategy_advice_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyAdvisor"];
                 };
             };
             /** @description Validation Error */

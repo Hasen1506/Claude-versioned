@@ -86,6 +86,9 @@ const TITLE: Record<string, string> = {
   min_history_periods: "History needed before methods compete (periods)", outlier_method: "Unusual values",
   outlier_threshold: "Unusual beyond (robust z-score)", interval: "Range shown around the forecast",
   fva_lag: "Value add judges the forecast made this many periods ahead",
+  planning_material: "Planning material: forecast through this base product",
+  planning_factor: "Units of the planning material one of these uses up",
+  customer_wait_days: "Days customers accept to wait for it",
   // a kept forecast (forecast value add)
   made: "Kept on", naive: "Naïve (last period's sales)", adjusted: "After events and new products", overridden: "Overridden by a planner",
   shelf_life_days: "Keeps for (days)", family: "Product group",
@@ -110,6 +113,7 @@ const ENUM_LABEL: Record<string, string> = {
   deterministic: "Plan to requirements (PD)", reorder_point: "Reorder point (VB)", ddmrp: "Demand-driven buffer (D1)", none: "None",
   MTS: "Make to stock, orders don't consume the forecast (10)", MTS_CONSUME: "Make to stock, orders consume the forecast (40)",
   MTO: "Make to order (20)", ATO: "Assemble to order (50)",
+  ASSEMBLY: "Forecast on an assembly, its parents' needs using it up (70)",
   L4L: "Lot for lot: exactly what is needed", FIXED: "Fixed lot size", EOQ: "Economic order quantity",
   POQ: "Cover a number of periods", MIN_MAX: "Replenish up to the maximum stock",
   PPB: "Part-period balancing (holding ≤ one order's cost)", LUC: "Least unit cost", GROFF: "Groff's rule",

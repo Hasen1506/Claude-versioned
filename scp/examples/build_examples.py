@@ -88,11 +88,11 @@ def kitchenware() -> dict:
     ]
     products = [
         {"id": "MG-500", "name": "Mixer grinder 500 W", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.2,
-         "volume_m3": 0.028, "price": 2890, "setup_group": "MG"},
+         "volume_m3": 0.028, "price": 2890, "setup_group": "MG", "customer_wait_days": 2},
         {"id": "MG-750", "name": "Mixer grinder 750 W", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.9,
          "volume_m3": 0.031, "price": 3990, "setup_group": "MG"},
         {"id": "KT-15", "name": "Electric kettle 1.5 L", "type": "FG", "family": "Kettles", "weight_kg": 1.3,
-         "volume_m3": 0.009, "price": 1190, "setup_group": "KT"},
+         "volume_m3": 0.009, "price": 1190, "setup_group": "KT", "customer_wait_days": 2},
         {"id": "MOT-500", "name": "Motor assembly 500 W", "type": "SFG", "weight_kg": 1.6, "volume_m3": 0.004,
          "setup_group": "W500"},
         {"id": "MOT-750", "name": "Motor assembly 750 W", "type": "SFG", "weight_kg": 2.0, "volume_m3": 0.005,
