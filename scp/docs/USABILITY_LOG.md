@@ -788,6 +788,7 @@ that uses two), and a pump shop in the engine tests (a pump made to order from t
 | N241 | A planning material reaches one level: a variant of a variant is forecast on its own (the check says so). | Minor | By design: SAP's planning material is one level too. |
 | N242 | The Kaveri example has no variants and no assembly forecast; those are shown on small imported companies. | Minor | Open. |
 | N243 | The advisor follows the preferred source and nominal lead times: no queue, capacity or alternative source shortens or lengthens them. | Minor | By design: it compares the planned times the plan itself uses. |
+| N244 | The Kaveri example was not the same file on every machine: OpenBLAS picks its kernel per processor, and the kept forecasts fitted on an AVX-512 machine and an AVX2 one differed by a tenth, so CI (AVX2) rounded a kettle week to 640 where this machine wrote 641. | Major | **Fixed.** The example builder sets one kernel (Haswell, single thread) on every x86 machine before numpy loads. |
 
 ## Found in the second reality check (after Phase E)
 

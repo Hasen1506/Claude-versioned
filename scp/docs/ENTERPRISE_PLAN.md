@@ -46,7 +46,7 @@ Done: 3.1 (N200–N206), 3.2 (N207–N213; godown and warehouse stock and goods 
 
 ## Phase 4: Demand and S&OP depth
 Done: 4.1 (N222–N229; budgets by customer or region, and reusing the page's solve at sign-off, open); 4.2 (N230–N236;
-value add at several lags side by side, and trimming old kept forecasts, open); 4.3 (N237–N243; strategy 70 in the S&OP
+value add at several lags side by side, and trimming old kept forecasts, open); 4.3 (N237–N244; strategy 70 in the S&OP
 plan, and variants in the example, open).
 
 | # | Gap (guide §) | Build |

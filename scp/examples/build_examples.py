@@ -8,10 +8,19 @@ in the UI ("Load example"), and they are validated in the engine test suite.
 from __future__ import annotations
 
 import json
+import os
+import platform
 import random
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+
+# One linear-algebra kernel on every x86 machine, set before numpy loads: OpenBLAS otherwise picks one per processor,
+# and the forecasts fitted for the kept releases differ by a tenth between them (an AVX-512 machine and an AVX2 one
+# rounded a kettle week to 641 and 640), so the file would not be the same on every machine.
+if platform.machine().lower() in ("x86_64", "amd64"):
+    os.environ.setdefault("OPENBLAS_CORETYPE", "Haswell")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "engine"))

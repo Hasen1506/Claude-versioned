@@ -10317,7 +10317,7 @@
    "naive": 491,
    "statistical": 419,
    "adjusted": 419,
-   "final": 420,
+   "final": 419,
    "overridden": false,
    "author": ""
   },
@@ -11238,8 +11238,8 @@
    "end": "2026-08-31",
    "made": "2026-08-17",
    "naive": 655,
-   "statistical": 641,
-   "adjusted": 641,
+   "statistical": 640,
+   "adjusted": 640,
    "final": 640,
    "overridden": false,
    "author": ""
