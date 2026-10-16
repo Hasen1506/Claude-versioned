@@ -17,6 +17,7 @@ from .common import LocationType, Model
 from .finance import FinanceSettings
 from .tower import TowerSettings
 from .warehouse import Bin, PutawayRule, StorageType, Wave, WarehouseTask
+from .transport import Carrier, FreightOrder, TransportSettings
 from .demand import DemandEvent, ForecastOverride, ForecastSettings, ForecastSnapshot, NpiRule
 from .inventory import InventorySettings
 from .purchasing import (
@@ -87,6 +88,9 @@ class Dataset(Model):
     putaway_rules: list[PutawayRule] = Field(default_factory=list)
     warehouse_tasks: list[WarehouseTask] = Field(default_factory=list)
     waves: list[Wave] = Field(default_factory=list)
+    carriers: list[Carrier] = Field(default_factory=list)
+    freight_orders: list[FreightOrder] = Field(default_factory=list)
+    transport: TransportSettings = Field(default_factory=TransportSettings)
     closed_orders: list[ClosedOrder] = Field(default_factory=list)
     accuracy: list[AccuracyRecord] = Field(default_factory=list)
     rolled_weeks: list[RolledWeek] = Field(default_factory=list)
@@ -171,6 +175,10 @@ class Dataset(Model):
     @cached_property
     def lane_by_id(self) -> dict[str, TransportLane]:
         return _index(self.lanes)
+
+    @cached_property
+    def carrier_by_id(self) -> dict[str, Carrier]:
+        return _index(self.carriers)
 
     @cached_property
     def location_product_by_key(self) -> dict[tuple[str, str], LocationProduct]:

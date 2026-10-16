@@ -90,7 +90,7 @@ ANON_COSTS: dict[str, int] = {
     "/api/ask": 40,                          # a plan and the worklist; a what-if question plans a copy too
     "/api/tower/fix": 30,                    # two plans and their exceptions
     "/api/warehouse": 2,                     # enterprise 6.1: the place's journal read by bin
-    "/api/valuation": 5, "/api/cycle-counts": 5,   # enterprise 6.2: the journal and the invoices replayed
+    "/api/valuation": 5, "/api/transport": 5, "/api/cycle-counts": 5,   # enterprise 6.2: the journal and the invoices replayed
 }
 RATED_PATHS = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset", "/api/auth/reset/request",
                "/api/auth/email/verify", "/api/auth/email/request", "/api/auth/signin/second")

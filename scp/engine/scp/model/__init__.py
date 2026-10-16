@@ -33,9 +33,11 @@ from .master import (
     UomConversion,
 )
 from .warehouse import Bin, Putaway, PutawayRule, StorageType, TaskKind, Wave, WarehouseTask
+from .transport import Carrier, FreightOrder, FreightRate, TransportSettings
 from .transactional import DemandRecord, Reservation, SalesHistory, ConfirmedDelivery, ScheduledReceipt
 
 __all__ = [
+    "Carrier", "FreightOrder", "FreightRate", "TransportSettings",
     "Bin", "Putaway", "PutawayRule", "StorageType", "TaskKind", "Wave", "WarehouseTask",
     "Budget",
     "Customer", "Delivery", "DeliveryLine", "Invoice", "InvoiceLine", "PaymentTerms", "Payment", "QuoteLine",

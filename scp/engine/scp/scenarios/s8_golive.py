@@ -132,6 +132,8 @@ def build() -> dict:
         "batches": [{"product": "FRUIT", "id": "F-0701", "made_on": "2026-07-01", "expires_on": "2026-07-03"}],
         # the DC's racking labelled before its storage types were set up
         "bins": [{"location": "DC", "id": "A-01", "storage_type": "RACK"}],
+        # a haulier's rate keyed to a lane that was renamed since
+        "carriers": [{"id": "CR-HAUL", "name": "Valley haulage", "rates": [{"lane": "L-OLD", "per_shipment": 900}]}],
     }
 
 
@@ -172,7 +174,7 @@ WARNINGS = {
     ("BATCH_UNKNOWN", "movement", "GM-3"), ("SERIALS_COUNT", "movement", "GM-3"),
     ("REVERSAL_UNKNOWN", "movement", "GM-4"), ("COLD_CHAIN_LANE", "lane", "L-FARM"),
     ("PLANNING_MATERIAL_CHAIN", "product", "LABEL-GOLD"), ("VARIANT_FORECAST", "demand", "PLANT/LABEL"),
-    ("WH_MISFIT", "bin", "DC/A-01"),
+    ("WH_MISFIT", "bin", "DC/A-01"), ("TM_MISFIT", "carrier", "CR-HAUL"),
 }
 
 

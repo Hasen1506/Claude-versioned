@@ -1235,6 +1235,58 @@
    ]
   }
  ],
+ "carriers": [
+  {
+   "id": "CR-DECCAN",
+   "name": "Deccan Roadlines",
+   "payment_days": 30,
+   "rates": [
+    {
+     "lane": "LN-PUNE-DEL",
+     "mode": "truck_ftl",
+     "per_shipment": 32000
+    },
+    {
+     "lane": "LN-PUNE-BHW",
+     "mode": "truck_ftl",
+     "per_shipment": 9500
+    }
+   ]
+  },
+  {
+   "id": "CR-SAHYADRI",
+   "name": "Sahyadri Freight Carriers",
+   "payment_days": 15,
+   "rates": [
+    {
+     "lane": "LN-PUNE-DEL",
+     "mode": "truck_ftl",
+     "per_shipment": 24000,
+     "per_kg": 1.2
+    },
+    {
+     "lane": "LN-PUNE-BHW",
+     "mode": "truck_ftl",
+     "per_shipment": 7000,
+     "per_kg": 0.5
+    }
+   ]
+  },
+  {
+   "id": "CR-NORTHLINE",
+   "name": "Northline LTL Express",
+   "payment_days": 30,
+   "rates": [
+    {
+     "mode": "truck_ltl",
+     "per_kg": 3.2,
+     "min_charge": 1500,
+     "capacity_kg": 5000,
+     "capacity_m3": 30
+    }
+   ]
+  }
+ ],
  "demand": [
   {
    "location": "CUS-ECOM",

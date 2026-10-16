@@ -84,6 +84,22 @@ def delhi_warehouse() -> dict:
     }
 
 
+def kaveri_carriers() -> list[dict]:
+    """Three fictional carriers (Enterprise 6.3). Sahyadri charges a smaller flat fee and a rate a kilogram, so it is
+    the cheaper truck for a light load; Deccan a flat rate a truck, the cheaper one when it is full. Northline carries
+    part loads on every LTL lane by the kilogram, never under its minimum."""
+    return [
+        {"id": "CR-DECCAN", "name": "Deccan Roadlines", "payment_days": 30, "rates": [
+            {"lane": "LN-PUNE-DEL", "mode": "truck_ftl", "per_shipment": 32000},
+            {"lane": "LN-PUNE-BHW", "mode": "truck_ftl", "per_shipment": 9500}]},
+        {"id": "CR-SAHYADRI", "name": "Sahyadri Freight Carriers", "payment_days": 15, "rates": [
+            {"lane": "LN-PUNE-DEL", "mode": "truck_ftl", "per_shipment": 24000, "per_kg": 1.2},
+            {"lane": "LN-PUNE-BHW", "mode": "truck_ftl", "per_shipment": 7000, "per_kg": 0.5}]},
+        {"id": "CR-NORTHLINE", "name": "Northline LTL Express", "payment_days": 30, "rates": [
+            {"mode": "truck_ltl", "per_kg": 3.2, "min_charge": 1500, "capacity_kg": 5000, "capacity_m3": 30}]},
+    ]
+
+
 def kitchenware() -> dict:
     rng = random.Random(42)
     festive = {10: 1.35, 11: 1.25, 12: 0.95, 1: 0.9, 2: 0.95, 3: 1.05}
@@ -349,6 +365,7 @@ def kitchenware() -> dict:
         "lanes": lanes, "vendors": vendors, "purchase_orders": [],
         "purchasing": {"approval_limit": 1000000, "release_window_days": 7},
         **delhi_warehouse(),
+        "carriers": kaveri_carriers(),
         "demand": demand, "receipts": receipts, "history": history, "events": events, "npi": npi,
         "overrides": overrides,
         # sequence-dependent setups: winding gauge change (thick→thin needs re-tensioning) and

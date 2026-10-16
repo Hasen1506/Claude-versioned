@@ -47,6 +47,9 @@ from ..plan.advisor import StrategyAdvisor, strategy_advice
 from ..purchasing import PurchasingError, act as purchasing_act, create_one_off_po, create_purchase_orders, purchasing_view
 from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..sales import SalesError, act as sales_act, sales_view
+from .. import transport as tm
+from ..transport import TransportError, TransportReport, TransportView
+from ..transport import view as transport_view
 from ..warehouse import (
     PickList, PutawayProposal, WarehouseError, WarehouseReport, WarehouseView, cancel_task, confirm_task, create_putaway,
     create_wave, move_task, pick_list, propose_putaway, view as warehouse_view,
@@ -976,6 +979,55 @@ def post_warehouse_action(req: WarehouseActionRequest) -> WarehouseActionRespons
     new, rep = _wh(run)
     picks = pick_list(new, rep.wave) if a == "wave" and rep.wave else None
     return WarehouseActionResponse(**answer(ds, new), report=rep, picks=picks)
+
+
+# ------------------------------------------------------------------------------------------------ transport (6.3)
+@app.post("/api/transport", response_model=TransportView)
+def post_transport(ds: PlanData, as_of: dt.date | None = None) -> Response:
+    """What is waiting to be loaded, in vehicles by lane with the cheapest carrier, and the freight orders with
+    their cost shared over what they carry."""
+    return respond("transport", ds, lambda: transport_view(ds, as_of), as_of)
+
+
+class TransportActionRequest(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
+    dataset: PlanData
+    action: Literal["plan", "tender", "accept", "reject", "ship", "settle", "cancel"]
+    order: str | None = None                        # every action but plan: the freight order
+    lanes: list[str] | None = None                  # plan: only these lanes (default: every one)
+    billed: float | None = Field(None, ge=0)        # settle: what the carrier billed
+    bill: str = Field("", max_length=64)            # settle: their bill number
+    date: dt.date | None = None
+
+
+class TransportActionResponse(Out):
+    dataset: Dataset | None = None
+    patch: dict[str, Any] | None = None
+    report: TransportReport
+
+
+@app.post("/api/transport/act", response_model=TransportActionResponse)
+def post_transport_action(req: TransportActionRequest) -> TransportActionResponse:
+    """One transport step: freight orders for what is waiting, tendered, accepted or rejected, shipped, settled."""
+    ds, a = req.dataset, req.action
+
+    def run():
+        if a == "plan":
+            return tm.create(ds, req.date, req.lanes)
+        if not req.order:
+            raise TransportError("say which freight order")
+        if a == "settle":
+            if req.billed is None:
+                raise TransportError("say what the carrier billed")
+            return tm.settle(ds, req.order, req.billed, req.bill, req.date)
+        if a == "cancel":
+            return tm.cancel(ds, req.order)
+        return {"tender": tm.tender, "accept": tm.accept, "reject": tm.reject, "ship": tm.ship}[a](ds, req.order, req.date)
+    try:
+        new, rep = run()
+    except TransportError as e:
+        raise HTTPException(409, str(e)) from e
+    return TransportActionResponse(**answer(ds, new), report=rep)
 
 
 class UsageInput(Out):

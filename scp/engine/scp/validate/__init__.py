@@ -80,6 +80,7 @@ RULES: dict[str, tuple[Severity, str]] = {
     "STOCK_EXPIRED": ("warning", "Stock in batches past their expiry date"),
     "BATCH_UNKNOWN": ("warning", "Goods movement in a batch with no batch record"),
     "WH_MISFIT": ("warning", "Warehouse records that do not fit together (bins, storage types, rules, tasks)"),
+    "TM_MISFIT": ("warning", "Transport records that do not fit together (carriers, rates, freight orders)"),
     "REVERSAL_UNKNOWN": ("warning", "Reversal of a movement that is not in the journal"),
     "SERIALS_COUNT": ("warning", "Serial numbers that do not match the quantity"),
     "COLD_CHAIN_LANE": ("warning", "Chilled product on a route without refrigeration"),
@@ -121,6 +122,7 @@ def validate(ds: Dataset) -> list[Issue]:
     _graph(ds, c)
     _movements(ds, c)
     _warehouse(ds, c)
+    _transport(ds, c)
     order = {"error": 0, "warning": 1}
     c.issues.sort(key=lambda i: (order[i.severity], i.code, i.object_type, i.object_id))
     return c.issues
@@ -149,7 +151,8 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "purchasing_source": ds.purchasing_sources, "lane": ds.lanes, "receipt": ds.receipts,
         "movement": ds.movements, "capacity_option": ds.finance.capacity_options,
         "purchase_order": ds.purchase_orders, "inventory_doc": ds.inventory_docs, "mrp_group": ds.mrp_groups,
-        "warehouse_task": ds.warehouse_tasks, "wave": ds.waves,
+        "warehouse_task": ds.warehouse_tasks, "wave": ds.waves, "carrier": ds.carriers,
+        "freight_order": ds.freight_orders,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
@@ -888,6 +891,28 @@ def _movements(ds: Dataset, c: _Collector) -> None:
     for mid in unmatched(ds):
         c.add("MOVEMENT_REF_UNKNOWN", "movement", mid, "The reference matches no receipt, sales order or closed order",
               "Fix the reference, or leave it empty for an unplanned movement", "reference")
+
+
+def _transport(ds: Dataset, c: _Collector) -> None:
+    """Carriers and freight orders (Enterprise 6.3): planning never reads them, so what does not fit is a warning."""
+    for k in ds.carriers:
+        for i, r in enumerate(k.rates):
+            if r.lane and r.lane not in ds.lane_by_id:
+                c.add("TM_MISFIT", "carrier", k.id, f"rate {i + 1} is for lane {r.lane}, which does not exist",
+                      "Pick one of the lanes, or leave it empty for every lane of the mode", "rates")
+    deliveries = {d.id for d in ds.deliveries}
+    transfers = {r.id for r in ds.receipts if r.kind.value == "transfer"}
+    for f in ds.freight_orders:
+        if f.lane not in ds.lane_by_id:
+            c.add("TM_MISFIT", "freight_order", f.id, f"lane {f.lane} does not exist", "Cancel the freight order", "lane")
+        if f.carrier and f.carrier not in ds.carrier_by_id:
+            c.add("TM_MISFIT", "freight_order", f.id, f"carrier {f.carrier} does not exist",
+                  "Tender it to one of the carriers", "carrier")
+        if f.status in ("planned", "tendered", "accepted"):
+            gone = [x for x in f.deliveries if x not in deliveries] + [x for x in f.transfers if x not in transfers]
+            if gone:
+                c.add("TM_MISFIT", "freight_order", f.id, f"carries {', '.join(gone[:5])}, no longer open",
+                      "Cancel it and plan the load again", "deliveries")
 
 
 def _warehouse(ds: Dataset, c: _Collector) -> None:

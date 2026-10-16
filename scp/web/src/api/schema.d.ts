@@ -2128,6 +2128,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/transport": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Transport
+         * @description What is waiting to be loaded, in vehicles by lane with the cheapest carrier, and the freight orders with
+         *     their cost shared over what they carry.
+         */
+        post: operations["post_transport_api_transport_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transport/act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Transport Action
+         * @description One transport step: freight orders for what is waiting, tendered, accepted or rejected, shipped, settled.
+         */
+        post: operations["post_transport_action_api_transport_act_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/actuals/production-usage": {
         parameters: {
             query?: never;
@@ -3603,6 +3644,55 @@ export interface components {
              */
             life_years: number;
         };
+        /**
+         * Carrier
+         * @description A transport company and its rates.
+         */
+        Carrier: {
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Rates */
+            rates: components["schemas"]["FreightRate"][];
+            /**
+             * Payment Days
+             * @description Days to pay its freight bill
+             * @default 30
+             */
+            payment_days: number;
+            /**
+             * Blocked
+             * @description Not tendered to
+             * @default false
+             */
+            blocked: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** CarrierRow */
+        CarrierRow: {
+            /** Carrier */
+            carrier: string;
+            /** Name */
+            name: string;
+            /** Orders */
+            orders: number;
+            /** Planned */
+            planned: number;
+            /** Billed */
+            billed: number;
+            /** To Pay */
+            to_pay: number;
+            /** Rejected */
+            rejected: number;
+        };
         /** CaseInfo */
         CaseInfo: {
             /** Example */
@@ -3659,6 +3749,20 @@ export interface components {
              * @default
              */
             why: string;
+        };
+        /** Choice */
+        Choice: {
+            /** Carrier */
+            carrier: string | null;
+            /** Name */
+            name: string;
+            mode: components["schemas"]["TransportMode"];
+            /** Vehicles */
+            vehicles: number;
+            /** Cost */
+            cost: number;
+            /** Too Small */
+            too_small: boolean;
         };
         /**
          * Cite
@@ -4702,6 +4806,11 @@ export interface components {
             warehouse_tasks?: components["schemas"]["WarehouseTask"][];
             /** Waves */
             waves?: components["schemas"]["Wave"][];
+            /** Carriers */
+            carriers?: components["schemas"]["Carrier"][];
+            /** Freight Orders */
+            freight_orders?: components["schemas"]["FreightOrder"][];
+            transport?: components["schemas"]["TransportSettings"];
             /** Closed Orders */
             closed_orders?: components["schemas"]["ClosedOrder"][];
             /** Accuracy */
@@ -6137,6 +6246,175 @@ export interface components {
             /** Detail */
             detail: string;
         };
+        /** FreightLine */
+        FreightLine: {
+            /** Kind */
+            kind: string;
+            /** Id */
+            id: string;
+            /** Weight Kg */
+            weight_kg: number;
+            /** Share */
+            share: number;
+            /** Cost */
+            cost: number;
+        };
+        /**
+         * FreightOrder
+         * @description One vehicle from one place to another (≈ TM freight order): what it carries, its load and its cost.
+         */
+        FreightOrder: {
+            /** Id */
+            id: string;
+            /** Lane */
+            lane: string;
+            mode: components["schemas"]["TransportMode"];
+            /**
+             * Carrier
+             * @description Empty: the lane's own cost, no carrier yet
+             */
+            carrier?: string | null;
+            /** Ship From */
+            ship_from: string;
+            /** Ship To */
+            ship_to: string;
+            /**
+             * Planned On
+             * Format: date
+             * @description Loading
+             */
+            planned_on: string;
+            /** Deliveries */
+            deliveries?: string[];
+            /**
+             * Transfers
+             * @description Stock transfer orders
+             */
+            transfers?: string[];
+            /**
+             * Weight Kg
+             * @default 0
+             */
+            weight_kg: number;
+            /**
+             * Volume M3
+             * @default 0
+             */
+            volume_m3: number;
+            /**
+             * Weights
+             * @description Kilograms of each delivery and transfer
+             */
+            weights?: {
+                [key: string]: number;
+            };
+            /**
+             * Units
+             * @description Units of each delivery and transfer
+             */
+            units?: {
+                [key: string]: number;
+            };
+            /** Capacity Kg */
+            capacity_kg?: number | null;
+            /** Capacity M3 */
+            capacity_m3?: number | null;
+            /**
+             * Planned Cost
+             * @default 0
+             */
+            planned_cost: number;
+            /**
+             * Status
+             * @default planned
+             */
+            status: string;
+            /** Tendered On */
+            tendered_on?: string | null;
+            /** Accepted On */
+            accepted_on?: string | null;
+            /**
+             * Rejected By
+             * @description Carriers that turned it down
+             */
+            rejected_by?: string[];
+            /** Shipped On */
+            shipped_on?: string | null;
+            /**
+             * Bill
+             * @description Settled: the carrier's bill number
+             * @default
+             */
+            bill: string;
+            /**
+             * Billed
+             * @description Settled: what the carrier billed
+             */
+            billed?: number | null;
+            /** Settled On */
+            settled_on?: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
+         * FreightRate
+         * @description What one vehicle costs on a lane (≈ TM freight agreement rate table).
+         */
+        FreightRate: {
+            /**
+             * Lane
+             * @description The lane (empty: every lane of the mode)
+             * @default
+             */
+            lane: string;
+            /** @default truck_ftl */
+            mode: components["schemas"]["TransportMode"];
+            /**
+             * Per Shipment
+             * @description A vehicle, whatever it carries
+             * @default 0
+             */
+            per_shipment: number;
+            /**
+             * Per Kg
+             * @default 0
+             */
+            per_kg: number;
+            /**
+             * Per M3
+             * @default 0
+             */
+            per_m3: number;
+            /**
+             * Min Charge
+             * @description A vehicle never costs less
+             * @default 0
+             */
+            min_charge: number;
+            /**
+             * Capacity Kg
+             * @description Empty: the lane's vehicle
+             */
+            capacity_kg?: number | null;
+            /**
+             * Capacity M3
+             * @description Empty: the lane's vehicle
+             */
+            capacity_m3?: number | null;
+        };
+        /** FreightRow */
+        FreightRow: {
+            order: components["schemas"]["FreightOrder"];
+            /** Lines */
+            lines: components["schemas"]["FreightLine"][];
+            /** Difference */
+            difference: number | null;
+            /** Pay By */
+            pay_by: string | null;
+        };
         /** FxChip */
         "FxChip-Input": {
             /**
@@ -7498,6 +7776,26 @@ export interface components {
             changed: number;
             /** Names */
             names: string[];
+        };
+        /** LoadGroup */
+        LoadGroup: {
+            /** Lane */
+            lane: string;
+            /** Ship From */
+            ship_from: string;
+            /** Ship To */
+            ship_to: string;
+            /**
+             * Planned On
+             * Format: date
+             */
+            planned_on: string;
+            /** Vehicles */
+            vehicles: components["schemas"]["Vehicle"][];
+            /** Choices */
+            choices: components["schemas"]["Choice"][];
+            /** Cost */
+            cost: number;
         };
         /** Location */
         Location: {
@@ -14665,6 +14963,37 @@ export interface components {
             /** Product */
             product?: string | null;
         };
+        /** TransportActionRequest */
+        TransportActionRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "plan" | "tender" | "accept" | "reject" | "ship" | "settle" | "cancel";
+            /** Order */
+            order?: string | null;
+            /** Lanes */
+            lanes?: string[] | null;
+            /** Billed */
+            billed?: number | null;
+            /**
+             * Bill
+             * @default
+             */
+            bill: string;
+            /** Date */
+            date?: string | null;
+        };
+        /** TransportActionResponse */
+        TransportActionResponse: {
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
+            report: components["schemas"]["TransportReport"];
+        };
         /** TransportLane */
         TransportLane: {
             /** Id */
@@ -14699,6 +15028,76 @@ export interface components {
          * @enum {string}
          */
         TransportMode: "truck_ftl" | "truck_ltl" | "reefer" | "rail" | "sea" | "air" | "courier" | "pipeline";
+        /** TransportReport */
+        TransportReport: {
+            /** Message */
+            message: string;
+            /**
+             * Orders
+             * @default []
+             */
+            orders: string[];
+            /**
+             * Documents
+             * @default []
+             */
+            documents: string[];
+            /**
+             * Movements
+             * @default []
+             */
+            movements: string[];
+        };
+        /** TransportSettings */
+        TransportSettings: {
+            /**
+             * Window Days
+             * @description Loads due within this many days of the first share a vehicle, the later ones sent early
+             * @default 0
+             */
+            window_days: number;
+            /**
+             * Horizon Days
+             * @description Deliveries and transfers loading this far ahead are planned
+             * @default 7
+             */
+            horizon_days: number;
+            /**
+             * Low Fill
+             * @description A vehicle filled less than this is named
+             * @default 0.5
+             */
+            low_fill: number;
+        };
+        /** TransportView */
+        TransportView: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Currency */
+            currency: string;
+            /** Groups */
+            groups: components["schemas"]["LoadGroup"][];
+            /** Unplanned */
+            unplanned: components["schemas"]["Unplanned"][];
+            /** Orders */
+            orders: components["schemas"]["FreightRow"][];
+            /** Carriers */
+            carriers: components["schemas"]["CarrierRow"][];
+            /** Planned Cost */
+            planned_cost: number;
+            /** Billed */
+            billed: number;
+            /** Difference */
+            difference: number;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
         /**
          * Tried
          * @description A dry run: what an import would do now, with nothing saved, no file moved and its schedule as it was.
@@ -14787,6 +15186,15 @@ export interface components {
             history_days: number;
             /** Closed */
             closed: number;
+        };
+        /** Unplanned */
+        Unplanned: {
+            /** Kind */
+            kind: string;
+            /** Id */
+            id: string;
+            /** Why */
+            why: string;
         };
         /** UomConversion */
         UomConversion: {
@@ -15035,6 +15443,55 @@ export interface components {
              * @default {}
              */
             by_type: {
+                [key: string]: number;
+            };
+        };
+        /** Vehicle */
+        Vehicle: {
+            /** Lane */
+            lane: string;
+            /** Ship From */
+            ship_from: string;
+            /** Ship To */
+            ship_to: string;
+            mode: components["schemas"]["TransportMode"];
+            /** Carrier */
+            carrier: string | null;
+            /**
+             * Planned On
+             * Format: date
+             */
+            planned_on: string;
+            /** Deliveries */
+            deliveries: string[];
+            /** Transfers */
+            transfers: string[];
+            /** Weight Kg */
+            weight_kg: number;
+            /** Volume M3 */
+            volume_m3: number;
+            /** Capacity Kg */
+            capacity_kg: number | null;
+            /** Capacity M3 */
+            capacity_m3: number | null;
+            /** Fill */
+            fill: number | null;
+            /** Cost */
+            cost: number;
+            /** Over */
+            over: boolean;
+            /** Early */
+            early: string[];
+            /** Late */
+            late: string[];
+            /** Unweighed */
+            unweighed: string[];
+            /** Weights */
+            weights: {
+                [key: string]: number;
+            };
+            /** Units */
+            units: {
                 [key: string]: number;
             };
         };
@@ -19457,6 +19914,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WarehouseActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_transport_api_transport_post: {
+        parameters: {
+            query?: {
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransportView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_transport_action_api_transport_act_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransportActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransportActionResponse"];
                 };
             };
             /** @description Validation Error */
