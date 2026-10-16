@@ -29,6 +29,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable
 from itertools import accumulate
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, TypeVar
@@ -57,6 +58,8 @@ from .result import (
 
 EPS = 1e-9
 _PREFIX = {"make": "MO", "buy": "PR", "transfer": "TO"}
+# what planning one node does beyond its own state, kept so that an unchanged node is replayed, not planned again
+_REQ, _INPUT, _SUP, _LOAD, _FLOW, _KPI, _EXC, _PEG = range(8)
 
 
 @dataclass
@@ -83,6 +86,40 @@ class _NodeState:
     netted: list[Requirement] | None = None   # the requirements left once the sales orders' own supply is counted
     forecasts: list[tuple[str, date, int, list[str]]] = field(default_factory=list)   # strategy 70: each forecast's
     # (id, first day, days, the ids of the daily requirements it was spread into)
+
+
+@dataclass
+class _NodeMemo:
+    """One node's planning, as the next plan replays it when nothing it reads has changed."""
+    key: tuple                             # everything the node reads of the data (see ``_Planner._key``)
+    incoming: list[tuple[Node, Any]]       # what planned consumers handed it before it was planned, in order
+    counters_in: dict[str, int]            # order numbers in use when it was planned
+    created: dict[str, int]                # orders of each kind it made
+    fx: list[tuple]                        # what it did beyond its own state, in order
+    st: _NodeState                         # its state once planned
+    orders: list[PlannedOrder]
+    pegs: list[Peg]
+    quota: list[tuple[tuple[Node, str], float]]
+    lot_cost: tuple[float, float] | None
+    reads_up: bool                         # its plan reads its consumers' plans (sales-order stock, make to order)
+    chunks: list[list[tuple[date, float]]] | None = None   # each peg's supply, by when available (projection)
+    out: tuple | None = None               # its part of the result (see ``_Planner._node_result``)
+
+
+class _NotIncremental(Exception):
+    """The change reaches something the previous plan's work cannot be reused for: plan everything."""
+
+
+@dataclass
+class Kept:
+    """What a plan keeps for planning the same company again after a change (S/4 net change planning): the data it
+    was made from and each node's work. Only the nodes a change reaches are planned again."""
+    gkey: tuple
+    order: list[Node]
+    llc: dict[Node, int]
+    memo: dict[Node, _NodeMemo]
+    reused: bool = False                   # this plan was itself made from a previous plan's work
+    planned: int = 0                       # nodes it planned (the rest it replayed)
 
 
 class _Fresh:
@@ -145,7 +182,7 @@ def fence_days_to(ds: Dataset, node: Node, end: date) -> float:
 
 
 class _Planner:
-    def __init__(self, ds: Dataset, g: NetworkGraph):
+    def __init__(self, ds: Dataset, g: NetworkGraph, kept: Kept | None = None):
         self.ds = ds
         self.s = ds.settings
         self.g = g
@@ -168,10 +205,20 @@ class _Planner:
         self.supplier_load: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(self.b))
         self.lane_load: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(self.b))
         self.kpi = Kpis()
+        self.kept = kept
         self._expiring: dict[Node, list[tuple[date, float, str]]] | None = None
         self._buffers: dict | None = None
         self._lot_costs: dict[Node, tuple[float, float]] = {}
         self._pegs_of: dict[str, list[Peg]] = defaultdict(list)   # supply id → its pegs so far
+        # each node's work, kept for planning again after a change (see :class:`Kept`)
+        self.memo: dict[Node, _NodeMemo] = {}
+        self.incoming: dict[Node, list[tuple[Node, Any]]] = defaultdict(list)   # what other nodes added, in order
+        self.touched: set[Node] = set()           # nodes planned (not replayed) in this run
+        self._cur: Node | None = None             # the node being planned or replayed
+        self._fx: list[tuple] | None = None       # its effects, while it is planned
+        self._done: set[Node] = set()
+        self._peg_at: dict[Node, tuple[int, int]] = {}
+        self._order_at: dict[Node, tuple[int, int]] = {}
 
     # ------------------------------------------------------------------ setup
     def lp(self, node: Node) -> LocationProduct:
@@ -187,36 +234,51 @@ class _Planner:
             return None
         return prod.shelf_life_days
 
-    def seed(self) -> None:
+    def prepare(self) -> None:
+        """What seeding every node draws on, gathered once: independent demand, stock targets, the firm receipts and
+        what they reserve, and the machines firm production orders occupy."""
         for node in self.g.order:
             self.state[node] = _NodeState(lp=self.lp(node))
+        self._targets: dict[Node, list[tuple[date, float]]] = defaultdict(list)
         for t in sorted(self.ds.stock_targets, key=lambda t: t.date):
-            st = self.state.get((t.location, t.product))
-            if st is not None and not self.is_customer((t.location, t.product)):
-                st.targets.append((t.date, t.qty))
-        for node, reqs in rates.independent_demand(self.ds).items():
-            st = self.state.get(node)
-            if st is None:
-                continue
-            parts = st.lp.strategy is Strategy.ASSEMBLY
-            for r, days in reqs:
-                ids: list[str] = []
-                for i, (d, q) in enumerate(self._split(node, r.date, r.qty, days if r.kind == "forecast" else None)):
-                    if d >= self.b.end:
-                        continue  # beyond horizon (validator warned)
-                    rid = r.id if i == 0 else f"{r.id}~{i}"
-                    req = Requirement(id=rid, location=node[0], product=node[1], date=max(d, self.start),
-                                      qty=q, kind=r.kind, priority=r.priority,
-                                      consumed_forecast=r.consumed if i == 0 else 0.0, past_due=d < self.start)
-                    self._add_req(node, req)
-                    ids.append(rid)
-                if parts and r.kind == "forecast" and ids:
-                    st.forecasts.append((r.id, r.date, days, ids))
+            node = (t.location, t.product)
+            if node in self.state and not self.is_customer(node):
+                self._targets[node].append((t.date, t.qty))
+        self._indep = rates.independent_demand(self.ds)
+        self._rc_at: dict[Node, list] = defaultdict(list)
+        self._rv_at: dict[Node, list] = defaultdict(list)
         for rc in self.ds.receipts:
             node = (rc.location, rc.product)
-            st = self.state.get(node)
-            if st is None:
+            if node not in self.state:
                 continue
+            self._rc_at[node].append(rc)
+            self._firm_load(rc)
+            for rv in rc.reservations:
+                rn = (rv.location, rv.product)
+                if rn in self.state and rv.qty > EPS:
+                    self._rv_at[rn].append((rc, rv))
+
+    def seed(self, node: Node) -> None:
+        """A node's own requirements and firm supply, ahead of what its planned consumers already handed it."""
+        st = self.state[node]
+        came, brought = st.reqs, st.supplies
+        st.reqs, st.supplies = [], []
+        st.targets = list(self._targets.get(node, ()))
+        parts = st.lp.strategy is Strategy.ASSEMBLY
+        for r, days in self._indep.get(node, ()):
+            ids: list[str] = []
+            for i, (d, q) in enumerate(self._split(node, r.date, r.qty, days if r.kind == "forecast" else None)):
+                if d >= self.b.end:
+                    continue  # beyond horizon (validator warned)
+                rid = r.id if i == 0 else f"{r.id}~{i}"
+                req = Requirement(id=rid, location=node[0], product=node[1], date=max(d, self.start),
+                                  qty=q, kind=r.kind, priority=r.priority,
+                                  consumed_forecast=r.consumed if i == 0 else 0.0, past_due=d < self.start)
+                self._add_req(node, req)
+                ids.append(rid)
+            if parts and r.kind == "forecast" and ids:
+                st.forecasts.append((r.id, r.date, days, ids))
+        for rc in self._rc_at.get(node, ()):
             if rc.confirmations:        # confirmed in several deliveries: each arrives on its own day
                 for day, q in rc.expected_parts():
                     d = self._available(rc, day)
@@ -224,16 +286,14 @@ class _Planner:
             elif rc.expected_qty > EPS:   # a supplier who confirmed less than ordered: the plan counts what is confirmed
                 d = self.receipt_date(rc)
                 st.supplies.append(_Supply("receipt", rc.id, d, rc.expected_qty, d, rc.scheduled, rc.sales_order))
-            self._firm_load(rc)
-            # what the firm order still draws from stock: components, or goods at a transfer's origin
-            for rv in rc.reservations:
-                rn = (rv.location, rv.product)
-                if rn not in self.state or rv.qty <= EPS:
-                    continue
-                kind = "transfer" if rv.location != rc.location else "dependent"
-                self._add_req(rn, Requirement(id=f"RV:{rc.id}:{rv.location}:{rv.product}", location=rv.location,
-                                              product=rv.product, date=max(rv.date, self.start), qty=rv.qty,
-                                              kind=kind, parent_order=rc.id, past_due=rv.date < self.start))
+        # what the firm orders still draw from stock: components, or goods at a transfer's origin
+        for rc, rv in self._rv_at.get(node, ()):
+            kind = "transfer" if rv.location != rc.location else "dependent"
+            self._add_req(node, Requirement(id=f"RV:{rc.id}:{rv.location}:{rv.product}", location=rv.location,
+                                            product=rv.product, date=max(rv.date, self.start), qty=rv.qty,
+                                            kind=kind, parent_order=rc.id, past_due=rv.date < self.start))
+        st.reqs.extend(came)
+        st.supplies.extend(brought)
 
     def _firm_load(self, rc) -> None:
         """A released production order still to finish occupies its machines like a planned order would: forward from
@@ -288,6 +348,35 @@ class _Planner:
         if st.netted is not None and st.netted is not st.reqs:   # added while the node is netted (stock that expires)
             st.netted.append(req)
         self.req_by_id[req.id] = req
+        if node != self._cur:
+            self._hand(node, _REQ, req)
+
+    def _add_supply(self, node: Node, sp: _Supply) -> None:
+        self.state[node].supplies.append(sp)
+        self._hand(node, _SUP, sp)
+
+    def _hand(self, node: Node, op: int, what: Any) -> None:
+        """Something the node being planned hands another node (a requirement, a co-product): that node is planned
+        later, with it."""
+        if node in self._done and self.kept is not None:
+            raise _NotIncremental(f"{node} was handed something after it was planned")
+        self.incoming[node].append((self._cur, what))
+        if self._fx is not None:
+            self._fx.append((op, node, what))
+
+    def _add_order(self, order: PlannedOrder) -> None:
+        self.orders.append(order)
+        self.order_by_id[order.id] = order
+
+    def _kpi(self, name: str, value: float) -> None:
+        setattr(self.kpi, name, getattr(self.kpi, name) + value)
+        if self._fx is not None:
+            self._fx.append((_KPI, name, value))
+
+    def _flow_load(self, loads: dict[str, list[float]], key: str, bi: int, qty: float) -> None:
+        loads[key][bi] += qty
+        if self._fx is not None:
+            self._fx.append((_FLOW, loads is self.lane_load, key, bi, qty))
 
     # ------------------------------------------------------------------ safety stock
     def safety_stock(self, node: Node, st: _NodeState) -> None:
@@ -1096,12 +1185,11 @@ class _Planner:
             order.costs["overtime"] = ot_cost
             order.total_cost += ot_cost
             order.unit_cost = order.total_cost / qty if qty > 0 else 0.0
-            self.kpi.production_cost += ot_cost
+            self._kpi("production_cost", ot_cost)
             self._exc("OVERTIME_PLANNED", "info", f"{oid} fits with "
                       + ", ".join(f"{h:,.1f} h overtime on {r}" for r, h in order.overtime_hours.items())
                       + (f" (costing {ot_cost:,.0f})" if ot_cost > 0 else ""), node=node, order=oid, when=need, qty=qty)
-        self.orders.append(order)
-        self.order_by_id[oid] = order
+        self._add_order(order)
         st.supplies.append(_Supply("order", oid, need, qty, sch.available_date))
         if past:
             late = (sch.available_date - need).days
@@ -1128,9 +1216,8 @@ class _Planner:
                                   kind="dependent" if at == loc else "transfer", parent_order=oid)
                 self._add_dependent((at, n.product), req, oid)
             for co, cq in co_output(ps, qty):
-                cst = self.state.get((loc, co))
-                if cst is not None and cq > EPS:
-                    cst.supplies.append(_Supply("co_product", oid, sch.available_date, cq, sch.available_date))
+                if (loc, co) in self.state and cq > EPS:
+                    self._add_supply((loc, co), _Supply("co_product", oid, sch.available_date, cq, sch.available_date))
             who = (oid, prod, False)
             for w in sch.ops:
                 if w.resource is None:
@@ -1147,17 +1234,19 @@ class _Planner:
             self._add_dependent((ln.origin, prod), req, oid)
             bi = self.b.index_of(sch.start_date)
             if 0 <= bi < len(self.b):
-                self.lane_load[ln.id][bi] += qty
+                self._flow_load(self.lane_load, ln.id, bi, qty)
         else:
             bi = self.b.index_of(sch.ship_date or sch.start_date)
             if 0 <= bi < len(self.b):
-                self.supplier_load[opt.source_id][bi] += qty
+                self._flow_load(self.supplier_load, opt.source_id, bi, qty)
 
     def _add_dependent(self, node: Node, req: Requirement, parent: str) -> None:
         if node not in self.state:  # cannot happen for an acyclic, validated graph
             raise RuntimeError(f"requirement for unplanned node {node}")
         self._add_req(node, req)
         self.order_inputs[parent].append(req.id)
+        if self._fx is not None:
+            self._fx.append((_INPUT, parent, req.id))
 
     def _spread(self, resource: str, start: date, end: date, hours: float) -> list[tuple[date, float]]:
         """An operation's hours spread evenly over the working days of its window."""
@@ -1175,8 +1264,14 @@ class _Planner:
         return [(d, hours / len(days)) for d in days]
 
     def _load(self, resource: str, start: date, end: date, hours: float, owner: tuple[str, str, bool]) -> None:
+        spread = self._spread(resource, start, end, hours)
+        self._add_load(resource, owner, spread)
+        if self._fx is not None:
+            self._fx.append((_LOAD, resource, owner, spread))
+
+    def _add_load(self, resource: str, owner: tuple[str, str, bool], spread: list[tuple[date, float]]) -> None:
         by = self.res_orders[resource].setdefault(owner, defaultdict(float))
-        for d, h in self._spread(resource, start, end, hours):
+        for d, h in spread:
             self.res_daily[resource][d] += h
             by[d] += h
 
@@ -1335,7 +1430,7 @@ class _Planner:
                       node=node, order=oid, resource=rid, when=need, qty=order.qty)
 
     def _cost(self, order: PlannedOrder, opt: SupplyOption, qty: float) -> None:
-        ds, k = self.ds, self.kpi
+        ds = self.ds
         total = 0.0
         if opt.kind == "buy":
             pu = ds.purchasing_source_by_id[opt.source_id]
@@ -1350,16 +1445,16 @@ class _Planner:
                 order.shipments = costing.shipments_needed(ds, mode, pu.product, qty)
                 freight = qty * costing.freight_per_unit(ds, mode, pu.product) + order.shipments * mode.cost_per_shipment
             hand = qty * costing.handling(ds, pu.location)
-            k.purchase_cost += qty * price
-            k.transport_cost += freight
-            k.ordering_cost += pu.ordering_cost
-            k.handling_cost += hand
+            self._kpi("purchase_cost", qty * price)
+            self._kpi("transport_cost", freight)
+            self._kpi("ordering_cost", pu.ordering_cost)
+            self._kpi("handling_cost", hand)
             total = qty * price + freight + pu.ordering_cost + hand
             order.costs = {"purchase": qty * price, "transport": freight, "ordering": pu.ordering_cost, "handling": hand}
         elif opt.kind == "make":
             conv, setup = costing.production_order_cost(ds, opt.source_id, qty, order.step_resources)
-            k.production_cost += conv
-            k.setup_cost += setup
+            self._kpi("production_cost", conv)
+            self._kpi("setup_cost", setup)
             total = conv + setup
             order.costs = {"production": conv, "setup": setup}
         else:
@@ -1368,8 +1463,8 @@ class _Planner:
             order.shipments = costing.shipments_needed(ds, mode, order.product, qty)
             freight = qty * costing.freight_per_unit(ds, mode, order.product) + order.shipments * mode.cost_per_shipment
             hand = 0.0 if self.is_customer((ln.destination, order.product)) else qty * costing.handling(ds, ln.destination)
-            k.transport_cost += freight
-            k.handling_cost += hand
+            self._kpi("transport_cost", freight)
+            self._kpi("handling_cost", hand)
             total = freight + hand
             order.costs = {"transport": freight, "handling": hand}
         order.total_cost = total
@@ -1423,33 +1518,172 @@ class _Planner:
     def _add_peg(self, p: Peg) -> None:
         self.pegs.append(p)
         self._pegs_of[p.supply_id].append(p)
+        if self._fx is not None:
+            self._fx.append((_PEG, p))
 
     # ------------------------------------------------------------------ run
     def run(self) -> None:
-        self.seed()
+        self.prepare()
         for node in self.g.order:
-            self.plan_node(node)
+            m = self.kept.memo.get(node) if self.kept is not None else None
+            if m is not None and self._clean(node, m):
+                self._replay(node, m)
+            else:
+                self._plan(node)
+            self._done.add(node)
         self._propagate()
+
+    def _plan(self, node: Node) -> None:
+        self._cur, fx = node, []
+        self._fx = fx
+        before = dict(self.counters)
+        came = list(self.incoming.get(node, ()))
+        p0, o0 = len(self.pegs), len(self.orders)
+        self.seed(node)
+        self.plan_node(node)
+        self._fx = self._cur = None
+        self.touched.add(node)
+        self._peg_at[node] = (p0, len(self.pegs))
+        self._order_at[node] = (o0, len(self.orders))
+        st = self.state[node]
+        reads_up = (bool(st.fixed) or any(sp.segment is not None for sp in st.supplies)
+                    or st.lp.strategy is Strategy.MTO or st.lp.direct_production)
+        self.memo[node] = _NodeMemo(
+            key=self._key(node), incoming=came, counters_in=before,
+            created={k: n - before.get(k, 0) for k, n in self.counters.items() if n != before.get(k, 0)},
+            fx=fx, st=st, orders=self.orders[o0:], pegs=self.pegs[p0:],
+            quota=[(k, self.quota_alloc[k]) for o in self.g.options.get(node, ())
+                   if (k := (node, o.source_id)) in self.quota_alloc],
+            lot_cost=self._lot_costs.get(node), reads_up=reads_up)
+
+    def _clean(self, node: Node, m: _NodeMemo) -> bool:
+        """The node reads nothing that changed since the previous plan: the same data, the same requirements and
+        co-products from its consumers, the same order numbers free, and (where its plan reads its consumers'
+        plans) consumers that were not planned again."""
+        came = self.incoming.get(node, [])
+        if len(came) != len(m.incoming):
+            return False
+        for (who, a), (was, b) in zip(came, m.incoming, strict=True):
+            if a is not b and (who != was or a != b):
+                return False
+        if any(self.counters.get(k, 0) != m.counters_in.get(k, 0) for k in m.created):
+            return False
+        if m.reads_up and any(who in self.touched for who, _ in came):
+            return False
+        return m.key == self._key(node)
+
+    def _replay(self, node: Node, m: _NodeMemo) -> None:
+        """Do again what planning the node did, without planning it."""
+        self._cur = node
+        self.state[node] = m.st
+        for r in m.st.reqs:
+            self.req_by_id[r.id] = r
+        p0, o0 = len(self.pegs), len(self.orders)
+        for o in m.orders:
+            self._add_order(o)
+        for e in m.fx:
+            op = e[0]
+            if op == _REQ:
+                self._add_req(e[1], e[2])
+            elif op == _SUP:
+                self._add_supply(e[1], e[2])
+            elif op == _INPUT:
+                self.order_inputs[e[1]].append(e[2])
+            elif op == _PEG:
+                self.pegs.append(e[1])
+                self._pegs_of[e[1].supply_id].append(e[1])
+            elif op == _KPI:
+                setattr(self.kpi, e[1], getattr(self.kpi, e[1]) + e[2])
+            elif op == _EXC:
+                self.exceptions.append(e[1])
+            elif op == _LOAD:
+                self._add_load(e[1], e[2], e[3])
+            else:   # _FLOW
+                (self.lane_load if e[1] else self.supplier_load)[e[2]][e[3]] += e[4]
+        for k, n in m.created.items():
+            self.counters[k] += n
+        for k, v in m.quota:
+            self.quota_alloc[k] = v
+        if m.lot_cost is not None:
+            self._lot_costs[node] = m.lot_cost
+        self._cur = None
+        self._peg_at[node] = (p0, len(self.pegs))
+        self._order_at[node] = (o0, len(self.orders))
+        self.memo[node] = dataclasses.replace(m, incoming=list(self.incoming.get(node, ())))
+
+    def _key(self, node: Node) -> tuple:
+        """Everything planning the node reads of the data beyond what the whole plan reads (:func:`_global_key`): its
+        policies and product, its sources with the bills of material, the parts' records and the lanes into its place, the
+        values worked out for it (unit value, demand rate, DDMRP buffer, expiring stock) and what it is seeded with."""
+        ds, (loc, prod) = self.ds, node
+        opts = self.g.options.get(node) or []
+        recs: list = []
+        for o in opts:
+            if o.kind == "make":
+                ps = ds.production_source_by_id[o.source_id]
+                recs.append(ps)
+                self._bom_reads(loc, ps, recs, ())
+            elif o.kind == "buy":
+                recs.append(ds.purchasing_source_by_id[o.source_id])
+            else:
+                recs.append(ds.lane_by_id[o.source_id])
+        lp = self.lp(node)
+        return (lp, ds.location_product_by_key.get(node), ds.demand_lp(node), ds.product_by_id.get(prod),
+                prod in ds.variants_of, tuple(opts), tuple(recs), self._lanes_to(loc),
+                self.val.unit_value.get(node), self.val.basis.get(node), self.flow.direct.get(node),
+                self.flow.mean.get(node), self.flow.var.get(node), self.flow.cv_source.get(node),
+                tuple(self.expiring.get(node, ())), self._buffer(node) if lp.mrp_type is MrpType.DDMRP else None,
+                tuple(self._indep.get(node, ())), tuple(self._rc_at.get(node, ())), tuple(self._rv_at.get(node, ())),
+                tuple(self._targets.get(node, ())))
+
+    def _bom_reads(self, loc: str, ps, recs: list, seen: tuple[str, ...]) -> None:
+        """The records exploding ``ps`` reads: each part's product and planning record (phantom, withdrawal), and a
+        phantom's own sources, through every level."""
+        ds = self.ds
+        parts = [c.product for c in ps.components] + [c.product for a in ps.bom_alternatives for c in a.components]
+        for c in [*parts, *(co.product for co in ps.co_products)]:
+            lp = ds.location_product_by_key.get((loc, c))
+            recs += [c, ds.product_by_id.get(c), lp]
+            if lp is not None and lp.phantom and c not in seen:
+                for sub in ds.production_sources:
+                    if sub.location == loc and sub.product == c:
+                        recs.append(sub)
+                        self._bom_reads(loc, sub, recs, (*seen, c))
+
+    def _lanes_to(self, loc: str) -> tuple:
+        if not hasattr(self, "_lanes_into"):
+            self._lanes_into: dict[str, list] = defaultdict(list)
+            for ln in self.ds.lanes:
+                self._lanes_into[ln.destination].append(ln)
+        return tuple(self._lanes_into.get(loc, ()))
 
     def _propagate(self) -> None:
         """Projected availability: an order cannot finish earlier than its inputs are available. Each order carries
         a profile of how much of it is available by when, so an input that is only partly late delays only that
         share of the order (the part covered from stock ships on time, as promising splits it). An order's supply
-        goes to its requirements earliest first. Upstream first (descending LLC)."""
-        pegs_by_req: dict[str, list[int]] = defaultdict(list)
-        pegs_by_order: dict[str, list[int]] = defaultdict(list)
-        for i, p in enumerate(self.pegs):
-            pegs_by_req[p.requirement_id].append(i)
-            if p.supply_kind == "order":
-                pegs_by_order[p.supply_id].append(i)
+        goes to its requirements earliest first. Upstream first (descending LLC).
+
+        Planning again after a change works out again only the nodes planned again and those an input of which now
+        arrives differently; every other node keeps its projection."""
         receipt_date = {rc.id: self.receipt_date(rc) for rc in self.ds.receipts}
         beyond = self.b.end + timedelta(days=3650)
-        chunks: dict[int, list[tuple[date, float]]] = {}  # peg index -> (date available, qty)
+        chunks: dict[int, list[tuple[date, float]]] = {}  # id(peg) -> (date available, qty)
+        on_req: dict[Node, dict[str, list[Peg]]] = {}
 
-        def peg_chunks(i: int) -> list[tuple[date, float]]:
-            p = self.pegs[i]
+        def pegs_on(r: Requirement) -> list[Peg]:
+            node = (r.location, r.product)
+            by = on_req.get(node)
+            if by is None:
+                by = on_req[node] = defaultdict(list)
+                a, b = self._peg_at.get(node, (0, 0))
+                for p in self.pegs[a:b]:
+                    by[p.requirement_id].append(p)
+            return by.get(r.id, [])
+
+        def peg_chunks(p: Peg) -> list[tuple[date, float]]:
             if p.supply_kind == "order":
-                return chunks.get(i, [(self.order_by_id[p.supply_id].available_date, p.qty)])
+                got = chunks.get(id(p))
+                return got if got is not None else [(self.order_by_id[p.supply_id].available_date, p.qty)]
             if p.supply_kind == "receipt":
                 return [(receipt_date.get(p.supply_id, self.start), p.qty)]
             if p.supply_kind == "co_product":
@@ -1458,7 +1692,7 @@ class _Planner:
             return [(self.start, p.qty)]
 
         def req_profile(r: Requirement) -> list[tuple[date, float]]:
-            out = [c for i in pegs_by_req.get(r.id, []) for c in peg_chunks(i)]
+            out = [c for p in pegs_on(r) for c in peg_chunks(p)]
             short = r.qty - sum(q for _, q in out)
             if short > 1e-6:
                 out.append((beyond, short))
@@ -1492,11 +1726,27 @@ class _Planner:
                 prev = x
             return sorted((d, round(q, 9)) for d, q in out.items())
 
+        again = None if self.kept is None else set(self.touched)   # nodes whose projection is worked out again
         for node in sorted(self.g.order, key=lambda n: -self.g.llc[n]):
+            m = self.memo[node]
+            a, b = self._peg_at[node]
+            mine = self.pegs[a:b]
+            if again is not None and node not in again:
+                for p, c in zip(mine, m.chunks, strict=True):
+                    if p.supply_kind == "order":
+                        chunks[id(p)] = c
+                continue
+            by_order: dict[str, list[int]] = defaultdict(list)
+            for j, p in enumerate(mine):
+                if p.supply_kind == "order":
+                    by_order[p.supply_id].append(j)
+            fresh = again is None or node in self.touched
             for s in self.state[node].supplies:
                 if s.kind != "order":
                     continue
                 o = self.order_by_id[s.id]
+                if not fresh:
+                    o = self._unshare(node, o)
                 prof = order_profile(o)
                 last = prof[-1][0]
                 o.projected_available_date = last if last < beyond else None
@@ -1516,9 +1766,8 @@ class _Planner:
                         o.limited_by, o.limited_at = worst[0].product, worst[0].location
                         o.limited_until = worst[1] if worst[1] < beyond else None
                 queue = [list(c) for c in prof]
-                for i in sorted(pegs_by_order.get(o.id, []),
-                                key=lambda i: (self.req_by_id[self.pegs[i].requirement_id].date, i)):
-                    need, got = self.pegs[i].qty, []
+                for j in sorted(by_order.get(o.id, []), key=lambda j: (self.req_by_id[mine[j].requirement_id].date, j)):
+                    need, got = mine[j].qty, []
                     while need > 1e-9 and queue:
                         take = min(need, queue[0][1])
                         got.append((queue[0][0], take))
@@ -1528,85 +1777,84 @@ class _Planner:
                             queue.pop(0)
                     if need > 1e-9:
                         got.append((beyond, need))
-                    chunks[i] = got
-        self._pegs_by_req = pegs_by_req
+                    chunks[id(mine[j])] = got
+            m.chunks = [peg_chunks(p) for p in mine]
+            if again is not None:
+                self._tell_consumers(node, mine, m.chunks, again)
+        self._again = again
+        self._pegs_on = pegs_on
         self._peg_chunks = peg_chunks
+
+    def _unshare(self, node: Node, o: PlannedOrder) -> PlannedOrder:
+        """A copy of an order the previous plan also holds, to work its projection out again on (that plan's stays as
+        it was), in this plan's place of it."""
+        new = o.model_copy(update={"projected_available_date": None, "delay_days": 0.0, "projected_on_time_qty": None,
+                                   "limited_by": None, "limited_at": None, "limited_until": None})
+        m = self.memo[node]
+        j = next(i for i, x in enumerate(m.orders) if x is o)
+        m.orders = [*m.orders[:j], new, *m.orders[j + 1:]]
+        self.orders[self._order_at[node][0] + j] = new
+        self.order_by_id[o.id] = new
+        return new
+
+    def _tell_consumers(self, node: Node, mine: list[Peg], now: list[list[tuple[date, float]]], again: set[Node]):
+        """After a node's projection is worked out again: the orders whose inputs at it now arrive differently are
+        worked out again too."""
+        old = self.kept.memo.get(node) if self.kept is not None else None
+        if old is None or old.chunks is None:
+            new_by: dict[str, list] = defaultdict(list)
+            for p, c in zip(mine, now, strict=True):
+                new_by[p.requirement_id].append(c)
+            changed = set(new_by)
+        else:
+            new_by = defaultdict(list)
+            for p, c in zip(mine, now, strict=True):
+                new_by[p.requirement_id].append(c)
+            old_by: dict[str, list] = defaultdict(list)
+            for p, c in zip(old.pegs, old.chunks, strict=True):
+                old_by[p.requirement_id].append(c)
+            changed = {rid for rid in set(new_by) | set(old_by) if new_by.get(rid) != old_by.get(rid)}
+        for rid in changed:
+            r = self.req_by_id.get(rid)
+            o = self.order_by_id.get(r.parent_order or "") if r is not None else None
+            if o is not None:
+                again.add((o.location, o.product))
 
     def _on_time(self, r: Requirement) -> float:
         """How much of a requirement its pegged supply projects to be available by the requirement's date."""
-        return sum(q for i in self._pegs_by_req.get(r.id, []) for d, q in self._peg_chunks(i) if d <= r.date)
+        return sum(q for p in self._pegs_on(r) for d, q in self._peg_chunks(p) if d <= r.date)
 
     # ------------------------------------------------------------------ outputs
     def result(self) -> PlanResult:
         s = self.s
         out = PlanResult(ok=True, currency=s.currency, carrying_rate=s.carrying_rate)
         out.buckets = [BucketOut(index=b.index, start=b.start, end=b.end, label=b.label) for b in self.b]
-        n = len(self.b)
         k = self.kpi
+        holding = k.holding_cost
         inv_start = inv_end = inv_avg_num = 0.0
         on_time = total_ind = 0.0
+        risks: list[PlanException] = []
+        again = getattr(self, "_again", None)
         for node in self.g.order:
-            st = self.state[node]
-            lp = st.lp
-            val = self.val.unit_value.get(node, 0.0)
-            rate = lp.holding_rate if lp.holding_rate is not None else s.carrying_rate
-            bks = [NodeBucket(bucket=i, safety_stock=st.ss_by_bucket[i] if st.ss_by_bucket else 0.0,
-                              target_stock=target_at(st.targets, self.b[i].end - timedelta(days=1)))
-                   for i in range(n)]
-            # the free stock (S/4's anonymous segment): what is held for a sales order, and what of that order it
-            # covers, is the order's alone and not in this projection
-            for r in (st.netted if st.netted is not None else st.reqs):
-                bi = self.b.index_of(r.date)
-                if 0 <= bi < n:
-                    if r.kind in ("forecast", "sales_order"):
-                        bks[bi].gross_independent += r.qty
-                    elif r.kind == "expiry":
-                        bks[bi].expiring += r.qty
-                    else:
-                        bks[bi].gross_dependent += r.qty
-            for sp in st.supplies:
-                if sp.kind == "on_hand" or sp.segment is not None:
-                    continue
-                bi = self.b.index_of(sp.avail_date)
-                if 0 <= bi < n:
-                    if sp.kind == "receipt":
-                        bks[bi].scheduled_receipts += sp.qty
-                    else:
-                        bks[bi].planned_receipts += sp.qty
-            onhand = 0.0 if self.is_customer(node) else lp.on_hand
-            poh = onhand
-            for bk, meta in zip(bks, self.b, strict=True):
-                poh += bk.scheduled_receipts + bk.planned_receipts - bk.gross_independent - bk.gross_dependent - bk.expiring
-                bk.projected_on_hand = poh
-                bk.shortage = max(0.0, -poh)
-                bk.below_safety = max(0.0, bk.safety_stock - max(poh, 0.0)) if bk.safety_stock > 0 else 0.0
-                if not self.is_customer(node):
-                    bk.holding_cost = max(0.0, poh) * val * rate * meta.days / 365.0
-                    k.holding_cost += bk.holding_cost
-                    inv_avg_num += max(0.0, poh) * val * meta.days
-            if not self.is_customer(node):
-                inv_start += (onhand + sum(x.qty for x in lp.order_stock)) * val
-                inv_end += max(0.0, bks[-1].projected_on_hand) * val if bks else 0.0
-            self._node_exceptions(node, st, bks)
-            # service: independent demand projected available on time
-            for r in st.reqs:
-                if r.kind not in ("forecast", "sales_order"):
-                    continue
-                total_ind += r.qty
-                covered = self._on_time(r)
-                on_time += covered
-                bi = self.b.index_of(r.date)
-                if 0 <= bi < n and r.qty - covered > 1e-6:
-                    bks[bi].at_risk += r.qty - covered
-            opts = self.g.options.get(node) or []
-            out.nodes.append(NodePlan(
-                location=node[0], product=node[1], llc=self.g.llc[node], strategy=lp.strategy.value,
-                mrp_type=lp.mrp_type.value, lot_policy=lp.lot_sizing.policy.value, unit_value=val,
-                value_basis=self.val.basis.get(node, ""), on_hand=onhand,
-                safety_stock_method=lp.safety_stock.method.value, safety_stock_note=st.ss_note,
-                lead_time_days=st.lead_time, sources=[f"{o.kind}:{o.source_id}" for o in opts],
-                buckets=bks, order_ids=[sp.id for sp in st.supplies if sp.kind == "order"]))
-        self._demand_risk()
+            m = self.memo[node]
+            if again is None or node in again or m.out is None:
+                m.out = self._node_result(node)
+            plan, excs, risk, held, avg, inv, ind = m.out
+            for h in held:
+                holding += h
+            for x in avg:
+                inv_avg_num += x
+            if inv is not None:
+                inv_start += inv[0]
+                inv_end += inv[1]
+            for q, c in ind:
+                total_ind += q
+                on_time += c
+            out.nodes.append(plan)
+            self.exceptions.extend(excs)
+            risks.extend(risk)
+        k.holding_cost = holding
+        self.exceptions.extend(risks)
         out.resources = self._resources()
         self._capacity_checks()
         self._purchase_checks()
@@ -1632,6 +1880,79 @@ class _Planner:
         out.exceptions = sorted(self.exceptions, key=lambda e: (sev[e.severity], e.code, e.location or "",
                                                                  e.product or "", e.date or self.start))
         return out
+
+    def _node_result(self, node: Node) -> tuple:
+        """A node's part of the result: its plan by bucket, its exceptions, its demand at risk, and what it adds to
+        the totals, each addition on its own so the totals add up in the same order however they are put together."""
+        s, n = self.s, len(self.b)
+        st = self.state[node]
+        lp = st.lp
+        val = self.val.unit_value.get(node, 0.0)
+        rate = lp.holding_rate if lp.holding_rate is not None else s.carrying_rate
+        bks = [NodeBucket(bucket=i, safety_stock=st.ss_by_bucket[i] if st.ss_by_bucket else 0.0,
+                          target_stock=target_at(st.targets, self.b[i].end - timedelta(days=1)))
+               for i in range(n)]
+        # the free stock (S/4's anonymous segment): what is held for a sales order, and what of that order it
+        # covers, is the order's alone and not in this projection
+        for r in (st.netted if st.netted is not None else st.reqs):
+            bi = self.b.index_of(r.date)
+            if 0 <= bi < n:
+                if r.kind in ("forecast", "sales_order"):
+                    bks[bi].gross_independent += r.qty
+                elif r.kind == "expiry":
+                    bks[bi].expiring += r.qty
+                else:
+                    bks[bi].gross_dependent += r.qty
+        for sp in st.supplies:
+            if sp.kind == "on_hand" or sp.segment is not None:
+                continue
+            bi = self.b.index_of(sp.avail_date)
+            if 0 <= bi < n:
+                if sp.kind == "receipt":
+                    bks[bi].scheduled_receipts += sp.qty
+                else:
+                    bks[bi].planned_receipts += sp.qty
+        customer = self.is_customer(node)
+        onhand = 0.0 if customer else lp.on_hand
+        poh = onhand
+        held: list[float] = []
+        avg: list[float] = []
+        for bk, meta in zip(bks, self.b, strict=True):
+            poh += bk.scheduled_receipts + bk.planned_receipts - bk.gross_independent - bk.gross_dependent - bk.expiring
+            bk.projected_on_hand = poh
+            bk.shortage = max(0.0, -poh)
+            bk.below_safety = max(0.0, bk.safety_stock - max(poh, 0.0)) if bk.safety_stock > 0 else 0.0
+            if not customer:
+                bk.holding_cost = max(0.0, poh) * val * rate * meta.days / 365.0
+                held.append(bk.holding_cost)
+                avg.append(max(0.0, poh) * val * meta.days)
+        inv = None if customer else ((onhand + sum(x.qty for x in lp.order_stock)) * val,
+                                     max(0.0, bks[-1].projected_on_hand) * val if bks else 0.0)
+        e0 = len(self.exceptions)
+        self._node_exceptions(node, st, bks)
+        # service: independent demand projected available on time
+        ind: list[tuple[float, float]] = []
+        for r in st.reqs:
+            if r.kind not in ("forecast", "sales_order"):
+                continue
+            covered = self._on_time(r)
+            ind.append((r.qty, covered))
+            bi = self.b.index_of(r.date)
+            if 0 <= bi < n and r.qty - covered > 1e-6:
+                bks[bi].at_risk += r.qty - covered
+        e1 = len(self.exceptions)
+        self._demand_risk(node)
+        excs, risk = self.exceptions[e0:e1], self.exceptions[e1:]
+        del self.exceptions[e0:]
+        opts = self.g.options.get(node) or []
+        plan = NodePlan(
+            location=node[0], product=node[1], llc=self.g.llc[node], strategy=lp.strategy.value,
+            mrp_type=lp.mrp_type.value, lot_policy=lp.lot_sizing.policy.value, unit_value=val,
+            value_basis=self.val.basis.get(node, ""), on_hand=onhand,
+            safety_stock_method=lp.safety_stock.method.value, safety_stock_note=st.ss_note,
+            lead_time_days=st.lead_time, sources=[f"{o.kind}:{o.source_id}" for o in opts],
+            buckets=bks, order_ids=[sp.id for sp in st.supplies if sp.kind == "order"])
+        return plan, excs, risk, held, avg, inv, ind
 
     def _node_exceptions(self, node: Node, st: _NodeState, bks: list[NodeBucket]) -> None:
         if self.is_customer(node):
@@ -1666,25 +1987,24 @@ class _Planner:
                     self._exc("SHELF_LIFE_RISK", "warning",
                               f"Up to {worst:.0f} days of cover vs shelf life {shelf} d", node=node)
 
-    def _demand_risk(self) -> None:
-        for node in self.g.order:
-            late = 0.0
-            first: date | None = None
-            for r in self.state[node].reqs:
-                if r.kind not in ("forecast", "sales_order"):
-                    continue
-                covered = self._on_time(r)
-                if r.qty - covered > 1e-6:
-                    late += r.qty - covered
-                    first = r.date if first is None else min(first, r.date)
-            if late > 1e-6:
-                why = ""
-                if first is not None and (soon := self._earliest_new(node, self.state[node], first, late)) and soon > first:
-                    why = (f": a new order started today is available {soon.isoformat()} at the earliest, so earlier "
-                           "demand needs stock on hand or a firm receipt")
-                self._exc("DEMAND_AT_RISK", "error",
-                          f"{late:,.1f} units of demand projected late or uncovered (first {first.isoformat()}){why}",
-                          node=node, when=first, qty=late)
+    def _demand_risk(self, node: Node) -> None:
+        late = 0.0
+        first: date | None = None
+        for r in self.state[node].reqs:
+            if r.kind not in ("forecast", "sales_order"):
+                continue
+            covered = self._on_time(r)
+            if r.qty - covered > 1e-6:
+                late += r.qty - covered
+                first = r.date if first is None else min(first, r.date)
+        if late > 1e-6:
+            why = ""
+            if first is not None and (soon := self._earliest_new(node, self.state[node], first, late)) and soon > first:
+                why = (f": a new order started today is available {soon.isoformat()} at the earliest, so earlier "
+                       "demand needs stock on hand or a firm receipt")
+            self._exc("DEMAND_AT_RISK", "error",
+                      f"{late:,.1f} units of demand projected late or uncovered (first {first.isoformat()}){why}",
+                      node=node, when=first, qty=late)
 
     def _resources(self) -> list[ResourcePlan]:
         out = []
@@ -1804,9 +2124,11 @@ class _Planner:
 
     def _exc(self, code: str, severity: str, message: str, *, node: Node | None = None, order: str | None = None,
              resource: str | None = None, when: date | None = None, qty: float | None = None) -> None:
-        self.exceptions.append(PlanException(code=code, severity=severity, message=message,
-                                             location=node[0] if node else None, product=node[1] if node else None,
-                                             resource=resource, order_id=order, date=when, qty=qty))
+        e = PlanException(code=code, severity=severity, message=message, location=node[0] if node else None,
+                          product=node[1] if node else None, resource=resource, order_id=order, date=when, qty=qty)
+        self.exceptions.append(e)
+        if self._fx is not None:
+            self._fx.append((_EXC, e))
 
 
 def target_at(points: list[tuple[date, float]], d: date) -> float:
@@ -1827,6 +2149,8 @@ _KEEP_AFTER_S = 2.0
 T = TypeVar("T")
 _last: tuple[str, PlanResult, dict[str, Any]] | None = None
 _last_lock = threading.Lock()
+# and its work, node by node, so that after a change only what the change reaches is planned again
+_kept: Kept | None = None
 
 
 #: A dataset's fingerprint when something already stands for its content (a company read by reference is its save
@@ -1844,7 +2168,7 @@ def _fingerprint(ds: Dataset) -> str:
 
 def run_mrp(ds: Dataset) -> PlanResult:
     """Validate, then plan. With blocking issues the result carries only the issues."""
-    global _last
+    global _last, _kept
     key = None
     if _last is not None:
         key = _fingerprint(ds)
@@ -1852,10 +2176,11 @@ def run_mrp(ds: Dataset) -> PlanResult:
             if _last is not None and _last[0] == key:
                 return _last[1]
     t = time.perf_counter()
-    res = _run_mrp(ds)
-    if time.perf_counter() - t >= _KEEP_AFTER_S:
+    res, kept = plan_again(ds, _kept)
+    if time.perf_counter() - t >= _KEEP_AFTER_S or (kept is not None and kept.reused):
         with _last_lock:
             _last = (key or _fingerprint(ds), res, {})
+            _kept = kept
     return res
 
 
@@ -1875,29 +2200,61 @@ def with_kept_plan(ds: Dataset, plan: PlanResult, name: str, make: Callable[[], 
 
 
 def _run_mrp(ds: Dataset) -> PlanResult:
+    return plan_again(ds, None)[0]
+
+
+def _global_key(ds: Dataset) -> tuple:
+    """What every node's plan reads: a change to any of it plans everything again."""
+    return (ds.settings, ds.calendars, ds.locations, ds.resources, ds.vendors, ds.mrp_groups, ds.purchasing,
+            ds.scheduling, ds.inventory, ds.contracts)
+
+
+def _replayable(ds: Dataset) -> bool:
+    """Plans whose nodes share nothing but what is handed down the network can be planned again node by node.
+    Capacity-constrained planning (machines, suppliers and lanes shared between products) and co-products (a node's
+    supply made by another product's orders) are planned whole."""
+    return not ds.settings.capacity_constrained and not any(ps.co_products for ps in ds.production_sources)
+
+
+def plan_again(ds: Dataset, kept: Kept | None) -> tuple[PlanResult, Kept | None]:
+    """Validate, then plan: from the previous plan's work where ``kept`` holds it, planning again only the nodes the
+    changes since then reach (S/4 net change planning), else from scratch. Either way the plan is the one planning
+    from scratch makes. Returns the plan and its work, to plan from next time (None where it cannot be)."""
     issues = validate(ds)
     if has_errors(issues):
         return PlanResult(ok=False, currency=ds.settings.currency, carrying_rate=ds.settings.carrying_rate,
-                          issues=issues)
+                          issues=issues), None
     g = build_graph(ds)
-    p = _Planner(ds, g)
-    p.run()
-    res = p.result()
+    replay = _replayable(ds)
+    gkey = _global_key(ds) if replay else ()
+    use = (kept if replay and kept is not None and kept.gkey == gkey and kept.order == g.order
+           and kept.llc == g.llc else None)
+    try:
+        p = _Planner(ds, g, use)
+        p.run()
+        res = p.result()
+    except _NotIncremental:
+        p = _Planner(ds, g)
+        p.run()
+        res = p.result()
     res.issues = issues
     _open_later(ds, res)
-    return res
+    return res, (Kept(gkey, list(g.order), dict(g.llc), p.memo, reused=p.kept is not None, planned=len(p.touched))
+                 if replay else None)
 
 
 def _open_later(ds: Dataset, res: PlanResult) -> None:
-    """Mark planned purchases that an open order for the same product and place would cover if it came sooner."""
+    """Mark planned purchases that an open order for the same product and place would cover if it came sooner. (An
+    order the previous plan also holds is copied first, so that plan stays as it was.)"""
     open_po: dict[tuple[str, str], list] = {}
     for r in ds.receipts:
         if r.kind is ReceiptKind.PURCHASE and (r.confirmed_qty is None or r.confirmed_qty > 0):
             open_po.setdefault((r.location, r.product), []).append(r)
-    for o in res.orders:
+    for i, o in enumerate(res.orders):
         if o.kind == "buy":
-            o.open_later = [r.id for r in open_po.get((o.location, o.product), [])
-                            if (r.confirmed_date or r.due_date) > o.need_date]
+            later = [r.id for r in open_po.get((o.location, o.product), []) if (r.confirmed_date or r.due_date) > o.need_date]
+            if later != o.open_later:
+                res.orders[i] = o.model_copy(update={"open_later": later})
 
 
 __all__ = ["run_mrp"]
