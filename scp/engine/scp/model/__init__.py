@@ -9,7 +9,7 @@ from .common import (
 from .dataset import Dataset
 from .demand import (
     DEFAULT_MODELS, DemandEvent, EventKind, ForecastModelId, ForecastOverride, ForecastPeriod,
-    ForecastSettings, NpiRule, OutlierMethod, SelectionMetric,
+    ForecastSettings, ForecastSnapshot, NpiRule, OutlierMethod, SelectionMetric,
 )
 from .finance import CapacityOption, FinanceSettings
 from .inventory import InventorySettings
@@ -41,7 +41,7 @@ __all__ = [
     "Approval", "ContractLine", "PriceScale", "PurchaseContract", "PurchaseOrder", "PurchasingSettings", "ReleaseLevel",
     "ConfirmedDelivery", "SupplierInvoice", "SupplierInvoiceLine", "SupplierReturn", "Vendor",
     "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "GoodsMovement", "MovementType", "RolledWeek", "Batch", "CountItem", "InventoryDoc", "NegativeStock", "StockType", "Reservation",
-    "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "DemandEvent", "EventKind", "ForecastModelId", "ForecastOverride", "ForecastPeriod",
+    "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "DemandEvent", "EventKind", "ForecastModelId", "ForecastOverride", "ForecastPeriod", "ForecastSnapshot",
     "ForecastSettings", "InventorySettings", "NpiRule", "OutlierMethod", "SelectionMetric",
     "BomAlternative", "BomItem", "BucketSize", "MrpGroup", "Calendar", "CapacityChange", "CoProduct", "CustomerPrice", "ProcurementType", "Subcontract", "Changeover", "Dataset", "DemandKind", "DemandRecord", "LaneMode",
     "Location", "LocationProduct", "LocationType", "LotSizePolicy", "LotSizing", "MrpType",

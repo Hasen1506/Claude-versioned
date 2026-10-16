@@ -16,7 +16,7 @@ from .actuals import AccuracyRecord, Batch, ClosedOrder, ExecutionSettings, Good
 from .common import LocationType, Model
 from .finance import FinanceSettings
 from .tower import TowerSettings
-from .demand import DemandEvent, ForecastOverride, ForecastSettings, NpiRule
+from .demand import DemandEvent, ForecastOverride, ForecastSettings, ForecastSnapshot, NpiRule
 from .inventory import InventorySettings
 from .purchasing import (
     PurchaseContract, PurchaseOrder, PurchasingSettings, SupplierInvoice, SupplierReturn, Vendor,
@@ -68,6 +68,7 @@ class Dataset(Model):
     events: list[DemandEvent] = Field(default_factory=list)
     npi: list[NpiRule] = Field(default_factory=list)
     overrides: list[ForecastOverride] = Field(default_factory=list)
+    forecast_snapshots: list[ForecastSnapshot] = Field(default_factory=list)
     inventory: InventorySettings = Field(default_factory=InventorySettings)
     sop: SopSettings = Field(default_factory=SopSettings)
     stock_targets: list[StockTarget] = Field(default_factory=list)
@@ -93,7 +94,7 @@ class Dataset(Model):
         parts = {"events": [e.model_dump(mode="json") for e in self.events],
                  "npi": [n.model_dump(mode="json") for n in self.npi],
                  "overrides": [o.model_dump(mode="json") for o in self.overrides],
-                 "settings": self.forecasting.model_dump(mode="json", exclude={"released_inputs"})}
+                 "settings": self.forecasting.model_dump(mode="json", exclude={"released_inputs", "fva_lag"})}
         return hashlib.sha1(json.dumps(parts, sort_keys=True).encode(), usedforsecurity=False).hexdigest()[:16]
 
     def model_copy(self, *, update: dict | None = None, deep: bool = False) -> Dataset:

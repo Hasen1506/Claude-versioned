@@ -1484,6 +1484,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forecast/value-add": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Value Add
+         * @description Forecast value add: each layer of the kept forecasts (naïve, statistical, events, overrides) against the sales
+         *     of the periods that have sold, in total, per product family and per planner.
+         */
+        post: operations["post_value_add_api_forecast_value_add_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/inventory": {
         parameters: {
             query?: never;
@@ -3743,6 +3764,30 @@ export interface components {
             /** Difference */
             difference: number;
         };
+        /** CostlyOverride */
+        CostlyOverride: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /** Label */
+            label: string;
+            /** Author */
+            author: string;
+            /** Actual */
+            actual: number;
+            /** Adjusted */
+            adjusted: number;
+            /** Final */
+            final: number;
+            /** Cost */
+            cost: number;
+        };
         /** CountInput */
         CountInput: {
             /** Location */
@@ -4174,6 +4219,8 @@ export interface components {
             npi?: components["schemas"]["NpiRule"][];
             /** Overrides */
             overrides?: components["schemas"]["ForecastOverride"][];
+            /** Forecast Snapshots */
+            forecast_snapshots?: components["schemas"]["ForecastSnapshot"][];
             inventory?: components["schemas"]["InventorySettings"];
             sop?: components["schemas"]["SopSettings"];
             /** Stock Targets */
@@ -5393,6 +5440,11 @@ export interface components {
              * @default
              */
             override_reason: string;
+            /**
+             * Override Author
+             * @default
+             */
+            override_author: string;
             /** Final */
             final: number;
             /** Lower */
@@ -5508,10 +5560,82 @@ export interface components {
                 [key: string]: number;
             } | null;
             /**
+             * Fva Lag
+             * @description Forecast value add judges each period's forecast as it stood this many periods before the period began (0 = the forecast made in the period itself); match it to the time it takes to react, such as the replenishment lead time
+             * @default 1
+             */
+            fva_lag: number;
+            /**
              * Released Inputs
              * @description Written by a forecast release: a fingerprint of the events, new-product rules, overrides and these settings it was made with, so a later change to them is noticed
              */
             released_inputs?: string | null;
+        };
+        /**
+         * ForecastSnapshot
+         * @description What each layer of the forecast said for one period, kept by a release so the forecast can be judged against
+         *     the sales once the period has sold (forecast value add). A later release replaces a period's row until the period
+         *     is nearer than the value-add lag of the forecast settings; from then on the row stays as it was kept.
+         */
+        ForecastSnapshot: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Start
+             * Format: date
+             * @description First day of the forecast period
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             * @description Day after the period (exclusive)
+             */
+            end: string;
+            /**
+             * Made
+             * Format: date
+             * @description Planning start of the release that kept it
+             */
+            made: string;
+            /**
+             * Naive
+             * @description Naïve forecast: the last period's sales
+             * @default 0
+             */
+            naive: number;
+            /**
+             * Statistical
+             * @description The champion model's forecast
+             * @default 0
+             */
+            statistical: number;
+            /**
+             * Adjusted
+             * @description After demand events and new-product rules (cannibalisation included)
+             * @default 0
+             */
+            adjusted: number;
+            /**
+             * Final
+             * @description The consensus: after the planners' overrides
+             * @default 0
+             */
+            final: number;
+            /**
+             * Overridden
+             * @description A planner's override set the final quantity
+             * @default false
+             */
+            overridden: boolean;
+            /**
+             * Author
+             * @description Who overrode it, as the override names them
+             * @default
+             */
+            author: string;
         };
         /** FoundationStatus */
         FoundationStatus: {
@@ -6711,6 +6835,24 @@ export interface components {
              * @default false
              */
             default: boolean;
+        };
+        /** LayerScore */
+        LayerScore: {
+            /**
+             * Layer
+             * @enum {string}
+             */
+            layer: "naive" | "statistical" | "adjusted" | "final";
+            /** Label */
+            label: string;
+            /** Forecast */
+            forecast: number;
+            /** Wape */
+            wape: number | null;
+            /** Bias */
+            bias: number | null;
+            /** Value Add */
+            value_add: number | null;
         };
         /** LeadTimeChip */
         "LeadTimeChip-Input": {
@@ -13644,6 +13786,93 @@ export interface components {
              */
             setup: components["schemas"]["SetupItem"][];
         };
+        /** ValueAdd */
+        ValueAdd: {
+            /**
+             * Period
+             * @enum {string}
+             */
+            period: "week" | "month";
+            /** Lag */
+            lag: number;
+            /** Measured To */
+            measured_to: string | null;
+            /**
+             * Measured
+             * @default 0
+             */
+            measured: number;
+            /**
+             * Waiting
+             * @default 0
+             */
+            waiting: number;
+            total: components["schemas"]["ValueAddGroup"];
+            /**
+             * Families
+             * @default []
+             */
+            families: components["schemas"]["ValueAddGroup"][];
+            /**
+             * Planners
+             * @default []
+             */
+            planners: components["schemas"]["ValueAddGroup"][];
+            /**
+             * Periods
+             * @default []
+             */
+            periods: components["schemas"]["ValueAddPeriod"][];
+            /**
+             * Costly
+             * @default []
+             */
+            costly: components["schemas"]["CostlyOverride"][];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /** ValueAddGroup */
+        ValueAddGroup: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Periods */
+            periods: number;
+            /** Actual */
+            actual: number;
+            /** Layers */
+            layers: components["schemas"]["LayerScore"][];
+            /**
+             * Overrides
+             * @default 0
+             */
+            overrides: number;
+            /**
+             * Improved
+             * @default 0
+             */
+            improved: number;
+        };
+        /** ValueAddPeriod */
+        ValueAddPeriod: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /** Label */
+            label: string;
+            /** Actual */
+            actual: number;
+            /** Statistical Wape */
+            statistical_wape: number | null;
+            /** Final Wape */
+            final_wape: number | null;
+        };
         /** ValueBucket */
         ValueBucket: {
             /** Bucket */
@@ -16779,6 +17008,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_value_add_api_forecast_value_add_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValueAdd"];
                 };
             };
             /** @description Validation Error */

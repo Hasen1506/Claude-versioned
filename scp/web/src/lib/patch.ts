@@ -10,6 +10,7 @@ export const KEYS: Record<string, string[]> = {
   events: ["id"], allocations: ["id"], movements: ["id"], batches: ["product", "id"], inventory_docs: ["id"],
   location_products: ["location", "product"], npi: ["location", "product"],
   history: ["location", "product", "date"], overrides: ["location", "product", "date"],
+  forecast_snapshots: ["location", "product", "start"],
   demand: ["id", "location", "product", "date", "kind"], confirmations: ["order", "ship_from", "ship_date"],
   changeovers: ["resource", "from_group", "to_group"], closed_orders: ["kind", "id"],
   accuracy: ["location", "product", "start"], customer_prices: ["customer", "product"], vendors: ["supplier"],

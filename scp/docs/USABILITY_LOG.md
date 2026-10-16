@@ -709,6 +709,43 @@ company kept on the server by a signed-in owner. The example now carries the yea
 | N228 | Signing a supply step solves the capacity plan again on the server; at 5,000 products a sign-off waits as long as the plan. | Minor | Open: reuse the page's last solve of the same data. |
 | N229 | A budget is by month for a product, a family or the company; not by customer, region or channel. | Minor | Open. |
 
+### 4.2: Forecast value add
+
+ENTERPRISE_PLAN 4.2, through the engine and in a browser: the Kaveri Kitchenware example, which now carries twelve
+weekly forecast releases from before its planning start (each the real forecast from the sales known that Monday,
+with two planners' overrides of the time), and a small shop imported as a file whose answers were worked out by hand.
+
+* *Kept forecasts* (input: every press of *Use this forecast in the supply plan*; output: Data → Kept forecasts, one
+  row per product, place and week from the value-add lag on (default one week ahead): the naïve forecast, the
+  statistical model, after events and new products, the consensus, and who overrode it. A later release replaces a
+  week until it is within the lag; then it stays as kept).
+* *Value add* (input: Demand → Value add; processing: each layer against the sales of the weeks that have sold;
+  output, for Kaveri):
+  * 99 product-weeks have sold (31,728 units, to 27 September). The consensus missed by 12.1 % and ran 5.2 % high.
+  * The statistical model missed by 9.7 %, a little *worse* than the naïve forecast (9.4 %) over these weeks. Weekly
+    noise near 8 % on smooth series is what naïve does well; the backtest on the Forecast tab (rolling origins over
+    two years) measures something else. This is the finding the page exists for.
+  * Events and new products changed nothing (no event fell in those weeks); the planners' overrides added 2.4 points
+    of error.
+  * *By planner*: Sales West's quarter lift on trade mixer grinders came closer to the sales in 2 of 12 weeks, added
+    15.4 points and ran 22.6 % high. The e-commerce desk's tenth on the marketplace took off 0.2 points.
+  * *By product family*: kettles 8.2 % after overrides (+0.3 points), mixer grinders 14.3 % (−3.9 points).
+  * *The overrides that cost most*: mixer grinder 500 W at the west trade distributors, week of 14 September: 686
+    against 497 sold, where the forecast before the override said 548.
+* *The small shop* (by hand: 260 sold over four product-weeks; absolute misses naïve 90, statistical 35, events 30,
+  consensus 37): 34.6 %, +21.2, +1.9 and −2.7 points, consensus 14.2 % and 10.4 % high; ana −15.0 points, ben +16.0,
+  an override without a name under "Not named". Releasing its forecast kept the next weeks: 2 waiting became 11.
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N230 | An override typed without a name was not counted as an override at all: a kept week said who overrode it only by the name. | Major | **Fixed** before it shipped: a kept week says whether it was overridden; one without a name counts under "Not named". |
+| N231 | The consensus grid wrote its overrides without a name, so no planner could be judged on them. | Major | **Fixed.** Signed in, an override from the grid carries the planner's e-mail. |
+| N232 | Near-zero figures read "−0.0 %" and "+0.0 pts". | Cosmetic | **Fixed.** |
+| N233 | The layers table repeated the same "sold" figure on every row. | Cosmetic | **Fixed.** It is in the sentence above the table. |
+| N234 | The planner is the name an override carries (the e-mail of who typed it in the grid, or what an import says), not checked against the company history. | Minor | By design: the company history says who saved each change. |
+| N235 | A product without sales of its own (a new product) has no naïve forecast; its naïve is its statistical forecast, so the model adds nothing over it. | Minor | By design: there is no yardstick for it. |
+| N236 | Value add is judged at one lag only; the forecast one week ahead and at the lead time cannot be set side by side. Kept forecasts grow by one row per product, place and week, like the sales history, and are never trimmed. | Minor | Open. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

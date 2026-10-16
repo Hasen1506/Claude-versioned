@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 COLLECTION_TYPES: dict[str, str] = {
     "location_products": "location_product", "resources": "resource", "production_sources": "production_source",
     "purchasing_sources": "purchasing_source", "lanes": "lane", "demand": "demand", "receipts": "receipt",
-    "history": "history", "events": "event", "npi": "npi", "overrides": "override", "allocations": "allocation", "budgets": "budget",
+    "history": "history", "events": "event", "npi": "npi", "overrides": "override", "forecast_snapshots": "forecast_snapshot", "allocations": "allocation", "budgets": "budget",
     "confirmations": "confirmation", "changeovers": "changeover", "movements": "movement",
     "closed_orders": "closed_order", "accuracy": "accuracy", "rolled_weeks": "rolled_week",
     "stock_targets": "stock_target", "vendors": "vendor", "purchase_orders": "purchase_order",
@@ -51,7 +51,7 @@ _TYPE_COLLECTION = {v: k for k, v in COLLECTION_TYPES.items()}
 SINGULAR: dict[str, str] = {
     "location_products": "Planning policy", "resources": "Resource", "production_sources": "Production source",
     "purchasing_sources": "Purchasing source", "lanes": "Lane", "demand": "Demand", "receipts": "Scheduled receipt",
-    "history": "Sales history", "events": "Event", "npi": "New-product rule", "overrides": "Forecast override",
+    "history": "Sales history", "events": "Event", "npi": "New-product rule", "overrides": "Forecast override", "forecast_snapshots": "Kept forecast",
     "allocations": "Allocation", "budgets": "Budget", "confirmations": "Confirmation", "changeovers": "Changeover",
     "movements": "Goods movement", "closed_orders": "Closed order", "accuracy": "Accuracy record",
     "rolled_weeks": "Rolled week", "stock_targets": "Stock target", "vendors": "Supplier purchasing data",
@@ -107,7 +107,7 @@ def client_key(collection: str, rec: Any, index: int) -> str:
         return str(r.get("supplier") or f"#{index}")
     if collection == "customers":
         return str(r.get("customer") or f"#{index}")
-    if collection in ("history", "confirmations", "changeovers", "overrides", "accuracy", "rolled_weeks", "stock_targets"):
+    if collection in ("history", "confirmations", "changeovers", "overrides", "forecast_snapshots", "accuracy", "rolled_weeks", "stock_targets"):
         return f"#{index}"
     return str(r.get("id") or f"#{index}")
 

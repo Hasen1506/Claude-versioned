@@ -1,5 +1,5 @@
 import type {
-  Cycle, CycleFigures, CycleSummary,
+  Cycle, CycleFigures, CycleSummary, ValueAdd,
   ProductionUsageInput,
   Comparison, FinanceResult, FixResult, KeepResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   PlanTrace, ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
@@ -505,6 +505,8 @@ export const api = {
   towerHistory: (id: string) => call<WorkItemEntry[]>(`/api/tower/items/${encodeURIComponent(id)}/history`),
   forecastModels: () => call<ForecastModels>("/api/forecast/models"),
   forecast: (ds: Dataset) => planPost<ForecastResult>("/api/forecast", ds),
+  /** Forecast value add: each layer of the kept forecasts against the sales of the periods that have sold. */
+  valueAdd: (ds: Dataset) => planPost<ValueAdd>("/api/forecast/value-add", ds),
   release: (dataset: Dataset, keys?: string[]) =>
     write<ReleaseResponse>("/api/forecast/release", dataset, { keys: keys ?? null }),
   /** Proof: end-to-end scenarios with hand-derived answers, run against an isolated in-memory store. */

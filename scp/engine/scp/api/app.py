@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from .. import __version__
 from ..actuals import ActualsView, FirmReport, PostingError, RollReport, actuals_view, firm_orders, post, roll_forward
 from ..actuals.post import production_usage
-from ..demand import ForecastResult, ReleaseResult, release, run_forecast
+from ..demand import ForecastResult, ReleaseResult, ValueAdd, release, run_forecast, value_add
 from ..finance import FinanceResult, run_finance
 from ..tower import FixError, FixResult, TowerResult, WorkItem, get_tracker, run_tower, try_inbox_fix
 from ..demand import foundation
@@ -387,6 +387,13 @@ def post_release(req: ReleaseRequest) -> ReleaseResponse:
         raise HTTPException(409, "the readiness gate has errors; fix them before releasing a forecast")
     new, info = release(req.dataset, result, req.keys)
     return ReleaseResponse(**answer(req.dataset, new), release=info)
+
+
+@app.post("/api/forecast/value-add", response_model=ValueAdd)
+def post_value_add(ds: PlanData) -> ValueAdd:
+    """Forecast value add: each layer of the kept forecasts (naïve, statistical, events, overrides) against the sales
+    of the periods that have sold, in total, per product family and per planner."""
+    return value_add(ds)
 
 
 @app.post("/api/inventory", response_model=InventoryResult)

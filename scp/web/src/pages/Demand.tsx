@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { Dataset, DemandEvent, ForecastModels, ForecastPoint, ForecastResult, ForecastSeries } from "../api/types";
 import { BucketChart, type Mark, type Span } from "../components/charts";
 import { DemandPlan } from "./DemandPlan";
+import { ValueAddView } from "./DemandValueAdd";
 import {
   Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
   MoreRows, ROW_LIMIT,
@@ -15,7 +16,7 @@ import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useReadOnly, useStore } from "../state/store";
 
-type View = "plan" | "overview" | "series" | "consensus" | "settings";
+type View = "plan" | "overview" | "series" | "consensus" | "value" | "settings";
 
 const PATTERN_HELP: Record<string, string> = {
   smooth: "Regular demand, low size variation",
@@ -74,6 +75,7 @@ export function Demand({ route }: { route: string[] }) {
     // REFRESH-01: the tabs stay while the forecast is being calculated (after a reload it is calculated again)
     ...(fc?.ok && fc.series.length ? [{ id: "series" as View, label: "Series workbench", count: fc.series.length }, { id: "consensus" as View, label: "Consensus grid" }]
       : run.running && (view === "series" || view === "consensus") ? [{ id: "series" as View, label: "Series workbench" }, { id: "consensus" as View, label: "Consensus grid" }] : []),
+    { id: "value", label: "Value add" },
     { id: "settings", label: "Forecast settings" },
   ]} />;
   const notYet = outdated && !released && <div className="banner warning" role="status">
@@ -83,6 +85,7 @@ export function Demand({ route }: { route: string[] }) {
   </div>;
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{tabs}{notYet}{children}</div></div>;
   if (view === "plan") return body(<>{released && <ReleaseBanner info={released} ds={ds} onClose={() => setReleased(null)} />}<DemandPlan ds={ds} /></>);
+  if (view === "value") return body(<ValueAddView ds={ds} />);
 
   if (run.error) return body(<div className="banner error"><Badge sev="error">Forecast failed</Badge>{run.error}</div>);
   if (!fc && run.running) return body(<div className="banner info" role="status">Calculating the forecast…</div>);
@@ -428,6 +431,7 @@ function PeriodTable({ s }: { s: ForecastSeries }) {
 // ------------------------------------------------------------------------------------------------
 /** The IBP-style planning grid: series × periods, with consensus overrides typed straight into cells. */
 function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
+  const me = useStore((st) => st.session?.user.email ?? "");
   const periods = fc.series[0]?.forecast ?? [];
   const totals = periods.map((_, i) => fc.series.reduce((a, s) => a + s.forecast[i].final, 0));
   const nm = namesOf(ds);
@@ -440,7 +444,7 @@ function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
     if (v !== null && (!Number.isFinite(v) || v < 0)) return;
     store.update((d) => {
       d.overrides = (d.overrides ?? []).filter((o) => !(o.location === s.location && o.product === s.product && o.date >= p.start && o.date < p.end));
-      if (v !== null) d.overrides.push({ location: s.location, product: s.product, date: p.start, qty: v, change: null, reason: "Consensus grid", author: "" });
+      if (v !== null) d.overrides.push({ location: s.location, product: s.product, date: p.start, qty: v, change: null, reason: "Consensus grid", author: me });
     });
     void store.run("forecast");
   };

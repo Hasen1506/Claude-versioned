@@ -20,7 +20,7 @@ from statistics import NormalDist
 import numpy as np
 
 from ..model import (
-    Dataset, DemandKind, DemandRecord, ForecastModelId, ForecastPeriod, NpiRule, OutlierMethod, Strategy,
+    Dataset, DemandKind, DemandRecord, ForecastModelId, ForecastPeriod, ForecastSnapshot, NpiRule, OutlierMethod, Strategy,
 )
 from ..validate import blocks_demand, validate
 from . import foundation as fm
@@ -527,6 +527,7 @@ def _apply_overrides(ds: Dataset, series: dict[tuple[str, str], Series], fut: li
                 base = pt.statistical * pt.event_factor - pt.cannibalised
                 pt.override = ov.qty if ov.qty is not None else max(0.0, base * (1 + (ov.change or 0.0)))
                 pt.override_reason = ov.reason
+                pt.override_author = ov.author
                 if pt.final > 0:  # keep the interval's relative width around the new value
                     ratio = pt.override / pt.final
                     pt.lower, pt.upper = pt.lower * ratio, pt.upper * ratio
@@ -572,6 +573,31 @@ def _summary(series: list[Series]) -> Summary:
 
 
 # ---- release --------------------------------------------------------------------------------------
+def _kept(ds: Dataset, result: ForecastResult, chosen: list[Series]) -> list[ForecastSnapshot]:
+    """The forecast snapshots after a release of ``chosen``: each released series' periods at least ``fva_lag``
+    periods away are kept (replacing what an earlier release kept for them), nearer and past periods stay as an
+    earlier release froze them. Each layer is kept for the whole period, so it can be judged against the period's
+    sales: the naïve forecast (the last period's sales; a series without sales of its own has none, so its naïve is
+    its statistical forecast), the champion model, after events and new products, and the consensus."""
+    lag = ds.forecasting.fva_lag
+    made = ds.settings.planning_start
+    fresh: dict[tuple[str, str, date], ForecastSnapshot] = {}
+    for s in chosen:
+        naive = s.history[-1].raw if s.history else None
+        for i, p in enumerate(s.forecast):
+            if i < lag:
+                continue
+            adjusted = max(0.0, p.statistical * p.event_factor - p.cannibalised)
+            fresh[(s.location, s.product, p.start)] = ForecastSnapshot(
+                location=s.location, product=s.product, start=p.start, end=p.end, made=made,
+                naive=round(max(0.0, naive if naive is not None else p.statistical), 4),
+                statistical=round(max(0.0, p.statistical), 4), adjusted=round(adjusted, 4),
+                final=round(max(0.0, p.final), 4), overridden=p.override is not None,
+                author=p.override_author if p.override is not None else "")
+    kept = [k for k in ds.forecast_snapshots if (k.location, k.product, k.start) not in fresh]
+    return sorted(kept + list(fresh.values()), key=lambda k: (k.location, k.product, k.start))
+
+
 def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) -> tuple[Dataset, ReleaseResult]:
     """Write the consensus forecast into the dataset as forecast demand (≈ PIRs), replacing the
     forecast records of the released series. Releasing every series also removes what earlier releases wrote for a
@@ -604,7 +630,8 @@ def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) 
             days = max(1, round(p.share * (p.end - p.start).days))
             new.append(DemandRecord(location=s.location, product=s.product, date=frm, qty=qty,
                                     kind=DemandKind.FORECAST, period_days=days, released=True))
-    out = ds.model_copy(update={"demand": kept + new, "forecasting": ds.forecasting.model_copy(
+    out = ds.model_copy(update={"demand": kept + new, "forecast_snapshots": _kept(ds, result, chosen),
+                                "forecasting": ds.forecasting.model_copy(
         update={"released_inputs": ds.forecast_inputs()})})
     cv: list[CvSuggestion] = []
     for s in chosen:

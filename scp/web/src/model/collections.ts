@@ -7,7 +7,7 @@ type Obj = Record<string, unknown>;
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
   | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
-  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
+  | "movements" | "closed_orders" | "accuracy" | "forecast_snapshots" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
   | "customers" | "payment_terms" | "sales_orders" | "quotations" | "deliveries" | "invoices" | "returns"
   | "contracts" | "supplier_invoices" | "supplier_returns" | "budgets";
 
@@ -406,6 +406,17 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
       { label: "Week of", get: (o) => s(o.start) }, { label: "Forecast", get: (o) => o.forecast as number, num: true },
       { label: "Actual", get: (o) => o.actual as number, num: true },
+    ],
+  },
+  {
+    key: "forecast_snapshots", label: "Kept forecasts", singular: "kept forecast", defName: "ForecastSnapshot", issueType: "forecast_snapshot",
+    group: "Demand inputs", keyOf: (o) => `${s(o.location)}|${s(o.product)}|${s(o.start)}`,
+    blurb: "What each layer of the forecast said for a period, kept by every forecast release: naïve, statistical, after events and new products, and after the planners' overrides. Forecast value add judges them once the period has sold.",
+    columns: [
+      { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
+      { label: "Period from", get: (o) => s(o.start) }, { label: "Kept on", get: (o) => s(o.made) },
+      { label: "Statistical", get: (o) => o.statistical as number, num: true },
+      { label: "Final", get: (o) => o.final as number, num: true }, { label: "Overridden by", get: (o) => s(o.author) },
     ],
   },
   {

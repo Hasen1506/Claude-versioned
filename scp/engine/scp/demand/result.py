@@ -59,6 +59,7 @@ class ForecastPoint(Out):
     cannibalised: float = 0.0    # volume taken by an NPI product that follows this one
     override: float | None = None
     override_reason: str = ""
+    override_author: str = ""
     final: float                 # consensus value for the whole period
     lower: float
     upper: float

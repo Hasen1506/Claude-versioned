@@ -125,6 +125,13 @@ INTENTIONAL += [
       _engine_passage("scp/plan/result.py", "    convertible: bool", "    unit_cost: float"))),
 ]
 
+# ENTERPRISE_PLAN 4.2: a forecast period names who overrode it, so a release can keep it for forecast value add
+INTENTIONAL += [
+    ("Forecast value add: a forecast period names who overrode it (field)", "scp/demand/result.py",
+     ('    override_reason: str = ""\n',
+      '    override_reason: str = ""\n    override_author: str = ""\n')),
+]
+
 def _git(*args: str, cwd: Path = ENGINE) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, timeout=120)
 

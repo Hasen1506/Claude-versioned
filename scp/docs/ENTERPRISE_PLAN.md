@@ -45,7 +45,8 @@ Done: 3.1 (N200–N206), 3.2 (N207–N213; godown and warehouse stock and goods 
 | 3.3 | Online sellers and ERPs | Shopify (orders, stock, locations) and Odoo (JSON-RPC: products, BOMs, stock, orders); outbound purchase and production orders to each |
 
 ## Phase 4: Demand and S&OP depth
-Done: 4.1 (N222–N229; budgets by customer or region, and reusing the page's solve at sign-off, open).
+Done: 4.1 (N222–N229; budgets by customer or region, and reusing the page's solve at sign-off, open); 4.2 (N230–N236;
+value add at several lags side by side, and trimming old kept forecasts, open).
 
 | # | Gap (guide §) | Build |
 |---|---|---|

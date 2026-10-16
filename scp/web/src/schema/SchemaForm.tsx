@@ -85,6 +85,9 @@ const TITLE: Record<string, string> = {
   backtest_origins: "Test forecasts made on past weeks", backtest_horizon: "Periods ahead each test forecasts",
   min_history_periods: "History needed before methods compete (periods)", outlier_method: "Unusual values",
   outlier_threshold: "Unusual beyond (robust z-score)", interval: "Range shown around the forecast",
+  fva_lag: "Value add judges the forecast made this many periods ahead",
+  // a kept forecast (forecast value add)
+  made: "Kept on", naive: "Naïve (last period's sales)", adjusted: "After events and new products", overridden: "Overridden by a planner",
   shelf_life_days: "Keeps for (days)", family: "Product group",
   // stock you can trace (Phase O)
   batches: "Kept by batch, first expiring first out", inspect_on_receipt: "Inspected on receipt",
