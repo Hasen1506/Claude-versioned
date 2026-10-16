@@ -172,7 +172,8 @@ def test_a_lean_plan_leaves_the_pegging_to_be_asked_for_by_order_or_product(monk
     assert lean.headers.get("x-rows") == "1"
     got = unpack_rows(lean.json())
     assert "requirements" not in got and "pegs" not in got
-    assert got == {k: v for k, v in full.items() if k not in ("requirements", "pegs")}
+    skip = ("requirements", "pegs", "planned_again")    # (how it was made: from scratch, or again from the last plan)
+    assert {k: v for k, v in got.items() if k not in skip} == {k: v for k, v in full.items() if k not in skip}
     # one product at one place: its requirements, in plan order, and what covers them
     r0 = full["requirements"][0]
     at = client.post("/api/plan/trace", json={"dataset": ref(rev), "location": r0["location"], "product": r0["product"]},
