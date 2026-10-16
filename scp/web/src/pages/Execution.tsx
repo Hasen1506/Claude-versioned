@@ -12,6 +12,7 @@ import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { addressList, useServerMail } from "../components/ServerSend";
 import { poDocument, poEmail } from "../lib/podoc";
 import { isStale, store, useFreshResult, useReadOnly, useStore } from "../state/store";
+import { CycleCounts } from "./CycleCounts";
 import {
   daysBetween, hasDetail, LotFields, lotExtra, LotsDetail, NO_LOT, PhysicalInventory, postAct, ShortOrders, StockRules, StockTypeCells, type LotInput,
 } from "./ExecutionStock";
@@ -345,6 +346,7 @@ function Count({ ds, res }: { ds: Dataset; res: ActualsView | null }) {
   const shown = rows.filter((r) => !place || r[0] === place);
   return (
     <div className="stack">
+      <CycleCounts ds={ds} />
       <PhysicalInventory ds={ds} nodes={rows} />
       <Panel title="Quick count" actions={
         <Edits><button className="btn sm accent" onClick={save} disabled={busy || !changed.length || below.length > 0}

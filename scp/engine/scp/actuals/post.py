@@ -454,7 +454,7 @@ def post(ds: Dataset, action: str, *, order: str | None = None, qty: float | Non
          note: str = "", ship_from: str | None = None, lot: Lot | None = None, location: str | None = None,
          product: str | None = None, to_type: StockType | None = None, movement: str | None = None,
          doc: str | None = None, nodes: list[tuple[str, str]] | None = None, block: bool = True,
-         uncounted_zero: bool = False) -> tuple[Dataset, ActionReport]:
+         uncounted_zero: bool = False, classes: list[str] | None = None) -> tuple[Dataset, ActionReport]:
     lot = lot or {}
     if qty is not None and action in {"receive", "deliver", "ship", "move", "scrap"}:
         qty = round(float(qty), 6)
@@ -481,6 +481,11 @@ def post(ds: Dataset, action: str, *, order: str | None = None, qty: float | Non
             return post_counts(ds, doc or "", uncounted_zero)
         if action == "count_cancel":
             return cancel_counts(ds, doc or "")
+        if action == "cycle_count":
+            from .cycle import count_due
+            if not location:
+                raise PostingError("say which place to count")
+            return count_due(ds, location, on, classes)
         if action == "shorten":
             if qty is None:
                 raise PostingError("say how many the order should be for")

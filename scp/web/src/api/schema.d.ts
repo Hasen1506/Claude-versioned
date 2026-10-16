@@ -2006,6 +2006,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/valuation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Valuation
+         * @description Stock in the books: each place's quantity, value and price (standard or moving average), the postings that
+         *     moved it and the price differences booked aside.
+         */
+        post: operations["post_valuation_api_valuation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cycle-counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Cycle Counts
+         * @description Cycle counting: each stocked product's ABC class, its last count and when it is next due.
+         */
+        post: operations["post_cycle_counts_api_cycle_counts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/warehouse": {
         parameters: {
             query?: never;
@@ -4372,6 +4413,74 @@ export interface components {
             /** Log */
             log: components["schemas"]["CycleLog"][];
         };
+        /** CycleClass */
+        CycleClass: {
+            /** Cls */
+            cls: string;
+            /** Items */
+            items: number;
+            /** Per Year */
+            per_year: number;
+            /** Due */
+            due: number;
+            /** Counted */
+            counted: number;
+            /** Exact */
+            exact: number;
+            /** Accuracy */
+            accuracy: number | null;
+            /** Difference Value */
+            difference_value: number;
+        };
+        /**
+         * CycleCounting
+         * @description Cycle counting by ABC class (≈ S/4 cycle counting indicator, MARC-ABCIN): each place's products are classed
+         *     by the value they used up over the look-back, and each class is counted so many times a year.
+         */
+        CycleCounting: {
+            /**
+             * A Share
+             * @description Share of the value used up that closes A
+             * @default 0.8
+             */
+            a_share: number;
+            /**
+             * B Share
+             * @description Share that closes B
+             * @default 0.95
+             */
+            b_share: number;
+            /**
+             * Counts A
+             * @description Counts a year of an A item
+             * @default 12
+             */
+            counts_a: number;
+            /**
+             * Counts B
+             * @description Counts a year of a B item
+             * @default 4
+             */
+            counts_b: number;
+            /**
+             * Counts C
+             * @description Counts a year of a C item
+             * @default 1
+             */
+            counts_c: number;
+            /**
+             * Lookback Days
+             * @description The days of issues and sales the classes are made of
+             * @default 365
+             */
+            lookback_days: number;
+            /**
+             * Block
+             * @description Cycle count documents hold the postings of what they count until posted
+             * @default false
+             */
+            block: boolean;
+        };
         /** CycleLog */
         CycleLog: {
             /** At */
@@ -4382,6 +4491,56 @@ export interface components {
             action: string;
             /** Detail */
             detail: string;
+        };
+        /** CyclePlan */
+        CyclePlan: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Location */
+            location: string | null;
+            /** Rows */
+            rows: components["schemas"]["CycleRow"][];
+            /** Classes */
+            classes: components["schemas"]["CycleClass"][];
+            /** Due */
+            due: number;
+            /** Currency */
+            currency: string;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /** CycleRow */
+        CycleRow: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Cls */
+            cls: string;
+            /** By Hand */
+            by_hand: boolean;
+            /** Used Value */
+            used_value: number;
+            /** Share */
+            share: number;
+            /** Per Year */
+            per_year: number;
+            /** Last Counted */
+            last_counted: string | null;
+            /** Next Due */
+            next_due: string | null;
+            /** Due */
+            due: boolean;
+            /** Overdue Days */
+            overdue_days: number;
+            /** On Doc */
+            on_doc: string | null;
         };
         /** CycleStep */
         CycleStep: {
@@ -5276,6 +5435,12 @@ export interface components {
              * @default true
              */
             promise_firms: boolean;
+            /**
+             * @description How stock is valued in the books unless a product says otherwise: at the standard (planned) price, or a moving average
+             * @default standard
+             */
+            price_control: components["schemas"]["PriceControl"];
+            cycle_counting?: components["schemas"]["CycleCounting"];
         };
         /** FamilyFigures */
         FamilyFigures: {
@@ -7446,6 +7611,11 @@ export interface components {
              * @description Valuation override
              */
             unit_cost?: number | null;
+            /**
+             * Cycle Count
+             * @description Cycle counting class here, set by hand ('none': never counted by the cycle). Empty: by the value it uses up
+             */
+            cycle_count?: ("A" | "B" | "C" | "none") | null;
             lot_sizing?: components["schemas"]["LotSizing"];
             safety_stock?: components["schemas"]["SafetyStockPolicy"];
             /**
@@ -9771,7 +9941,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ship" | "receive" | "deliver" | "count" | "move" | "scrap" | "scrap_expired" | "reverse" | "shorten" | "count_doc" | "count_enter" | "count_post" | "count_cancel";
+            action: "ship" | "receive" | "deliver" | "count" | "move" | "scrap" | "scrap_expired" | "reverse" | "shorten" | "count_doc" | "count_enter" | "count_post" | "count_cancel" | "cycle_count";
             /** Order */
             order?: string | null;
             /** Qty */
@@ -9824,6 +9994,8 @@ export interface components {
              * @default false
              */
             uncounted_zero: boolean;
+            /** Classes */
+            classes?: ("A" | "B" | "C")[] | null;
         };
         /** PostingsMessage */
         PostingsMessage: {
@@ -9834,6 +10006,30 @@ export interface components {
             message_id: string;
             /** Postings */
             postings: components["schemas"]["ErpPosting"][];
+        };
+        /**
+         * PriceControl
+         * @description How stock is valued in the books (S/4 price control, MBEW-VPRSV).
+         * @enum {string}
+         */
+        PriceControl: "standard" | "moving_average";
+        /** PriceDifference */
+        PriceDifference: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Reference */
+            reference: string | null;
+            /** Amount */
+            amount: number;
+            /** Why */
+            why: string;
         };
         /**
          * PriceScale
@@ -9924,6 +10120,8 @@ export interface components {
              * @description Override for the computed cost roll-up
              */
             standard_cost?: number | null;
+            /** @description How its stock is valued in the books: at the standard (planned) price, or at a moving average of what it cost. Empty: the company's */
+            price_control?: components["schemas"]["PriceControl"] | null;
             /**
              * Price
              * @description Default selling price
@@ -14656,6 +14854,80 @@ export interface components {
              */
             setup: components["schemas"]["SetupItem"][];
         };
+        /** ValuationEntry */
+        ValuationEntry: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** What */
+            what: string;
+            /** Reference */
+            reference: string | null;
+            /** Qty */
+            qty: number;
+            /** Amount */
+            amount: number;
+            /** Price Before */
+            price_before: number | null;
+            /** Price After */
+            price_after: number | null;
+        };
+        /** ValuationRow */
+        ValuationRow: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            control: components["schemas"]["PriceControl"];
+            /** Qty */
+            qty: number;
+            /** Value */
+            value: number;
+            /** Price */
+            price: number | null;
+            /** Standard */
+            standard: number;
+            /** Changes */
+            changes: number;
+        };
+        /** ValuationView */
+        ValuationView: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Currency */
+            currency: string;
+            control: components["schemas"]["PriceControl"];
+            /** Rows */
+            rows: components["schemas"]["ValuationRow"][];
+            /** Entries */
+            entries: components["schemas"]["ValuationEntry"][];
+            /** Differences */
+            differences: components["schemas"]["PriceDifference"][];
+            /** Total Value */
+            total_value: number;
+            /** Total Differences */
+            total_differences: number;
+            /** Cost Of Sales */
+            cost_of_sales: number;
+            /** Count Differences */
+            count_differences: number;
+            /** Scrapped */
+            scrapped: number;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
         /** ValueAdd */
         ValueAdd: {
             /**
@@ -18974,6 +19246,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SalesActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_valuation_api_valuation_post: {
+        parameters: {
+            query?: {
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValuationView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_cycle_counts_api_cycle_counts_post: {
+        parameters: {
+            query?: {
+                location?: string | null;
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CyclePlan"];
                 };
             };
             /** @description Validation Error */

@@ -9,9 +9,10 @@ import { earnings, listNames } from "../lib/earnings";
 import { useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
+import { Books } from "./Books";
 import { isStale, store, useFreshResult, useStore } from "../state/store";
 
-type View = "overview" | "serve" | "inventory" | "capacity";
+type View = "overview" | "serve" | "inventory" | "books" | "capacity";
 
 // Plan cost categories in a fixed colour order (identity follows the category, never its rank);
 // stock and firm receipts consumed are already committed, so they share one neutral key.
@@ -53,9 +54,12 @@ export function Finance({ route }: { route: string[] }) {
       { id: "overview", label: "Summary" },
       { id: "serve", label: "Cost to serve & margin", count: res?.serve.length },
       { id: "inventory", label: "Inventory value", count: res?.inventory?.locations.length },
+      { id: "books", label: "Stock in the books" },
       { id: "capacity", label: "Capacity investments", count: ds.finance?.capacity_options?.length ?? 0 },
     ]} />
   );
+  // the books read the journal, not the plan: no costing needed
+  if (view === "books") return body(<>{nav}<Books ds={ds} /></>);
   if (run.error) return body(<div className="banner error"><Badge sev="error">Could not cost the plan</Badge>{run.error}</div>);
   if (!res) {
     return body(<>

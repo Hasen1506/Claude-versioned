@@ -98,6 +98,11 @@ const TITLE: Record<string, string> = {
   negative_stock: "When a posting takes stock below zero", quality_in_planning: "Stock in inspection counts in planning",
   quality_in_promise: "Stock in inspection can be promised", processing_workdays: "Buyers' processing time (working days)",
   firm_zone_days: "Firm zone (days)", delivery_tolerance: "Short delivery still counted in full",
+  // stock in the books and cycle counting (Enterprise 6.2)
+  price_control: "Stock valued at (price control)", cycle_counting: "Cycle counting by ABC class",
+  a_share: "A: share of the value used up", b_share: "A and B together: share of the value used up",
+  counts_a: "Counts a year of an A product", counts_b: "Counts a year of a B product", counts_c: "Counts a year of a C product",
+  lookback_days: "Classes made of the last (days)", cycle_count: "Cycle counting class (set by hand)",
   batch: "Batch", expires_on: "Expires on", made_on: "Made on", supplier_batch: "Supplier's batch number",
   stock_type: "Stock", serials: "Serial numbers", reversal_of: "Takes back movement", doc: "Material document",
 };

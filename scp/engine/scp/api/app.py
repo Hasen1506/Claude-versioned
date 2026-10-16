@@ -24,7 +24,10 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from .. import __version__
 from ..actuals import ActualsView, FirmReport, PostingError, RollReport, actuals_view, firm_orders, post, roll_forward
+from ..actuals.cycle import CyclePlan, cycle_plan
+from ..actuals.documents import StockError
 from ..actuals.post import production_usage
+from ..actuals.valuation import ValuationView, value_stock
 from ..demand import ForecastResult, ReleaseResult, ValueAdd, release, run_forecast, value_add
 from ..finance import FinanceResult, run_finance
 from ..tower import FixError, FixResult, TowerResult, WorkItem, get_tracker, open_items, run_tower, try_inbox_fix
@@ -885,6 +888,24 @@ def _wh(make):
         raise HTTPException(409, str(e)) from e
 
 
+@app.post("/api/valuation", response_model=ValuationView)
+def post_valuation(ds: PlanData, as_of: dt.date | None = None) -> Response:
+    """Stock in the books: each place's quantity, value and price (standard or moving average), the postings that
+    moved it and the price differences booked aside."""
+    return respond("valuation", ds, lambda: value_stock(ds, as_of), as_of)
+
+
+@app.post("/api/cycle-counts", response_model=CyclePlan)
+def post_cycle_counts(ds: PlanData, location: str | None = None, as_of: dt.date | None = None) -> Response:
+    """Cycle counting: each stocked product's ABC class, its last count and when it is next due."""
+    def make():
+        try:
+            return cycle_plan(ds, location, as_of)
+        except StockError as e:
+            raise HTTPException(409, str(e)) from e
+    return respond("cycle-counts", ds, make, location, as_of)
+
+
 @app.post("/api/warehouse", response_model=WarehouseView)
 def post_warehouse(ds: PlanData, location: str, as_of: dt.date | None = None) -> Response:
     """A place's bins with what each holds, the stock in no bin (to put away, or staged to ship) and what the journal
@@ -999,7 +1020,7 @@ class NodeInput(Out):
 class PostRequest(Out):
     dataset: PlanData
     action: Literal["ship", "receive", "deliver", "count", "move", "scrap", "scrap_expired", "reverse", "shorten",
-                    "count_doc", "count_enter", "count_post", "count_cancel"]
+                    "count_doc", "count_enter", "count_post", "count_cancel", "cycle_count"]
     order: str | None = None                        # the firm order (ship / receive / shorten) or sales order (deliver)
     qty: float | None = None                        # default: everything still open (shorten: the new quantity)
     date: dt.date | None = None                     # posting date (default: the planning start; a count: the day before)
@@ -1021,6 +1042,7 @@ class PostRequest(Out):
     nodes: list[NodeInput] | None = None            # count_doc: places and products to count
     block: bool = True                              # count_doc: refuse postings for them until the count is posted
     uncounted_zero: bool = False                    # count_post: lines not counted are posted as zero
+    classes: list[Literal["A", "B", "C"]] | None = None   # cycle_count: only these classes (default: all that are due)
 
 
 @app.post("/api/actuals/post", response_model=PoActionResponse)
@@ -1035,7 +1057,7 @@ def post_posting(req: PostRequest) -> PoActionResponse:
                         location=req.location, product=req.product, to_type=req.to_type, movement=req.movement,
                         doc=req.doc, nodes=None if req.nodes is None else [(n.location, n.product) for n in req.nodes],
                         block=req.block, uncounted_zero=req.uncounted_zero,
-                        ship_from=req.ship_from)
+                        ship_from=req.ship_from, classes=req.classes)
     except PostingError as e:
         raise HTTPException(409, str(e)) from e
     return PoActionResponse(**answer(req.dataset, new), report=rep)

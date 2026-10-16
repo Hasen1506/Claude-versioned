@@ -11,7 +11,8 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from .common import (
-    COUNT_UNITS, BucketSize, Id, LocationType, LotSizePolicy, Model, MrpType, ProcurementType, ProductType, Ref, ResourceKind,
+    COUNT_UNITS, BucketSize, Id, LocationType, LotSizePolicy, Model, MrpType, PriceControl, ProcurementType, ProductType, Ref,
+    ResourceKind,
     SafetyStockMethod, Strategy, TransportMode, Unit,
 )
 from .purchasing import PriceScale
@@ -189,6 +190,9 @@ class Product(Model):
                           "case, tin, pail, bag, drum, bottle, …; fractional for kg, L, m, …")
     standard_cost: float | None = Unit("money_per_unit", default=None,
                                        description="Override for the computed cost roll-up")
+    price_control: PriceControl | None = Field(
+        None, description="How its stock is valued in the books: at the standard (planned) price, or at a moving "
+                          "average of what it cost. Empty: the company's")
     price: float | None = Unit("money_per_unit", default=None, description="Default selling price")
     tax_rate: float | None = Unit("fraction", le=1, default=None,
                                   description="Tax on its sales (0.12 = 12 %); empty = the company's rate. A customer's "
@@ -365,6 +369,9 @@ class LocationProduct(Model):
                                           description="Stock at planning start held for one sales order each (not in "
                                                       "on hand): planned, promised and issued only to that order")
     unit_cost: float | None = Unit("money_per_unit", default=None, description="Valuation override")
+    cycle_count: Literal["A", "B", "C", "none"] | None = Field(
+        None, description="Cycle counting class here, set by hand ('none': never counted by the cycle). Empty: by "
+                          "the value it uses up")
     lot_sizing: LotSizing = Field(default_factory=LotSizing)
     safety_stock: SafetyStockPolicy = Field(default_factory=SafetyStockPolicy)
     safety_time_days: float = Unit("workdays", default=0.0,

@@ -97,6 +97,13 @@ class MrpType(str, Enum):
     DDMRP = "ddmrp"                   # SAP D1 — a DDMRP buffer: the net flow position decides the orders
 
 
+class PriceControl(str, Enum):
+    """How stock is valued in the books (S/4 price control, MBEW-VPRSV)."""
+
+    STANDARD = "standard"              # S: at the planned unit value; every price difference to price differences
+    MOVING_AVERAGE = "moving_average"  # V: receipts at what they cost; the price follows them and the invoices
+
+
 class ProcurementType(str, Enum):
     """Procurement type (S/4 MRP 2): which sources MRP may use."""
 

@@ -8,7 +8,7 @@ import type {
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
   User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
-  WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, PutawayProposal, PickList, WarehouseActionResponse,
+  WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, CyclePlan, PutawayProposal, PickList, WarehouseActionResponse,
   WarehouseAction,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
@@ -256,7 +256,7 @@ export interface PostExtra {
   note?: string; ship_from?: string | null; batch?: string | null; expires_on?: string | null; supplier_batch?: string | null;
   serials?: string[] | null; stock_type?: StockType | null; to_type?: StockType | null; location?: string | null;
   product?: string | null; movement?: string | null; doc?: string | null; nodes?: { location: string; product: string }[] | null;
-  block?: boolean; uncounted_zero?: boolean;
+  block?: boolean; uncounted_zero?: boolean; classes?: ("A" | "B" | "C")[] | null;
 }
 
 /** Sign-in calls ask for the session in the HttpOnly cookie (roadmap D), prove they come from this page with the
@@ -343,6 +343,11 @@ export const api = {
   /** One order-to-cash step: take an order, quote, deliver, invoice, record a payment, take a return back. */
   salesAct: (dataset: Dataset, action: SalesAction, extra: SalesActionInput = {}) =>
     write<SalesActionResponse>("/api/sales/act", dataset, { action, ...extra }),
+  /** Stock in the books: quantity, value and price per place, the postings that moved it, the price differences. */
+  valuation: (ds: Dataset) => planPost<ValuationView>("/api/valuation", ds),
+  /** Cycle counting: each stocked product's ABC class, its last count and when it is next due (Enterprise 6.2). */
+  cycleCounts: (ds: Dataset, location?: string) =>
+    planPost<CyclePlan>(`/api/cycle-counts${location ? `?location=${encodeURIComponent(location)}` : ""}`, ds),
   /** A place's bins with what each holds, and the stock in no bin (Enterprise 6.1). */
   warehouse: (ds: Dataset, location: string) =>
     planPost<WarehouseView>(`/api/warehouse?location=${encodeURIComponent(location)}`, ds),
