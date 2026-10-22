@@ -197,6 +197,8 @@ class Product(Model):
     tax_rate: float | None = Unit("fraction", le=1, default=None,
                                   description="Tax on its sales (0.12 = 12 %); empty = the company's rate. A customer's "
                                               "own rate (an exemption, an export) goes before it")
+    hsn: str = Field("", max_length=8, pattern=r"^(\d{4}|\d{6}|\d{8})?$",
+                     description="HSN code (4, 6 or 8 digits), printed on job-work challans and in ITC-04")
     setup_group: str | None = Field(None, max_length=40,
                                     description="Sequence-dependent setup family (colour, allergen, grade…)")
     planning_material: str | None = Ref(

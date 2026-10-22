@@ -81,6 +81,8 @@ RULES: dict[str, tuple[Severity, str]] = {
     "BATCH_UNKNOWN": ("warning", "Goods movement in a batch with no batch record"),
     "WH_MISFIT": ("warning", "Warehouse records that do not fit together (bins, storage types, rules, tasks)"),
     "TM_MISFIT": ("warning", "Transport records that do not fit together (carriers, rates, freight orders)"),
+    "OUTSIDE_MISFIT": ("warning", "Third-party orders or job-work challans that do not fit the rest of the data"),
+    "JOBWORK_DUE": ("warning", "Parts at a job worker past the GST limit: they count as supplied, tax is due"),
     "REVERSAL_UNKNOWN": ("warning", "Reversal of a movement that is not in the journal"),
     "SERIALS_COUNT": ("warning", "Serial numbers that do not match the quantity"),
     "COLD_CHAIN_LANE": ("warning", "Chilled product on a route without refrigeration"),
@@ -123,6 +125,7 @@ def validate(ds: Dataset) -> list[Issue]:
     _movements(ds, c)
     _warehouse(ds, c)
     _transport(ds, c)
+    _outside(ds, c)
     order = {"error": 0, "warning": 1}
     c.issues.sort(key=lambda i: (order[i.severity], i.code, i.object_type, i.object_id))
     return c.issues
@@ -152,7 +155,7 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "movement": ds.movements, "capacity_option": ds.finance.capacity_options,
         "purchase_order": ds.purchase_orders, "inventory_doc": ds.inventory_docs, "mrp_group": ds.mrp_groups,
         "warehouse_task": ds.warehouse_tasks, "wave": ds.waves, "carrier": ds.carriers,
-        "freight_order": ds.freight_orders,
+        "freight_order": ds.freight_orders, "third_party_order": ds.third_party_orders, "challan": ds.challans,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
@@ -913,6 +916,55 @@ def _transport(ds: Dataset, c: _Collector) -> None:
             if gone:
                 c.add("TM_MISFIT", "freight_order", f.id, f"carries {', '.join(gone[:5])}, no longer open",
                       "Cancel it and plan the load again", "deliveries")
+
+
+def _outside(ds: Dataset, c: _Collector) -> None:
+    """Third-party orders and job-work challans (Enterprise 7.1): their places and products must exist and be of the
+    right kind (errors, as for any record); what no longer fits the orders and the journal is a warning, and so are
+    parts at a job worker past the GST limit."""
+    for t in ds.third_party_orders:
+        if _ref(ds, c, "location", t.customer, "third_party_order", t.id, "customer"):
+            _loc_type(ds, c, t.customer, {LocationType.CUSTOMER}, "third_party_order", t.id, "customer",
+                      "a third-party order is for a customer")
+        if _ref(ds, c, "location", t.supplier, "third_party_order", t.id, "supplier"):
+            _loc_type(ds, c, t.supplier, {LocationType.SUPPLIER}, "third_party_order", t.id, "supplier",
+                      "a supplier ships a third-party order")
+        _ref(ds, c, "product", t.product, "third_party_order", t.id, "product")
+        if t.shipped > t.qty * (1 + (ds.vendor(t.supplier).over_delivery_tolerance or 0.0)) + 1e-6:
+            c.add("OUTSIDE_MISFIT", "third_party_order", t.id, f"{t.shipped:g} dispatched on an order for {t.qty:g}",
+                  "Put the dispatches right", "shipments")
+    if not ds.challans:
+        return
+    orders = {r.id for r in ds.receipts if r.kind.value == "production"} | {
+        x.id for x in ds.closed_orders if x.kind == "production"}
+    journal = {m.id for m in ds.movements}
+    day = ds.settings.planning_start
+    for ch in ds.challans:
+        if _ref(ds, c, "location", ch.job_worker, "challan", ch.id, "job_worker"):
+            _loc_type(ds, c, ch.job_worker, {LocationType.SUPPLIER}, "challan", ch.id, "job_worker",
+                      "a job worker is a supplier")
+        _ref(ds, c, "location", ch.ship_from, "challan", ch.id, "ship_from")
+        for ln in ch.lines:
+            _ref(ds, c, "product", ln.product, "challan", ch.id, "lines")
+            _ref(ds, c, "location", ln.location, "challan", ch.id, "lines")
+        if ch.cancelled:
+            continue
+        if ch.order not in orders:
+            c.add("OUTSIDE_MISFIT", "challan", ch.id, f"is for {ch.order}, which is no production order",
+                  "Fix the order, or cancel the challan", "order")
+        gone = [m for ln in ch.lines for m in ln.movements if m not in journal]
+        if gone:
+            c.add("OUTSIDE_MISFIT", "challan", ch.id, f"sent its parts with {', '.join(gone[:5])}, not in the journal",
+                  "Post the issue again, or cancel the challan", "lines")
+        late = []
+        for ln in ch.lines:
+            days = ds.job_work.capital_goods_days if ln.capital_goods else ds.job_work.inputs_days
+            if ch.at_job_worker(ln.product) > 1e-6 and ch.sent_on + timedelta(days=days) < day:
+                late.append(ln.product)
+        if late:
+            c.add("JOBWORK_DUE", "challan", ch.id, f"{', '.join(late[:5])} still at {ch.job_worker} past the "
+                  "limit: they count as supplied on the day they were sent", "Get them back, or pay the tax on "
+                  "them and write them off", "lines")
 
 
 def _warehouse(ds: Dataset, c: _Collector) -> None:

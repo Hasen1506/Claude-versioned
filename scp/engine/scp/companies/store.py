@@ -173,6 +173,7 @@ LABELS = {
     "batches": "batches", "inventory_docs": "physical inventory documents", "storage_types": "storage types",
     "bins": "storage bins", "putaway_rules": "put-away rules", "warehouse_tasks": "warehouse tasks", "waves": "waves",
     "carriers": "carriers", "freight_orders": "freight orders", "transport": "transport settings",
+    "third_party_orders": "third-party orders", "challans": "job-work challans", "job_work": "job-work settings",
     "closed_orders": "closed orders", "accuracy": "forecast accuracy", "rolled_weeks": "weeks moved forward",
     "calendars": "calendars", "settings": "company settings", "forecasting": "forecast settings",
     "inventory": "stock settings", "sop": "capacity plan settings", "scheduling": "shop floor settings",

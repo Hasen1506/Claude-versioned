@@ -196,6 +196,14 @@ def to_bill(ds: Dataset) -> list[ToBill]:
         p = net_price(ds, d)
         out.append(ToBill(order=lid, customer=d.location, product=d.product, qty=q, price=p,
                           value=None if p is None else round(q * p, 2), delivered_on=day, movements=[m.id for m in ms]))
+    if ds.third_party_orders:
+        from ..dropship import shipment_key
+        from ..dropship import to_bill as dispatched
+        for t, i, shp in dispatched(ds):
+            out.append(ToBill(order=t.id, customer=t.customer, product=t.product, qty=shp.qty, price=t.price,
+                              value=round(shp.qty * t.price, 2), delivered_on=shp.date,
+                              movements=[shipment_key(t.id, i)]))
+        out.sort(key=lambda b: (b.delivered_on, b.order))
     return out
 
 
@@ -207,6 +215,9 @@ def exposure(ds: Dataset, customer: str) -> tuple[float, float, float]:
             p = net_price(ds, d) or 0.0
             open_v += max(0.0, ordered_now(ds, d) - delivered(ds, d.id or "")) * p * (1 + line_rate(ds, customer,
                                                                                                      d.product))
+    for t in ds.third_party_orders:
+        if t.customer == customer and not t.closed:
+            open_v += (t.qty - t.shipped) * t.price * (1 + line_rate(ds, customer, t.product))
     unbilled = sum((b.value or 0.0) * (1 + line_rate(ds, customer, b.product)) for b in to_bill(ds)
                    if b.customer == customer)
     rec = 0.0

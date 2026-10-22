@@ -134,6 +134,11 @@ def build() -> dict:
         "bins": [{"location": "DC", "id": "A-01", "storage_type": "RACK"}],
         # a haulier's rate keyed to a lane that was renamed since
         "carriers": [{"id": "CR-HAUL", "name": "Valley haulage", "rates": [{"lane": "L-OLD", "per_shipment": 900}]}],
+        # jars sent to the co-packer's labeller for a batch long closed and never written down: past the year GST
+        # allows, and the order it was for is not in the data any more
+        "challans": [{"id": "JW-0012", "job_worker": "SUP-J", "ship_from": "PLANT", "order": "PRD-311",
+                      "sent_on": "2025-05-02", "lines": [{"product": "JAR", "qty": 400, "value": 0.3,
+                                                          "location": "PLANT"}]}],
     }
 
 
@@ -175,6 +180,7 @@ WARNINGS = {
     ("REVERSAL_UNKNOWN", "movement", "GM-4"), ("COLD_CHAIN_LANE", "lane", "L-FARM"),
     ("PLANNING_MATERIAL_CHAIN", "product", "LABEL-GOLD"), ("VARIANT_FORECAST", "demand", "PLANT/LABEL"),
     ("WH_MISFIT", "bin", "DC/A-01"), ("TM_MISFIT", "carrier", "CR-HAUL"),
+    ("OUTSIDE_MISFIT", "challan", "JW-0012"), ("JOBWORK_DUE", "challan", "JW-0012"),
 }
 
 

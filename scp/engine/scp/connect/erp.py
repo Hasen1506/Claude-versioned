@@ -377,7 +377,7 @@ def _posting(ds: Dataset, p: ErpPosting) -> tuple[Dataset, ItemResult]:
 NOT_RECORDS = {"movements", "sales_orders", "purchase_orders", "deliveries", "invoices", "returns", "quotations",
                "supplier_invoices", "supplier_returns", "confirmations", "closed_orders", "inventory_docs", "batches",
                "allocations", "accuracy", "rolled_weeks", "cancelled_purchase_orders", "warehouse_tasks", "waves",
-               "freight_orders"}
+               "freight_orders", "third_party_orders", "challans"}
 
 
 def record_lists() -> list[str]:

@@ -555,6 +555,11 @@ def reverse(ds: Dataset, movement: str, on: date | None = None, note: str = "") 
     group = [m for m in group if m.id not in done and not m.reversal_of]
     if not group:
         raise StockError(f"{movement} is already reversed")
+    from ..jobwork import challan_held
+    held = challan_held(ds)
+    if (cid := next((held[m.id] for m in group if m.id in held), None)) is not None:
+        raise StockError(f"{movement} sent parts to a job worker on challan {cid}: take them back on the challan "
+                         "(back unused, or cancel it)")
     refs = {m.reference for m in group if m.reference}
     missing = [c.id for c in ds.closed_orders if c.id in refs and not c.cancelled and c.source_order is None]
     if missing:

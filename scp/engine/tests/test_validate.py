@@ -250,6 +250,18 @@ def _tm_misfit(d):
     d["carriers"] = [{"id": "CR-1", "rates": [{"lane": "NO-SUCH-LANE", "per_shipment": 1}]}]
 
 
+def _outside_misfit(d):
+    d["challans"] = [{"id": "JW-1", "job_worker": "S", "ship_from": "P", "order": "MO-GONE",
+                      "sent_on": "2026-01-01", "lines": [{"product": "B", "qty": 5, "value": 1, "location": "P"}]}]
+
+
+def _jobwork_due(d):
+    d["receipts"] = [{"id": "MO-1", "kind": "production", "location": "P", "product": "A", "qty": 10,
+                      "due_date": "2026-03-01"}]
+    d["challans"] = [{"id": "JW-1", "job_worker": "S", "ship_from": "P", "order": "MO-1",
+                      "sent_on": "2024-01-01", "lines": [{"product": "B", "qty": 5, "value": 1, "location": "P"}]}]
+
+
 def _reversal_unknown(d):
     d["movements"] = [{"id": "GM-1", "date": "2026-01-01", "type": "receipt", "location": "P", "product": "B",
                        "qty": 5, "reversal_of": "GM-0"}]
@@ -297,6 +309,7 @@ MUTATORS = {
     "STOCK_EXPIRED": _stock_expired, "BATCH_UNKNOWN": _batch_unknown, "REVERSAL_UNKNOWN": _reversal_unknown,
     "SERIALS_COUNT": _serials_count, "COLD_CHAIN_LANE": _cold_chain,
     "PLANNING_MATERIAL_CHAIN": _planning_chain, "VARIANT_FORECAST": _variant_forecast, "WH_MISFIT": _wh_misfit, "TM_MISFIT": _tm_misfit,
+    "OUTSIDE_MISFIT": _outside_misfit, "JOBWORK_DUE": _jobwork_due,
 }
 
 

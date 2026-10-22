@@ -18,6 +18,7 @@ from .finance import FinanceSettings
 from .tower import TowerSettings
 from .warehouse import Bin, PutawayRule, StorageType, Wave, WarehouseTask
 from .transport import Carrier, FreightOrder, TransportSettings
+from .outside import JobWorkChallan, JobWorkSettings, ThirdPartyOrder
 from .demand import DemandEvent, ForecastOverride, ForecastSettings, ForecastSnapshot, NpiRule
 from .inventory import InventorySettings
 from .purchasing import (
@@ -91,6 +92,9 @@ class Dataset(Model):
     carriers: list[Carrier] = Field(default_factory=list)
     freight_orders: list[FreightOrder] = Field(default_factory=list)
     transport: TransportSettings = Field(default_factory=TransportSettings)
+    third_party_orders: list[ThirdPartyOrder] = Field(default_factory=list)
+    challans: list[JobWorkChallan] = Field(default_factory=list)
+    job_work: JobWorkSettings = Field(default_factory=JobWorkSettings)
     closed_orders: list[ClosedOrder] = Field(default_factory=list)
     accuracy: list[AccuracyRecord] = Field(default_factory=list)
     rolled_weeks: list[RolledWeek] = Field(default_factory=list)

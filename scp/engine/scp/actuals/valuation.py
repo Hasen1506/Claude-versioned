@@ -241,7 +241,7 @@ def value_stock(ds: Dataset, as_of: date | None = None, limit: int = 500) -> Val
                         *(i.date for i in ds.supplier_invoices if not i.cancelled)])
     std = standards(ds)
     books = _Books(ds, std)
-    lines = lines_index(ds)
+    lines = lines_index(ds, outside=False)
     po = {lid: _landed(ds, lid, ln) for lid, ln in lines.items() if ln.price is not None}
     kinds = {r.id: r.kind.value for r in ds.receipts}
     kinds.update({c.id: c.kind for c in ds.closed_orders if c.id not in kinds})
