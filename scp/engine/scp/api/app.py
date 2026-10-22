@@ -50,6 +50,10 @@ from ..sales import SalesError, act as sales_act, sales_view
 from .. import transport as tm
 from ..transport import TransportError, TransportReport, TransportView
 from ..transport import view as transport_view
+from .. import dropship as tp
+from .. import jobwork as jw
+from ..dropship import DropShipError, DropShipView
+from ..jobwork import JobWorkError, JobWorkView
 from ..warehouse import (
     PickList, PutawayProposal, WarehouseError, WarehouseReport, WarehouseView, cancel_task, confirm_task, create_putaway,
     create_wave, move_task, pick_list, propose_putaway, view as warehouse_view,
@@ -1028,6 +1032,126 @@ def post_transport_action(req: TransportActionRequest) -> TransportActionRespons
     except TransportError as e:
         raise HTTPException(409, str(e)) from e
     return TransportActionResponse(**answer(ds, new), report=rep)
+
+
+# ------------------------------------------------------------------------------------------------ outside (7.1)
+class OutsideView(Out):
+    drop_ship: DropShipView
+    job_work: JobWorkView
+
+
+@app.post("/api/outside", response_model=OutsideView)
+def post_outside(ds: PlanData, as_of: dt.date | None = None, period_start: dt.date | None = None,
+                 period_end: dt.date | None = None) -> Response:
+    """Work done by suppliers outside our walls: third-party orders they ship straight to customers, and job-work
+    challans with the parts at job workers, their GST limits and the ITC-04 return."""
+    return respond("outside", ds, lambda: OutsideView(drop_ship=tp.view(ds, as_of),
+                                                      job_work=jw.view(ds, as_of, period_start, period_end)),
+                   as_of, period_start, period_end)
+
+
+class ChallanPartInput(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
+    product: str
+    qty: float = Field(gt=0)
+    capital_goods: bool = False
+
+
+class OutsideActionRequest(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
+    dataset: PlanData
+    action: Literal["order", "send_order", "dispatch", "cancel_order",
+                    "send_parts", "back_processed", "back_unused", "write_off", "cancel_challan"]
+    id: str | None = None                           # the third-party order or the challan
+    customer: str | None = None                     # order
+    supplier: str | None = None                     # order: who ships; send_parts: the job worker
+    product: str | None = None                      # order; back_unused, write_off: the part
+    qty: float | None = Field(None, gt=0)
+    wanted: dt.date | None = None                   # order: the customer's date
+    price: float | None = Field(None, ge=0)         # order: sale price (default: the customer's)
+    cost: float | None = Field(None, ge=0)          # order: purchase price (default: the supplier's)
+    customer_ref: str = Field("", max_length=64)
+    production_order: str | None = None             # send_parts
+    parts: list[ChallanPartInput] | None = None     # send_parts (default: what the bill needs)
+    charge: float | None = Field(None, ge=0)        # send_parts: job charge per unit
+    vehicle: str = Field("", max_length=40)
+    reference: str = Field("", max_length=64)       # their dispatch note, challan or invoice number
+    final: bool = False
+    used: dict[str, float] | None = None            # back_processed: the parts they say they used
+    note: str = Field("", max_length=400)
+    date: dt.date | None = None
+
+
+class OutsideActionResponse(Out):
+    dataset: Dataset | None = None
+    patch: dict[str, Any] | None = None
+    message: str
+    id: str | None = None
+
+
+@app.post("/api/outside/act", response_model=OutsideActionResponse)
+def post_outside_action(req: OutsideActionRequest) -> OutsideActionResponse:
+    """One step of work done outside: a third-party order taken, sent, dispatched or cancelled; parts sent to a job
+    worker, back processed or unused, written off, or the challan cancelled."""
+    ds, a, on = req.dataset, req.action, req.date
+
+    def need(v, what: str):
+        if v is None or v == "":
+            raise DropShipError(f"say {what}")
+        return v
+
+    def run():
+        if a == "order":
+            new, r = tp.create(ds, need(req.customer, "which customer"), need(req.product, "which product"),
+                               need(req.qty, "how many"), need(req.wanted, "when the customer wants it"),
+                               need(req.supplier, "which supplier ships it"), price=req.price, cost=req.cost,
+                               customer_ref=req.customer_ref, note=req.note, on=on)
+            return new, r.message, r.orders[0]
+        if a in ("send_order", "dispatch", "cancel_order"):
+            tid = need(req.id, "which third-party order")
+            if a == "send_order":
+                new, r = tp.send(ds, tid, on)
+            elif a == "dispatch":
+                new, r = tp.dispatch(ds, tid, req.qty, on, req.reference, req.final)
+            else:
+                new, r = tp.cancel(ds, tid)
+            return new, r.message, tid
+        if a == "send_parts":
+            new, r = jw.send(ds, need(req.production_order, "which production order"), req.supplier,
+                             [p.model_dump() for p in req.parts] if req.parts else None, on=on, charge=req.charge,
+                             vehicle=req.vehicle, note=req.note, challan_id=req.id or None)
+            return new, r.message, r.challan
+        cid = need(req.id, "which challan")
+        if a == "back_processed":
+            new, r = jw.receive(ds, cid, need(req.qty, "how many came back"), on=on, reference=req.reference,
+                                final=req.final, used=req.used)
+        elif a == "back_unused":
+            new, r = jw.return_unused(ds, cid, need(req.product, "which part"), req.qty, on=on,
+                                      reference=req.reference)
+        elif a == "write_off":
+            new, r = jw.write_off(ds, cid, need(req.product, "which part"), req.qty, on=on, reference=req.reference)
+        else:
+            new, r = jw.cancel(ds, cid, on)
+        return new, r.message, cid
+    try:
+        new, msg, oid = run()
+    except (DropShipError, JobWorkError) as e:
+        raise HTTPException(409, str(e)) from e
+    return OutsideActionResponse(**answer(ds, new), message=msg, id=oid)
+
+
+class PartsRequest(Out):
+    dataset: PlanData
+    order: str
+
+
+@app.post("/api/outside/parts", response_model=list[dict[str, Any]])
+def post_outside_parts(req: PartsRequest) -> list[dict[str, Any]]:
+    """What a production order's bill needs for what is left to make, less what is at job workers already."""
+    try:
+        return jw.parts_to_send(req.dataset, req.order)
+    except JobWorkError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 class UsageInput(Out):

@@ -141,7 +141,10 @@ def _production_parts(ds: Dataset, rc: ScheduledReceipt, total: float, made: flo
                       issued: dict) -> tuple[list[tuple[str, str, float]], str]:
     """The default backflush, shared by posting and its read-only preview."""
     if not (rc.reservations or rc.original_reservations):
-        return _bom_parts(ds, rc, made, first=before_q <= EPS), "from the bill of materials"
+        # what all made so far draws, less what was issued to the order already (earlier backflushes, parts sent to
+        # a job worker, issues posted by hand)
+        parts = [(loc, prod, q - issued.get((loc, prod), 0.0)) for loc, prod, q in _bom_parts(ds, rc, total, True)]
+        return [x for x in parts if x[2] > EPS], "from the bill of materials"
     parts = []
     ordered = _ordered(rc)
     ps = ds.production_source_by_id.get(rc.source or "")

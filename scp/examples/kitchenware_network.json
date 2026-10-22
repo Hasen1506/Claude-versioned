@@ -3,6 +3,7 @@
  "settings": {
   "company_name": "Kaveri Kitchenware Pvt Ltd (fictional)",
   "currency": "INR",
+  "company_tax_id": "27AAJCK4821M1Z3",
   "company_address": "Kaveri House, 3rd floor, Baner road\nPune 411045, Maharashtra",
   "planning_start": "2026-09-28",
   "horizon_days": 182,
@@ -45,6 +46,7 @@
    "region": "West",
    "address": "Plot 21, MIDC Chakan Phase II\nPune 410501, Maharashtra",
    "calendar": "CAL-IN-6D",
+   "tax_id": "27AAJCK4821M1Z3",
    "lat": 18.76,
    "lon": 73.86,
    "storage_capacity_m3": 2500,
@@ -151,12 +153,33 @@
    "address": "Plot 44, J block, Bhosari MIDC\nPune 411026, Maharashtra",
    "lat": 18.64,
    "lon": 73.84
+  },
+  {
+   "id": "SUP-WIND",
+   "name": "Bhosari winding works",
+   "type": "supplier",
+   "region": "West",
+   "address": "Shed 9, S block, Bhosari MIDC\nPune 411026, Maharashtra",
+   "tax_id": "27AAKFB4417M1Z5",
+   "lat": 18.63,
+   "lon": 73.83
+  },
+  {
+   "id": "SUP-VASAI",
+   "name": "Vasai appliance works",
+   "type": "supplier",
+   "region": "West",
+   "address": "Gala 17, Sativali industrial estate\nVasai East 401208, Maharashtra",
+   "tax_id": "27AAGCV2290Q1ZK",
+   "lat": 19.42,
+   "lon": 72.87
   }
  ],
  "products": [
   {
    "id": "MG-500",
    "name": "Mixer grinder 500 W",
+   "hsn": "85094010",
    "type": "FG",
    "family": "Mixer grinders",
    "weight_kg": 4.2,
@@ -169,6 +192,7 @@
   {
    "id": "MG-750",
    "name": "Mixer grinder 750 W",
+   "hsn": "85094010",
    "type": "FG",
    "family": "Mixer grinders",
    "weight_kg": 4.9,
@@ -180,6 +204,7 @@
   {
    "id": "KT-15",
    "name": "Electric kettle 1.5 L",
+   "hsn": "85167100",
    "type": "FG",
    "family": "Kettles",
    "weight_kg": 1.3,
@@ -192,6 +217,7 @@
   {
    "id": "MOT-500",
    "name": "Motor assembly 500 W",
+   "hsn": "85013119",
    "type": "SFG",
    "weight_kg": 1.6,
    "volume_m3": 0.004,
@@ -200,6 +226,7 @@
   {
    "id": "MOT-750",
    "name": "Motor assembly 750 W",
+   "hsn": "85013119",
    "type": "SFG",
    "weight_kg": 2.0,
    "volume_m3": 0.005,
@@ -208,6 +235,7 @@
   {
    "id": "RM-CU-WIRE",
    "name": "Enamelled copper wire",
+   "hsn": "85441110",
    "type": "RM",
    "base_uom": "KG",
    "weight_kg": 1.0,
@@ -216,6 +244,7 @@
   {
    "id": "RM-STAMP",
    "name": "Stator/rotor lamination set",
+   "hsn": "85030010",
    "type": "RM",
    "weight_kg": 0.9,
    "volume_m3": 0.0006
@@ -1086,6 +1115,17 @@
    "payment_terms_days": 30,
    "min_order_value": 5000,
    "under_delivery_tolerance": 0.02
+  },
+  {
+   "supplier": "SUP-WIND",
+   "contact": "Shinde (works manager)",
+   "payment_terms_days": 30
+  },
+  {
+   "supplier": "SUP-VASAI",
+   "contact": "Order desk",
+   "payment_terms_days": 45,
+   "over_delivery_tolerance": 0.02
   }
  ],
  "purchase_orders": [],
@@ -3245,6 +3285,16 @@
    "qty": 800,
    "due_date": "2026-09-30",
    "source": "PV-MG-500"
+  },
+  {
+   "id": "MO-100461",
+   "kind": "production",
+   "location": "PLT-PUNE",
+   "product": "MOT-750",
+   "qty": 600,
+   "due_date": "2026-10-09",
+   "start_date": "2026-10-05",
+   "source": "PV-MOT-750"
   },
   {
    "id": "STO-2201",

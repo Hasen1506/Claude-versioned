@@ -149,6 +149,8 @@ def parts_to_send(ds: Dataset, order: str) -> list[dict]:
     out = []
     for p, n in _needs(ds, rc).items():
         q = n.per_unit * left + (n.per_order if made <= EPS else 0.0) - there.get(p, 0.0)
+        if ds.whole(p):
+            q = math.ceil(q - 1e-6)
         if q > EPS:
             out.append({"product": p, "qty": round(q, 6), "location": n.location or _part_location(ds, rc, p)})
     return out
@@ -277,9 +279,11 @@ def _left(ds: Dataset, c: JobWorkChallan) -> str:
 
 
 def receive(ds: Dataset, cid: str, qty: float, *, on: date | None = None, reference: str = "", final: bool = False,
-            post: bool = True) -> tuple[Dataset, JobWorkReport]:
+            post: bool = True, used: dict[str, float] | None = None) -> tuple[Dataset, JobWorkReport]:
     """The order's goods back from the job worker: the parts they took are used up there, and (``post``) the goods
-    are received on the order, its other parts backflushed at the plant."""
+    are received on the order, its other parts backflushed at the plant. ``used``: the parts the job worker says
+    they used, instead of what the bill of materials says. When the order is done, less than one unit left of a part
+    counted in whole units is used up too (the bill's fractions rounded)."""
     from ..actuals.post import PostingError, _posted, _production_parts
     from ..actuals.post import receive as receive_order
     c = _open(ds, cid)
@@ -292,19 +296,32 @@ def receive(ds: Dataset, cid: str, qty: float, *, on: date | None = None, refere
     day = _today(ds, on)
     first = c.processed <= EPS
     need = _needs(ds, rc) if rc is not None else {}
-    used: dict[str, float] = {}
+    said = used or {}
+    unknown = [p for p in said if not any(x.product == p for x in c.lines)]
+    if unknown:
+        raise JobWorkError(f"{_name(ds, unknown[0])} is not on {cid}")
+    ordered = (rc.ordered_qty if rc.ordered_qty is not None else rc.qty) if rc is not None else 0.0
+    done = final or (rc is not None and _made(ds, rc.id, rc.product) + q >= ordered - EPS)
+    took: dict[str, float] = {}
     over: list[str] = []
     for ln in c.lines:
-        n = need.get(ln.product)
-        if n is None:
-            continue                       # a tool or a mould: it comes back
-        want = n.per_unit * q + (n.per_order if first else 0.0)
         have = c.at_job_worker(ln.product)
-        take = min(want, have)
-        if take > EPS:
-            used[ln.product] = round(take, 6)
+        if ln.product in said:
+            want = float(said[ln.product])
+            if not math.isfinite(want) or want < 0:
+                raise JobWorkError(f"{_name(ds, ln.product)}: the quantity used cannot be negative")
+        else:
+            n = need.get(ln.product)
+            if n is None:
+                continue                   # a tool or a mould: it comes back
+            want = n.per_unit * q + (n.per_order if first else 0.0)
+            if done and ds.whole(ln.product) and 0 < have - want < 1 - EPS:
+                want = have                # the bill's fraction of a whole part
         if want > have + EPS:
             over.append(f"{_qty(ds, ln.product, want - have)} more than was sent")
+        take = min(want, have)
+        if take > EPS:
+            took[ln.product] = round(take, 6)
     movements: list[str] = []
     doc = None
     tail = ""
@@ -324,9 +341,9 @@ def receive(ds: Dataset, cid: str, qty: float, *, on: date | None = None, refere
         tail = " " + rep.message.split(". Stock and the order")[0] + "."
     made = rc.product if rc is not None else (order_product(ds, c.order) or c.lines[0].product)
     r = ChallanReturn(date=day, kind="processed", product=made, qty=round(q, 6), reference=reference[:64],
-                      movements=movements, used=used)
+                      movements=movements, used=took)
     new = _with_return(c, r, day)
-    use = ", ".join(_qty(ds, p, n) for p, n in used.items()) or "no parts on the challan"
+    use = ", ".join(_qty(ds, p, n) for p, n in took.items()) or "no parts on the challan"
     msg = (f"{cid}: {_qty(ds, r.product, q)} back from {_name(ds, c.job_worker)} on {_day(day)}"
            + (f" (their {reference})" if reference else "") + f", made from {use}"
            + (f"; they used {'; '.join(over)}: put the challan right with what really came back" if over else "")
@@ -575,13 +592,24 @@ def _tax_rate(ds: Dataset, product: str) -> float:
     return p.tax_rate if p and p.tax_rate is not None else ds.sales.tax_rate
 
 
+def _state(lo) -> str:
+    """The job worker's state for ITC-04: from the GSTIN's state code, else the place's region."""
+    from ..sales import _GST_STATES
+    if lo is None:
+        return ""
+    t = lo.tax_id.strip()
+    if len(t) >= 2 and t[:2] in _GST_STATES:
+        return _GST_STATES[t[:2]][0]
+    return lo.region
+
+
 def itc04(ds: Dataset, start: date, end: date) -> list[Itc04Row]:
     out = []
     for c in ds.challans:
         if c.cancelled:
             continue
         lo = ds.location_by_id.get(c.job_worker)
-        gstin, state = (lo.tax_id if lo else ""), (lo.region if lo else "")
+        gstin, state = (lo.tax_id if lo else ""), _state(lo)
         if start <= c.sent_on <= end:
             for ln in c.lines:
                 p = ds.product_by_id.get(ln.product)

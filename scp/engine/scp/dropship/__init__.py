@@ -159,7 +159,8 @@ def _margin(ds: Dataset, t: ThirdPartyOrder) -> float | None:
         rate = fx(ds, t.currency)
     except Exception:          # a currency without a rate: no margin to show
         return None
-    return round(t.qty * (t.price - t.cost * rate), 2)
+    q = 0.0 if t.cancelled else (t.shipped if t.closed else t.qty)     # closed short: what was shipped
+    return round(q * (t.price - t.cost * rate), 2)
 
 
 def send(ds: Dataset, tid: str, on: date | None = None) -> tuple[Dataset, DropShipReport]:

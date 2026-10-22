@@ -109,6 +109,7 @@ def kitchenware() -> dict:
     ]
     locations = [
         {"id": "PLT-PUNE", "name": "Pune plant (Chakan)", "type": "plant", "region": "West", "address": "Plot 21, MIDC Chakan Phase II\nPune 410501, Maharashtra", "calendar": "CAL-IN-6D",
+         "tax_id": "27AAJCK4821M1Z3",
          "lat": 18.76, "lon": 73.86, "storage_capacity_m3": 2500, "handling_cost_per_unit": 2},
         {"id": "DC-BHIWANDI", "name": "Bhiwandi DC (Mumbai)", "type": "dc", "region": "West", "address": "Gala 4, Building B7, Vashere logistics park\nBhiwandi 421302, Maharashtra", "calendar": "CAL-IN-6D",
          "lat": 19.30, "lon": 73.06, "storage_capacity_m3": 4000, "handling_cost_per_unit": 6},
@@ -129,21 +130,29 @@ def kitchenware() -> dict:
          "lat": 22.54, "lon": 114.06},
         {"id": "SUP-PACK", "name": "Bhosari corrugated boxes", "type": "supplier", "region": "West", "address": "Plot 44, J block, Bhosari MIDC\nPune 411026, Maharashtra",
          "lat": 18.64, "lon": 73.84},
+        # Enterprise 7.1: a job worker who winds motors on Kaveri's parts when the winding machines are full, and an
+        # appliance maker who ships kettles straight to marketplace warehouses under Kaveri's name
+        {"id": "SUP-WIND", "name": "Bhosari winding works", "type": "supplier", "region": "West",
+         "address": "Shed 9, S block, Bhosari MIDC\nPune 411026, Maharashtra", "tax_id": "27AAKFB4417M1Z5",
+         "lat": 18.63, "lon": 73.83},
+        {"id": "SUP-VASAI", "name": "Vasai appliance works", "type": "supplier", "region": "West",
+         "address": "Gala 17, Sativali industrial estate\nVasai East 401208, Maharashtra",
+         "tax_id": "27AAGCV2290Q1ZK", "lat": 19.42, "lon": 72.87},
     ]
     products = [
-        {"id": "MG-500", "name": "Mixer grinder 500 W", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.2,
+        {"id": "MG-500", "name": "Mixer grinder 500 W", "hsn": "85094010", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.2,
          "volume_m3": 0.028, "price": 2890, "setup_group": "MG", "customer_wait_days": 2, "barcode": "8906011250005"},
-        {"id": "MG-750", "name": "Mixer grinder 750 W", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.9,
+        {"id": "MG-750", "name": "Mixer grinder 750 W", "hsn": "85094010", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.9,
          "volume_m3": 0.031, "price": 3990, "setup_group": "MG", "barcode": "8906011250012"},
-        {"id": "KT-15", "name": "Electric kettle 1.5 L", "type": "FG", "family": "Kettles", "weight_kg": 1.3,
+        {"id": "KT-15", "name": "Electric kettle 1.5 L", "hsn": "85167100", "type": "FG", "family": "Kettles", "weight_kg": 1.3,
          "volume_m3": 0.009, "price": 1190, "setup_group": "KT", "customer_wait_days": 2, "barcode": "8906011250029"},
-        {"id": "MOT-500", "name": "Motor assembly 500 W", "type": "SFG", "weight_kg": 1.6, "volume_m3": 0.004,
+        {"id": "MOT-500", "name": "Motor assembly 500 W", "hsn": "85013119", "type": "SFG", "weight_kg": 1.6, "volume_m3": 0.004,
          "setup_group": "W500"},
-        {"id": "MOT-750", "name": "Motor assembly 750 W", "type": "SFG", "weight_kg": 2.0, "volume_m3": 0.005,
+        {"id": "MOT-750", "name": "Motor assembly 750 W", "hsn": "85013119", "type": "SFG", "weight_kg": 2.0, "volume_m3": 0.005,
          "setup_group": "W750"},
-        {"id": "RM-CU-WIRE", "name": "Enamelled copper wire", "type": "RM", "base_uom": "KG", "weight_kg": 1.0,
+        {"id": "RM-CU-WIRE", "name": "Enamelled copper wire", "hsn": "85441110", "type": "RM", "base_uom": "KG", "weight_kg": 1.0,
          "volume_m3": 0.0002},
-        {"id": "RM-STAMP", "name": "Stator/rotor lamination set", "type": "RM", "weight_kg": 0.9, "volume_m3": 0.0006},
+        {"id": "RM-STAMP", "name": "Stator/rotor lamination set", "hsn": "85030010", "type": "RM", "weight_kg": 0.9, "volume_m3": 0.0006},
         {"id": "RM-JARSET", "name": "Stainless jar set (3 jars)", "type": "RM", "weight_kg": 1.4, "volume_m3": 0.012},
         {"id": "RM-BODY-MG", "name": "Moulded MG body", "type": "RM", "weight_kg": 0.6, "volume_m3": 0.006},
         {"id": "RM-BODY-KT", "name": "Kettle body (SS)", "type": "RM", "weight_kg": 0.7, "volume_m3": 0.006},
@@ -341,6 +350,9 @@ def kitchenware() -> dict:
          "due_date": "2026-10-19", "source": "PIR-HEATER"},
         {"id": "MO-100455", "kind": "production", "location": "PLT-PUNE", "product": "MG-500", "qty": 800,
          "due_date": "2026-09-30", "source": "PV-MG-500"},
+        # winding for the 750 W motors, released ahead of the festive build
+        {"id": "MO-100461", "kind": "production", "location": "PLT-PUNE", "product": "MOT-750", "qty": 600,
+         "due_date": "2026-10-09", "start_date": "2026-10-05", "source": "PV-MOT-750"},
         {"id": "STO-2201", "kind": "transfer", "location": "DC-DELHI", "product": "KT-15", "qty": 600,
          "due_date": "2026-09-29", "source": "LN-PUNE-DEL"},
     ]
@@ -352,10 +364,13 @@ def kitchenware() -> dict:
         {"supplier": "SUP-COPPER", "contact": "Sales office Silvassa", "payment_terms_days": 45,
          "confirmation_required": True, "confirmation_days": 2},
         {"supplier": "SUP-PACK", "payment_terms_days": 30, "min_order_value": 5000, "under_delivery_tolerance": 0.02},
+        {"supplier": "SUP-WIND", "contact": "Shinde (works manager)", "payment_terms_days": 30},
+        {"supplier": "SUP-VASAI", "contact": "Order desk", "payment_terms_days": 45, "over_delivery_tolerance": 0.02},
     ]
     return {
         "schema_version": "1",
         "settings": {"company_name": "Kaveri Kitchenware Pvt Ltd (fictional)", "currency": "INR",
+                     "company_tax_id": "27AAJCK4821M1Z3",
                      "company_address": "Kaveri House, 3rd floor, Baner road\nPune 411045, Maharashtra",
                      "planning_start": START.isoformat(), "horizon_days": 182, "bucket": "week",
                      "fx_rates": {"USD": 84.2}, "wacc": 0.13, "holding_spread": 0.09,
