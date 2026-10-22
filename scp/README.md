@@ -16,7 +16,7 @@ cd scp/engine
 pip install -e ".[dev]"
 uvicorn scp.api.app:app --port 8000      # serves the API, and the web client once it is built
 
-# web client (Node ≥ 20)
+# web client (Node 22.23.4, 24.22.1, or 26.12.1)
 cd scp/web
 npm install
 npm run build                            # then open http://localhost:8000

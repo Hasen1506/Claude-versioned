@@ -16,8 +16,9 @@ Everything lives in [`scp/`](scp/README.md):
 ## Quick start
 
 ```bash
+python -m pip install --upgrade 'pip>=26.2.2'
 cd scp/engine && pip install -e ".[dev]" && uvicorn scp.api.app:app --port 8000
-cd scp/web && npm install && npm run build   # then open http://localhost:8000
+cd scp/web && npm install && npm run build   # Node 22.23.4, 24.22.1, or 26.12.1; then open http://localhost:8000
 ```
 
 CI (`.github/workflows/scp.yml`) runs ruff, pytest, the example reproducibility check, the API-type drift check,
