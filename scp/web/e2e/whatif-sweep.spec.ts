@@ -96,6 +96,7 @@ test("a supplier's price change is a chip: cost moves, service does not", async 
   await page.getByRole("button", { name: "Compare side by side" }).click();
   const table = page.getByRole("table", { name: "What-if comparison" });
   await expect(table.getByRole("row", { name: /Changes/ })).toContainText("Purchase prices +10 % at SUP-COPPER", { timeout: 60_000 });
-  await expect(table.getByRole("row", { name: /^Total plan cost/ }).locator("td").nth(2)).toContainText("+₹15.01 L");
+  // 10 % of the plan's copper buys; the firm winding order MO-100461 (7.1) adds ₹1,662 to the ₹15,00,619 without it
+  await expect(table.getByRole("row", { name: /^Total plan cost/ }).locator("td").nth(2)).toContainText("+₹15.02 L");
   await expect(table.getByRole("row", { name: /Verdict/ }).locator("td").nth(2)).toContainText("same service");
 });
