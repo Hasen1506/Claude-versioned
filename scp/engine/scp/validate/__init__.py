@@ -81,7 +81,8 @@ RULES: dict[str, tuple[Severity, str]] = {
     "BATCH_UNKNOWN": ("warning", "Goods movement in a batch with no batch record"),
     "WH_MISFIT": ("warning", "Warehouse records that do not fit together (bins, storage types, rules, tasks)"),
     "TM_MISFIT": ("warning", "Transport records that do not fit together (carriers, rates, freight orders)"),
-    "OUTSIDE_MISFIT": ("warning", "Third-party orders or job-work challans that do not fit the rest of the data"),
+    "OUTSIDE_MISFIT": ("warning", "Third-party orders, job-work challans or shipping notices that do not fit the rest "
+                                  "of the data"),
     "JOBWORK_DUE": ("warning", "Parts at a job worker past the GST limit: they count as supplied, tax is due"),
     "REVERSAL_UNKNOWN": ("warning", "Reversal of a movement that is not in the journal"),
     "SERIALS_COUNT": ("warning", "Serial numbers that do not match the quantity"),
@@ -156,6 +157,7 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "purchase_order": ds.purchase_orders, "inventory_doc": ds.inventory_docs, "mrp_group": ds.mrp_groups,
         "warehouse_task": ds.warehouse_tasks, "wave": ds.waves, "carrier": ds.carriers,
         "freight_order": ds.freight_orders, "third_party_order": ds.third_party_orders, "challan": ds.challans,
+        "shipping_notice": ds.shipping_notices,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
@@ -933,6 +935,20 @@ def _outside(ds: Dataset, c: _Collector) -> None:
         if t.shipped > t.qty * (1 + (ds.vendor(t.supplier).over_delivery_tolerance or 0.0)) + 1e-6:
             c.add("OUTSIDE_MISFIT", "third_party_order", t.id, f"{t.shipped:g} dispatched on an order for {t.qty:g}",
                   "Put the dispatches right", "shipments")
+    lines = {r.id: ds.purchase_order_by_id.get(r.po or "") for r in ds.receipts if r.kind.value == "purchase"}
+    for n in ds.shipping_notices:
+        if _ref(ds, c, "location", n.supplier, "shipping_notice", n.id, "supplier"):
+            _loc_type(ds, c, n.supplier, {LocationType.SUPPLIER}, "shipping_notice", n.id, "supplier",
+                      "a supplier sends a shipping notice")
+        for ln in n.lines:
+            _ref(ds, c, "product", ln.product, "shipping_notice", n.id, "lines")
+        if n.received_on or n.cancelled:
+            continue
+        stray = [ln.order for ln in n.lines if ln.order not in lines
+                 or (lines[ln.order] is not None and lines[ln.order].supplier != n.supplier)]
+        if stray:
+            c.add("OUTSIDE_MISFIT", "shipping_notice", n.id, f"ships {', '.join(stray[:5])}, not an open order line "
+                  f"of {n.supplier}", "Receive the goods on Buying and cancel the notice", "lines")
     if not ds.challans:
         return
     orders = {r.id for r in ds.receipts if r.kind.value == "production"} | {

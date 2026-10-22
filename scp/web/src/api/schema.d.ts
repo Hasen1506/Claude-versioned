@@ -1288,6 +1288,205 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/portal/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Portal View
+         * @description What the supplier sees on their link: their sent, open order lines and their shipping notices.
+         */
+        post: operations["post_portal_view_api_portal_view_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/portal/act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Portal Act
+         * @description A supplier's step recorded by Buying (they phoned or mailed it), goods received against a shipping notice, a
+         *     notice cancelled, or a UBL message read in.
+         */
+        post: operations["post_portal_act_api_portal_act_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/portal/order-xml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Order Xml
+         * @description The purchase order as a UBL 2.1 Order (Peppol BIS Ordering), to send to a supplier's system.
+         */
+        post: operations["post_order_xml_api_portal_order_xml_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/portal-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Links */
+        get: operations["list_links_api_companies__cid__portal_links_get"];
+        put?: never;
+        /**
+         * Make Link
+         * @description A link for one supplier; its secret (``token``) is in this answer only: send the link to the supplier now.
+         */
+        post: operations["make_link_api_companies__cid__portal_links_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/portal-links/{lid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke Link */
+        delete: operations["revoke_link_api_companies__cid__portal_links__lid__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/portal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Supplier View
+         * @description The supplier's open order lines and shipping notices, on their link.
+         */
+        get: operations["get_supplier_view_api_portal_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/portal/respond": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Supplier Respond
+         * @description Order lines confirmed as asked, or changed: a smaller quantity, a later date, several deliveries.
+         */
+        post: operations["post_supplier_respond_api_portal_respond_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/portal/dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Supplier Dispatch
+         * @description Goods on their way: a shipping notice the customer receives against.
+         */
+        post: operations["post_supplier_dispatch_api_portal_dispatch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/portal/message": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Supplier Message
+         * @description A UBL OrderResponse or DespatchAdvice, as the body (``application/xml``), from the supplier's own system.
+         */
+        post: operations["post_supplier_message_api_portal_message_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/portal/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Supplier Order
+         * @description One of the supplier's orders as a UBL Order.
+         */
+        get: operations["get_supplier_order_api_portal_order_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -4273,15 +4472,16 @@ export interface components {
             plan_a: components["schemas"]["PlanSummary"];
             plan_b: components["schemas"]["PlanSummary"];
         };
-        /** ConfirmPart */
-        ConfirmPart: {
-            /**
-             * Date
-             * Format: date
-             */
-            date: string;
+        /** ConfirmLine */
+        ConfirmLine: {
+            /** Order */
+            order: string;
             /** Qty */
-            qty: number;
+            qty?: number | null;
+            /** Date */
+            date?: string | null;
+            /** Parts */
+            parts?: components["schemas"]["scp__api__portal__ConfirmPart"][] | null;
         };
         /**
          * Confirmation
@@ -5046,6 +5246,8 @@ export interface components {
             /** Challans */
             challans?: components["schemas"]["JobWorkChallan"][];
             job_work?: components["schemas"]["JobWorkSettings"];
+            /** Shipping Notices */
+            shipping_notices?: components["schemas"]["ShippingNotice"][];
             /** Closed Orders */
             closed_orders?: components["schemas"]["ClosedOrder"][];
             /** Accuracy */
@@ -9139,6 +9341,16 @@ export interface components {
              */
             role: "planner" | "viewer";
         };
+        /** NewLink */
+        NewLink: {
+            /** Supplier */
+            supplier: string;
+            /**
+             * Days
+             * @default 90
+             */
+            days: number;
+        };
         /** NodeBucket */
         NodeBucket: {
             /** Bucket */
@@ -9323,6 +9535,36 @@ export interface components {
             location: string;
             /** Product */
             product: string;
+        };
+        /** NoticeLine */
+        NoticeLine: {
+            /**
+             * Order
+             * @description The purchase order line it ships
+             */
+            order: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Batch
+             * @description The supplier's batch, for products kept in batches
+             */
+            batch?: string | null;
+            /** Expires On */
+            expires_on?: string | null;
+        };
+        /** NoticeLineInput */
+        NoticeLineInput: {
+            /** Order */
+            order: string;
+            /** Qty */
+            qty?: number | null;
+            /** Batch */
+            batch?: string | null;
+            /** Expires On */
+            expires_on?: string | null;
         };
         /**
          * NpiRule
@@ -9797,6 +10039,12 @@ export interface components {
              * @default true
              */
             header: boolean;
+        };
+        /** OrderXmlRequest */
+        OrderXmlRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Po */
+            po: string;
         };
         /** OrdersMessage */
         OrdersMessage: {
@@ -10711,7 +10959,7 @@ export interface components {
              */
             final: boolean;
             /** Parts */
-            parts?: components["schemas"]["ConfirmPart"][] | null;
+            parts?: components["schemas"]["scp__api__app__ConfirmPart"][] | null;
             /** Batch */
             batch?: string | null;
             /** Expires On */
@@ -10805,6 +11053,177 @@ export interface components {
             saving_pct: number;
             /** Unit Value */
             unit_value: number;
+        };
+        /** PortalActionRequest */
+        PortalActionRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "respond" | "dispatch" | "receive" | "cancel" | "message";
+            /** Supplier */
+            supplier?: string | null;
+            /** Id */
+            id?: string | null;
+            /** Confirm */
+            confirm?: components["schemas"]["ConfirmLine"][] | null;
+            /** Lines */
+            lines?: components["schemas"]["NoticeLineInput"][] | null;
+            /** Shipped On */
+            shipped_on?: string | null;
+            /** Arrives On */
+            arrives_on?: string | null;
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /** Date */
+            date?: string | null;
+            /** Xml */
+            xml?: string | null;
+        };
+        /** PortalActionResponse */
+        PortalActionResponse: {
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
+            /** Message */
+            message: string;
+            /** Id */
+            id: string | null;
+        };
+        /** PortalLine */
+        PortalLine: {
+            /** Order */
+            order: string;
+            /** Po */
+            po: string;
+            /** Product */
+            product: string;
+            /** Product Name */
+            product_name: string;
+            /** Their Part */
+            their_part: string;
+            /** Unit */
+            unit: string;
+            /** Ordered */
+            ordered: number;
+            /** Received */
+            received: number;
+            /** On The Way */
+            on_the_way: number;
+            /** Open */
+            open: number;
+            /** Price */
+            price: number | null;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Confirmed Date */
+            confirmed_date: string | null;
+            /** Confirmed Qty */
+            confirmed_qty: number | null;
+            /** Confirmations */
+            confirmations: components["schemas"]["ConfirmedDelivery"][];
+            /** Deliver To */
+            deliver_to: string;
+            /** Deliver To Name */
+            deliver_to_name: string;
+            /** Status */
+            status: string;
+        };
+        /** PortalLink */
+        PortalLink: {
+            /** Id */
+            id: string;
+            /** Supplier */
+            supplier: string;
+            /** Supplier Name */
+            supplier_name: string;
+            /** Prefix */
+            prefix: string;
+            /** Created By */
+            created_by: string;
+            /** Created At */
+            created_at: string;
+            /** Expires At */
+            expires_at: string;
+            /** Last Used */
+            last_used: string | null;
+            /**
+             * Uses
+             * @default 0
+             */
+            uses: number;
+            /** Revoked At */
+            revoked_at: string | null;
+            /**
+             * Status
+             * @default live
+             */
+            status: string;
+            /** Token */
+            token: string | null;
+        };
+        /** PortalNotice */
+        PortalNotice: {
+            /** Id */
+            id: string;
+            /** Reference */
+            reference: string;
+            /**
+             * Shipped On
+             * Format: date
+             */
+            shipped_on: string;
+            /**
+             * Arrives On
+             * Format: date
+             */
+            arrives_on: string;
+            /** Lines */
+            lines: components["schemas"]["NoticeLine"][];
+            /** Status */
+            status: string;
+        };
+        /** PortalView */
+        PortalView: {
+            /** Company */
+            company: string;
+            /** Supplier */
+            supplier: string;
+            /** Supplier Name */
+            supplier_name: string;
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Currency */
+            currency: string;
+            /** Lines */
+            lines: components["schemas"]["PortalLine"][];
+            /** Notices */
+            notices: components["schemas"]["PortalNotice"][];
+        };
+        /** PortalViewRequest */
+        PortalViewRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Supplier */
+            supplier: string;
+            /** Date */
+            date?: string | null;
         };
         /** PostRequest */
         PostRequest: {
@@ -14188,6 +14607,52 @@ export interface components {
             weekdays?: number[] | null;
         };
         /**
+         * ShippingNotice
+         * @description Goods on their way from a supplier: they arrive on ``arrives_on`` and are received against the notice.
+         */
+        ShippingNotice: {
+            /** Id */
+            id: string;
+            /** Supplier */
+            supplier: string;
+            /**
+             * Reference
+             * @description Their dispatch note or lorry receipt number
+             * @default
+             */
+            reference: string;
+            /**
+             * Shipped On
+             * Format: date
+             */
+            shipped_on: string;
+            /**
+             * Arrives On
+             * Format: date
+             */
+            arrives_on: string;
+            /** Lines */
+            lines: components["schemas"]["NoticeLine"][];
+            /**
+             * Source
+             * @default entered
+             * @enum {string}
+             */
+            source: "portal" | "message" | "entered";
+            /** Received On */
+            received_on?: string | null;
+            /**
+             * Cancelled
+             * @default false
+             */
+            cancelled: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
          * ShortOrder
          * @description A firm order the parts no longer cover in full after a short or late receipt (R16).
          */
@@ -14846,6 +15311,33 @@ export interface components {
              */
             total_high: number;
         };
+        /** SupplierAnswer */
+        SupplierAnswer: {
+            /** Message */
+            message: string;
+            /** Id */
+            id: string | null;
+            view: components["schemas"]["SupplierView"];
+        };
+        /** SupplierDispatch */
+        SupplierDispatch: {
+            /** Lines */
+            lines: components["schemas"]["NoticeLineInput"][];
+            /** Shipped On */
+            shipped_on?: string | null;
+            /** Arrives On */
+            arrives_on?: string | null;
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /**
          * SupplierInvoice
          * @description A supplier's invoice or credit memo (≈ MIRO). Checked when entered against the order's price and the goods
@@ -15075,6 +15567,16 @@ export interface components {
              */
             products: string[];
         };
+        /** SupplierRespond */
+        SupplierRespond: {
+            /** Lines */
+            lines: components["schemas"]["ConfirmLine"][];
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
+        };
         /**
          * SupplierReturn
          * @description Goods sent back to the supplier (≈ return delivery): taken out of stock against the order line, so the line
@@ -15161,6 +15663,30 @@ export interface components {
             status: "to credit" | "credited" | "replacement due" | "replaced";
             /** Credit Memo */
             credit_memo: string | null;
+        };
+        /** SupplierView */
+        SupplierView: {
+            /** Company */
+            company: string;
+            /** Supplier */
+            supplier: string;
+            /** Supplier Name */
+            supplier_name: string;
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Currency */
+            currency: string;
+            /** Lines */
+            lines: components["schemas"]["PortalLine"][];
+            /** Notices */
+            notices: components["schemas"]["PortalNotice"][];
+            /** Link */
+            link: string;
+            /** Expires At */
+            expires_at: string;
         };
         /** SupplyLine */
         SupplyLine: {
@@ -16780,6 +17306,26 @@ export interface components {
             scrap_measured: number;
             /** Change */
             change: boolean;
+        };
+        /** ConfirmPart */
+        scp__api__app__ConfirmPart: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Qty */
+            qty: number;
+        };
+        /** ConfirmPart */
+        scp__api__portal__ConfirmPart: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Qty */
+            qty: number;
         };
     };
     responses: never;
@@ -19217,6 +19763,340 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Figures"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_portal_view_api_portal_view_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PortalViewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_portal_act_api_portal_act_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PortalActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_order_xml_api_portal_order_xml_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderXmlRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_links_api_companies__cid__portal_links_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalLink"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    make_link_api_companies__cid__portal_links_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewLink"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalLink"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_link_api_companies__cid__portal_links__lid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                lid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalLink"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_supplier_view_api_portal_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierView"];
+                };
+            };
+        };
+    };
+    post_supplier_respond_api_portal_respond_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SupplierRespond"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_supplier_dispatch_api_portal_dispatch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SupplierDispatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_supplier_message_api_portal_message_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierAnswer"];
+                };
+            };
+        };
+    };
+    get_supplier_order_api_portal_order_get: {
+        parameters: {
+            query: {
+                po: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

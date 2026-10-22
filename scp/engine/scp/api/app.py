@@ -81,6 +81,7 @@ from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compar
 from ..companies import CompanyError
 from .connect import router as connect_router
 from .cycle import router as cycle_router
+from .portal import router as portal_router
 from .companies import (
     CORS_ORIGINS,
     Scope, StoredEditScope, StoredScope, company_error, edit_scope, gate, is_company, production_guard, require_signin,
@@ -139,6 +140,7 @@ app.add_exception_handler(CompanyError, company_error)  # type: ignore[arg-type]
 app.include_router(companies_router)
 app.include_router(connect_router)
 app.include_router(cycle_router)
+app.include_router(portal_router)
 
 
 @app.exception_handler(RequestValidationError)

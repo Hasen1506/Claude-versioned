@@ -71,9 +71,13 @@ router = APIRouter(prefix="/api", tags=["companies"])
 OPEN_PATHS = ("/api/health", "/api/metrics", "/api/auth/config", "/api/auth/signin", "/api/auth/signup", "/api/auth/reset",
               "/api/auth/reset/request", "/api/auth/sso/start", "/api/auth/sso/callback", "/api/auth/email/verify",
               "/api/auth/csrf", "/api/auth/adopt", "/api/auth/signin/second")
+# a supplier on their portal link (Enterprise 7.2): no sign-in, the link's secret (X-Portal-Token) is the credential;
+# still limited like any call without a session
+PORTAL_PATHS = ("/api/portal", "/api/portal/respond", "/api/portal/dispatch", "/api/portal/message",
+                "/api/portal/order")
 # calls that never act on the session cookie, so they need no CSRF token (sign-in itself, and swapping a token)
 NO_CSRF = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset", "/api/auth/reset/request", "/api/auth/adopt",
-           "/api/auth/email/verify", "/api/auth/signin/second")
+           "/api/auth/email/verify", "/api/auth/signin/second", *PORTAL_PATHS)
 # the sign-in calls that set the session cookie when a browser asks for it: that browser must prove it is this
 # application's own page (the double-submit token of ``GET /api/auth/csrf``), so a forged form cannot sign it into
 # someone else's account (login CSRF)
@@ -268,7 +272,8 @@ async def gate(request: Request, call_next):
     if request.method == "POST" and path in COOKIE_SIGNIN and wants_cookie(request) and not csrf_ok(request):
         return JSONResponse(status_code=403, content={"detail": "this sign-in is missing its security token "
                                                                 "(X-CSRF-Token); reload the page and try again"})
-    if signin_required and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
+    if signin_required and path.startswith("/api/") and path not in OPEN_PATHS and path not in PORTAL_PATHS \
+            and request.method != "OPTIONS":
         try:
             get_companies().whoami(token_of(request))
         except CompanyError as e:
