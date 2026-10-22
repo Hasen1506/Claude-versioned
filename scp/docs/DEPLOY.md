@@ -27,9 +27,10 @@ new accounts by invitation only (see the settings below); a company owner invite
 `deploy/compose.yaml` does the same with Docker Compose and adds Caddy for HTTPS (a certificate from Let's Encrypt,
 renewed by itself): set the host name in `deploy/Caddyfile`, then `docker compose -f deploy/compose.yaml up -d`.
 
-Without Docker: Python ≥ 3.11 and Node ≥ 20,
+Without Docker: Python ≥ 3.11 and Node 22.23.4, 24.22.1, or 26.12.1. Upgrade pip first: releases before 26.2.2 vendor a CA bundle that still trusts the compromised eMudhra root.
 
 ```bash
+python -m pip install --upgrade 'pip>=26.2.2'
 cd scp/engine && pip install -e .
 cd ../web && npm ci && npm run build
 cd ../engine && SCP_DB=/var/lib/scp/scp.sqlite SCP_REQUIRE_SIGNIN=1 SCP_SIGNUP=invite \
