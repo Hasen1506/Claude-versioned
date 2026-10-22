@@ -383,6 +383,41 @@ one and acknowledged.
 - **Odoo's warehouses for orders out.** A place translated to an Odoo warehouse (the mapping's `location`, here =
   there) sends its orders to that warehouse's receipt or manufacturing operation; otherwise Odoo's default.
 
+## Supplier portal
+
+A planner makes a link for one supplier on **Buying → Supplier portal** (on a company kept on the server). The link
+is `https://<the application>/#/portal/scp_sp_…`; the part after `#/portal/` is its secret, shown once and kept on the
+server only as a hash. It works for 90 days unless another length is chosen, until it is withdrawn, and only while
+the person who made it may still change the company. What the supplier does is saved as that person's change, named
+"… from <supplier> on the supplier portal (link L0001)" in the History.
+
+The supplier's page and their own system use the same calls, with the secret in the header `X-Portal-Token` (no
+sign-in, no cookie; limited like any call without a session):
+
+| Call | What it does |
+|---|---|
+| `GET /api/portal` | Their open lines of sent purchase orders (ordered, received, on the way, price, wanted date, confirmation) and their shipping notices. Nothing else of the company's. |
+| `POST /api/portal/respond` | `{"reference": "SC/OC/3381", "lines": [{"order": "PO-4500012872-10", "qty": 1500, "date": "2026-10-14"}]}`. A line with no quantity or date is confirmed as asked; `parts` (`[{"date", "qty"}]`) confirms it in several deliveries. Recorded as the order's confirmation: planning counts on it. |
+| `POST /api/portal/dispatch` | `{"shipped_on", "arrives_on"?, "reference", "lines": [{"order", "qty"?, "batch"?, "expires_on"?}]}`. A shipping notice (`ASN-00001`). With no arrival date it is the dispatch plus the lane's transit days; the goods on it are expected on that date, counted against the earliest delivery still confirmed. More than ordered is refused past the supplier's over-delivery tolerance. |
+| `POST /api/portal/message` | A UBL 2.1 `OrderResponse` or `DespatchAdvice` as the body (`application/xml`, at most 2 MB, no document type declaration). |
+| `GET /api/portal/order?po=…` | One of their sent orders as a UBL 2.1 `Order` (Peppol BIS Ordering 3). |
+
+**The messages.** The `Order` carries one `OrderLine/LineItem` per open line with our line id in `cbc:ID`, the
+quantity in UN/ECE units (`KGM`, `EA`, …), the requested date, the price, the supplier's part number
+(`SellersItemIdentification`) and the HS code. An answer names the line in `OrderLineReference/LineID`:
+- `OrderResponse`: `cbc:OrderResponseCode` `AP` with no lines accepts the whole order as asked, `RE` with no lines
+  rejects it; per line `cbc:LineStatusCode` 7 rejects it (nothing confirmed), otherwise `cbc:Quantity` and
+  `Delivery/PromisedDeliveryPeriod/cbc:EndDate` are what is confirmed.
+- `DespatchAdvice`: per `DespatchLine` the `cbc:DeliveredQuantity` and `Item/ItemInstance/LotIdentification`
+  (`LotNumberID`, `ExpiryDate`); the shipment's `Delivery/Despatch/ActualDespatchDate` and
+  `Delivery/EstimatedDeliveryPeriod/EndDate` give the dispatch and arrival.
+
+Buying can read the same messages by hand (*Supplier portal → A message from their system*, or
+`POST /api/portal/act` with `action: "message"`), and downloads an order as UBL with `POST /api/portal/order-xml`.
+Goods arrive against a notice with *Goods received* (`action: "receive"`): each line is received on its order with the
+batch advised. A notice that will not come is cancelled (`action: "cancel"`); its quantity is expected again on the
+line's last confirmed date.
+
 ## E-mail from the server
 
 When the server has a mail server set up (`SCP_SMTP_HOST`, see [DEPLOY.md](DEPLOY.md)), documents can go from the server.

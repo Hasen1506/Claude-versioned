@@ -15,8 +15,9 @@ import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useFreshResult, useStore } from "../state/store";
 import { LotFields, lotExtra, NO_LOT, ShortOrders, type LotInput } from "./ExecutionStock";
 import { Contracts, Invoices, Owed, Returns, usePoAction } from "./BuyingPay";
+import { PortalTab } from "./BuyingPortal";
 
-type View = "order" | "orders" | "invoices" | "owed" | "returns" | "contracts" | "suppliers";
+type View = "order" | "orders" | "invoices" | "owed" | "returns" | "contracts" | "suppliers" | "portal";
 type Sev = "error" | "warning" | "info" | "ok";
 
 const STATUS_SEV: Record<string, Sev> = {
@@ -73,6 +74,7 @@ export function Buying({ route }: { route: string[] }) {
       { id: "returns", label: "Returns", count: res.payables?.returns.length ?? 0 },
       { id: "contracts", label: "Contracts", count: res.payables?.contracts.length ?? 0 },
       { id: "suppliers", label: "Suppliers", count: res.vendors.length },
+      { id: "portal", label: "Supplier portal", count: (ds.shipping_notices ?? []).filter((n) => !n.received_on && !n.cancelled).length || undefined },
     ]} />
     {view === "order" && <ToOrder res={res} ds={ds} />}
     {view === "orders" && <Orders res={res} ds={ds} sel={route[2]} />}
@@ -82,6 +84,7 @@ export function Buying({ route }: { route: string[] }) {
     {view === "returns" && res.payables && <Returns res={res} ds={ds} />}
     {view === "contracts" && res.payables && <Contracts res={res} ds={ds} />}
     {view === "suppliers" && <Suppliers res={res} ds={ds} />}
+    {view === "portal" && <PortalTab ds={ds} />}
   </>);
 }
 

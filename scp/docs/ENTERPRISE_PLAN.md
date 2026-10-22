@@ -84,6 +84,7 @@ tendering by message, open). Phase 6 done.
 ## Phase 7: Wider supply and money
 Done: 7.1 (N305–N310; the job charge in cost and postings with 7.4, the GST portal file and e-way bill, stock at job
 workers in planning and third-party lines on sales orders, open).
+Done: 7.2 (N311–N315; the link by e-mail, Peppol transport and supplier invoices on the portal, open).
 
 | # | Gap (guide §) | Build |
 |---|---|---|

@@ -550,6 +550,8 @@ async function checkNewer() {
   }
 }
 setInterval(() => { void checkNewer(); }, CHECK_EVERY);
+// coming back to the tab (after sending a supplier their link, say): look at once rather than at the next minute
+if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => { if (!document.hidden) void checkNewer(); });
 if (typeof window !== "undefined") {
   window.addEventListener("beforeunload", (e) => {
     if (unsaved(state) && canEdit(state.company)) { void saveNow(); e.preventDefault(); }

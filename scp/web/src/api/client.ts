@@ -11,6 +11,7 @@ import type {
   WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, CyclePlan, PutawayProposal, PickList, WarehouseActionResponse,
   TransportView, TransportAction, TransportActionResponse,
   OutsideView, OutsideAction, OutsideActionInput, OutsideActionResponse,
+  PortalView, PortalAction, PortalActionInput, PortalActionResponse, PortalLink,
   WarehouseAction,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
@@ -366,6 +367,21 @@ export const api = {
   /** What a production order's bill needs for what is left to make, less what is at job workers already. */
   outsideParts: (dataset: Dataset, order: string) =>
     withDataset<{ product: string; qty: number; location: string }[]>("/api/outside/parts", dataset, { order }),
+  /** What a supplier sees on their portal link: their sent, open order lines and shipping notices (Enterprise 7.2). */
+  portalView: (ds: Dataset, supplier: string) => withDataset<PortalView>("/api/portal/view", ds, { supplier }),
+  /** A supplier's step recorded by Buying, goods received against a shipping notice, a notice cancelled, a UBL
+   *  message read in. */
+  portalAct: (dataset: Dataset, action: PortalAction, extra: Partial<PortalActionInput> = {}) =>
+    write<PortalActionResponse>("/api/portal/act", dataset, { action, ...extra }),
+  /** A purchase order as a UBL 2.1 Order, as text. */
+  orderXml: async (ds: Dataset, po: string): Promise<string> => {
+    const res = await fetch(`${API_ORIGIN}/api/portal/order-xml`, {
+      method: "POST", credentials: CREDENTIALS, headers: { "Content-Type": "application/json", "X-Browser-Key": BROWSER_KEY },
+      body: JSON.stringify({ dataset: clean(ds), po }),
+    });
+    if (!res.ok) throw new ApiError(((await res.json().catch(() => ({}))) as { detail?: string }).detail || `HTTP ${res.status}`, res.status, {});
+    return res.text();
+  },
   warehouse: (ds: Dataset, location: string) =>
     planPost<WarehouseView>(`/api/warehouse?location=${encodeURIComponent(location)}`, ds),
   /** Where the stock in no bin would be put away, by the place's rules (nothing is changed). */
@@ -482,6 +498,12 @@ export const api = {
   makeKey: (id: string, name: string, role: "planner" | "viewer") =>
     call<ApiKey>(`${co(id)}/keys`, { method: "POST", body: JSON.stringify({ name, role }) }),
   revokeKey: (id: string, kid: string) => call<ApiKey[]>(`${co(id)}/keys/${encodeURIComponent(kid)}`, { method: "DELETE" }),
+  /** Supplier portal links of a company kept on the server (Enterprise 7.2); a new one carries its secret once. */
+  portalLinks: (id: string) => call<PortalLink[]>(`${co(id)}/portal-links`),
+  makePortalLink: (id: string, supplier: string, days?: number) =>
+    call<PortalLink>(`${co(id)}/portal-links`, { method: "POST", body: JSON.stringify({ supplier, ...(days ? { days } : {}) }) }),
+  revokePortalLink: (id: string, lid: string) =>
+    call<PortalLink[]>(`${co(id)}/portal-links/${encodeURIComponent(lid)}`, { method: "DELETE" }),
   imports: (id: string) => call<ImportJobs>(`${co(id)}/imports`),
   saveImport: (id: string, job: JobInput, jid?: string) =>
     call<ImportJobs>(`${co(id)}/imports${jid ? `/${encodeURIComponent(jid)}` : ""}`, { method: jid ? "PUT" : "POST", body: JSON.stringify(job) }),

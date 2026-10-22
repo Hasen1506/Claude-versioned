@@ -1140,6 +1140,44 @@ The products carry HSN codes, and the plant and the company carry GSTINs.
 | N309 | The page header counted an order closed short, not yet billed, as open. | Minor | **Fixed:** open means still to send or to dispatch. |
 | N310 | The job charge is not in the motors' cost or stock value. Tax on deemed supplies is shown, not invoiced. ITC-04 is a CSV, not the GST portal's file. There is no e-way bill. The job worker's own challans are not checked. Planning does not count parts at a job worker as available for the order. A third-party order is a document of its own, not a line of a sales order, and is sent without a printed order. | Minor | Open: the job charge and postings with 7.4, the portal file and e-way bill, the planning view of stock at job workers, third-party lines on sales orders and their order document (with 7.2). |
 
+### 7.2: Supplier portal and UBL messages
+
+ENTERPRISE_PLAN 7.2, in two browsers on the Kaveri Kitchenware example kept on the server: the buyer's (*Buying →
+Supplier portal*) and the supplier's, opened from the link with no account. Also through the API and the engine.
+The example data is unchanged: copper wire from *Hindalco copper (Silvassa)* costs ₹905 a kg, ₹890 from 2,000 kg, on
+a 2-day lane, with 10 % over-delivery allowed.
+
+* *Input:* a new purchase order for 2,000 kg wanted Mon 12 Oct, at ₹890, released at each level and sent. *Make a
+  link* gives `…#/portal/scp_sp_…` once, for 90 days. The supplier's page shows that one line and nothing else of
+  Kaveri's (not the lamination order sent to another supplier), with the order as UBL XML to download.
+* *Processing:*
+  * The supplier changes the line: 1,200 kg on Fri 9 Oct and 800 kg on Fri 16 Oct, their reference SC/OC/3381. It is
+    the order's confirmation, so the plan expects 1,200 on the 9th and 800 on the 16th.
+  * They send dispatch advice: 1,200 kg in batch CU-7781 left on Sat 10 Oct (LR 40417). On the 2-day lane it
+    arrives Mon 12 Oct. The first delivery is now expected on the 12th, three days late; the 800 keep the 16th.
+  * Their system sends a UBL DespatchAdvice for the other 800 kg, dispatched Wed 14 Oct, arriving Fri 16 Oct. Buying
+    pastes it in when it comes by mail; through the link it arrives by itself.
+  * Each step is saved straight to the company as the link maker's change: "dispatch advice from Hindalco copper
+    (Silvassa) on the supplier portal (link L0001)". The buyer's page shows *Show their changes* at once when they
+    come back to the tab.
+* *Output:*
+  * *Goods received* on ASN-00001, Mon 12 Oct, receives 1,200 kg on the order with the advised batch; 800 are still
+    on the way.
+  * The link list says it was used twice. Withdrawn, the supplier's page opens nothing.
+  * A lorry that will not come is cancelled; its quantity is expected again on the line's last date.
+  * Rejected UBL lines confirm nothing. A message for another supplier's order is refused and nothing is saved, and
+    so is a message with a document type declaration.
+* *At a supplier with 2,000 open lines:* their page in 0.03 s, confirming all of them in 0.03 s, a notice of 200
+  lines in 0.01 s, received in 0.06 s, the order as UBL (1.8 MB) in 0.06 s.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N311 | A dispatch advice moved every quantity already on the way to the new lorry's arrival date, so an earlier lorry's goods looked later than advised. | Major | **Fixed:** each notice keeps its own arrival. A new lorry counts against the earliest delivery still confirmed, and what it does not carry of that delivery stays late on its date. Hand-worked tests cover lorries early, late and partly. |
+| N312 | Over-delivery inside the tolerance left the confirmation lines adding up to more than the quantity confirmed. | Minor | **Fixed:** the confirmation follows what is on the way when that is more; planning still counts no more than is open. |
+| N313 | The buyer saw the supplier's save only at the next check for a newer save, up to a minute later. | Minor | **Fixed:** coming back to the tab checks at once. |
+| N314 | Confirming 2,000 lines took 1.1 s: each line looked through every receipt again. | Minor | **Fixed:** the supplier's lines are indexed once (0.03 s). |
+| N315 | The supplier's batch is kept on the notice but not on the receipt of a product without batches. The link is not e-mailed from the server. Messages come over HTTPS with the link's secret, not through the Peppol network (AS4). The supplier cannot send their invoice through the portal or print the dispatch advice. | Minor | Open. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

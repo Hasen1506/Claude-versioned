@@ -806,3 +806,10 @@ table.t td.num.bad { color: var(--critical-text); }
 .scan-steps li.done { color: var(--good); }
 .scan-input { font-size: 20px; padding: 10px 12px; width: 100%; box-sizing: border-box; }
 .scan-video { width: 100%; max-height: 260px; border-radius: 6px; background: #000; }
+
+/* Enterprise 7.2: the supplier portal, a page of its own outside the planner's shell */
+.portal { height: 100%; overflow: auto; background: var(--bg); }
+.portal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; max-width: 1200px; margin: 0 auto;
+  padding: 24px 16px 8px; border-bottom: var(--rule) solid var(--ink); }
+.portal-head h1 { margin: 4px 0 6px; font-size: 22px; text-wrap: balance; }
+.portal > .content { max-width: 1200px; margin: 0 auto; }

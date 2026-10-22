@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from datetime import date
 
 from ..model import Dataset
-from . import PortalError, PortalReport, _line, _name, dispatch, respond
+from . import PortalError, PortalReport, _line, _lines, _name, dispatch, respond
 
 CBC = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
 CAC = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
@@ -210,8 +210,9 @@ def read_order_response(ds: Dataset, text: str | bytes) -> tuple[str, str, list[
             lines = [{"order": r.id} for r in ds.receipts if r.po == po.id]
         else:
             raise PortalError(f"the response changes order {po_id} but names no lines")
+    index = {r.id: r for r in _lines(ds, po.supplier)}
     for w in lines:
-        _line(ds, po.supplier, w["order"])
+        _line(ds, po.supplier, w["order"], index)
     return po.supplier, _text(root, "cbc:ID"), lines
 
 

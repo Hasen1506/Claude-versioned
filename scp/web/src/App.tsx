@@ -39,6 +39,7 @@ const Machines = lazy(() => import("./pages/Machines").then((m) => ({ default: m
 const Capacity = lazy(() => import("./pages/Capacity").then((m) => ({ default: m.Capacity })));
 const History = lazy(() => import("./pages/History").then((m) => ({ default: m.History })));
 const Connections = lazy(() => import("./pages/Connections").then((m) => ({ default: m.Connections })));
+const SupplierPortal = lazy(() => import("./pages/SupplierPortal").then((m) => ({ default: m.SupplierPortal })));
 
 /** Open a dataset and calculate everything, so no page opens empty. */
 function openAndPlan(ds: Dataset) {
@@ -50,10 +51,12 @@ function openAndPlan(ds: Dataset) {
 export function App() {
   const route = useRoute();
   const ds = useStore((s) => s.dataset);
+  const supplier = route[0] === "portal" && !!route[1];   // a supplier on their link: no company of ours is opened
   useEffect(() => {
+    if (supplier) return;
     store.restore();
     if (store.get().dataset) void store.planAll();
-  }, []);
+  }, [supplier]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -72,6 +75,9 @@ export function App() {
   const item = ds ? navItemFor(page) : undefined;
   const [navOpen, setNavOpen] = useState(false);   // phones: the rail opens over the page from the Menu button
   useEffect(() => setNavOpen(false), [route.join("/")]);
+  if (supplier) {
+    return <Suspense fallback={<p className="faint">Opening your orders…</p>}><SupplierPortal token={route[1]} /></Suspense>;
+  }
   return (
     <div className={`app ${navOpen ? "nav-open" : ""}`}>
       <TopBar navOpen={navOpen} onNav={() => setNavOpen((o) => !o)} />

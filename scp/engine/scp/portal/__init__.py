@@ -56,8 +56,8 @@ def _lines(ds: Dataset, supplier: str) -> list[ScheduledReceipt]:
     return out
 
 
-def _line(ds: Dataset, supplier: str, lid: str) -> ScheduledReceipt:
-    r = next((x for x in _lines(ds, supplier) if x.id == lid), None)
+def _line(ds: Dataset, supplier: str, lid: str, index: dict[str, ScheduledReceipt] | None = None) -> ScheduledReceipt:
+    r = (index if index is not None else {x.id: x for x in _lines(ds, supplier)}).get(lid)
     if r is None:
         raise PortalError(f"{lid} is not an open line of an order sent to {_name(ds, supplier)}")
     return r
@@ -168,8 +168,9 @@ def respond(ds: Dataset, supplier: str, lines: list[dict], reference: str = "") 
     if not lines:
         raise PortalError("say which lines you confirm")
     per_po: dict[str, list[dict]] = defaultdict(list)
+    index = {x.id: x for x in _lines(ds, supplier)}
     for w in lines:
-        r = _line(ds, supplier, str(w.get("order") or ""))
+        r = _line(ds, supplier, str(w.get("order") or ""), index)
         per_po[r.po or ""].append({**w, "id": r.id})
     said = []
     for po, ws in per_po.items():
@@ -254,8 +255,14 @@ def dispatch(ds: Dataset, supplier: str, lines: list[dict], shipped_on: date | N
     out: list[NoticeLine] = []
     arrive: list[date] = []
     upd: dict[str, ScheduledReceipt] = {}
+    index = {x.id: x for x in _lines(ds, supplier)}
+    on_way: dict[str, list[tuple[date, float]]] = defaultdict(list)
+    for n in ds.shipping_notices:
+        if n.received_on is None and not n.cancelled:
+            for x in n.lines:
+                on_way[x.order].append((n.arrives_on, x.qty))
     for w in lines:
-        r = _line(ds, supplier, str(w.get("order") or ""))
+        r = _line(ds, supplier, str(w.get("order") or ""), index)
         if r.id in upd:
             raise PortalError(f"{r.id} is on the notice twice")
         ordered = r.ordered_qty if r.ordered_qty is not None else r.qty
@@ -274,7 +281,7 @@ def dispatch(ds: Dataset, supplier: str, lines: list[dict], shipped_on: date | N
                               expires_on=date.fromisoformat(exp) if isinstance(exp, str) and exp else exp or None))
         when = arrives_on or _arrival(ds, supplier, r, day)
         arrive.append(when)
-        upd[r.id] = _reconfirm(r, _on_the_way(ds, r.id), total, new=(when, q))
+        upd[r.id] = _reconfirm(r, on_way.get(r.id, []), total, new=(when, q))
     if arrives_on is not None and arrives_on < day:
         raise PortalError("goods cannot arrive before they leave")
     nid = _next_id(ds)
