@@ -47,7 +47,7 @@ test("golden path: example opens planned → home → network → data check →
   // the map is a tab of Set up
   await page.locator('.rail a[href="#/setup"]').click();
   await page.locator('.section-tabs a[href="#/network"]').click();
-  await expect(page.locator(".net .node")).toHaveCount(12);
+  await expect(page.locator(".net .node")).toHaveCount(14);   // 1 plant, 2 DCs, 3 customers, 8 suppliers
   await page.selectOption('select[aria-label="Trace product"]', "KT-15");
   await expect(page.locator(".net .node.dim").first()).toBeVisible();
   await page.locator(".net .node", { hasText: "PLT-PUNE" }).click();
