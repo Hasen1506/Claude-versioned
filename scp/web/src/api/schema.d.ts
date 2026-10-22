@@ -2169,6 +2169,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/outside": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Outside
+         * @description Work done by suppliers outside our walls: third-party orders they ship straight to customers, and job-work
+         *     challans with the parts at job workers, their GST limits and the ITC-04 return.
+         */
+        post: operations["post_outside_api_outside_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/outside/act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Outside Action
+         * @description One step of work done outside: a third-party order taken, sent, dispatched or cancelled; parts sent to a job
+         *     worker, back processed or unused, written off, or the challan cancelled.
+         */
+        post: operations["post_outside_action_api_outside_act_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/outside/parts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Outside Parts
+         * @description What a production order's bill needs for what is left to make, less what is at job workers already.
+         */
+        post: operations["post_outside_parts_api_outside_parts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/actuals/production-usage": {
         parameters: {
             query?: never;
@@ -3717,6 +3779,174 @@ export interface components {
             scenarios: components["schemas"]["ScenarioIn-Output"][];
         };
         /**
+         * ChallanLine
+         * @description A part sent on the challan, at its value when it left (the taxable value GST asks the challan to show).
+         */
+        ChallanLine: {
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Value
+             * @description Value per unit when sent
+             */
+            value: number;
+            /**
+             * Capital Goods
+             * @description A mould, die or tool: three years to come back instead of one
+             * @default false
+             */
+            capital_goods: boolean;
+            /**
+             * Location
+             * @description The place it left
+             */
+            location: string;
+            /**
+             * Movements
+             * @description The issues that took it out (one per batch)
+             */
+            movements?: string[];
+        };
+        /** ChallanLineRow */
+        ChallanLineRow: {
+            /** Product */
+            product: string;
+            /** Product Name */
+            product_name: string;
+            /** Hsn */
+            hsn: string;
+            /** Unit */
+            unit: string;
+            /** Location */
+            location: string;
+            /** Qty */
+            qty: number;
+            /** Value */
+            value: number;
+            /** Capital Goods */
+            capital_goods: boolean;
+            /** Used */
+            used: number;
+            /** Unused */
+            unused: number;
+            /** Lost */
+            lost: number;
+            /** At Job Worker */
+            at_job_worker: number;
+            /**
+             * Due
+             * Format: date
+             */
+            due: string;
+            /** Days Left */
+            days_left: number;
+        };
+        /** ChallanPartInput */
+        ChallanPartInput: {
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Capital Goods
+             * @default false
+             */
+            capital_goods: boolean;
+        };
+        /**
+         * ChallanReturn
+         * @description Something that came back from the job worker, or was written off there.
+         */
+        ChallanReturn: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Kind
+             * @description processed: the order's goods made from the parts (qty in the order's units); unused: parts back as sent; lost: parts the job worker spoiled or lost
+             * @enum {string}
+             */
+            kind: "processed" | "unused" | "lost";
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Reference
+             * @description The job worker's challan or invoice number
+             * @default
+             */
+            reference: string;
+            /**
+             * Movements
+             * @description What it posted: the order's receipt, or the issues taken back
+             */
+            movements?: string[];
+            /**
+             * Used
+             * @description processed: the parts it used, by product
+             */
+            used?: {
+                [key: string]: number;
+            };
+        };
+        /** ChallanRow */
+        ChallanRow: {
+            /** Id */
+            id: string;
+            /** Job Worker */
+            job_worker: string;
+            /** Job Worker Name */
+            job_worker_name: string;
+            /** Job Worker Gstin */
+            job_worker_gstin: string;
+            /** Ship From */
+            ship_from: string;
+            /** Ship From Name */
+            ship_from_name: string;
+            /** Ship From Gstin */
+            ship_from_gstin: string;
+            /** Order */
+            order: string;
+            /** Order Product */
+            order_product: string | null;
+            /** Order Product Name */
+            order_product_name: string;
+            /** Order Open */
+            order_open: boolean;
+            /**
+             * Sent On
+             * Format: date
+             */
+            sent_on: string;
+            /** Vehicle */
+            vehicle: string;
+            /** Charge */
+            charge: number;
+            /** Processed */
+            processed: number;
+            /** Status */
+            status: string;
+            /** Due */
+            due: string | null;
+            /** Days Left */
+            days_left: number | null;
+            /** Value Out */
+            value_out: number;
+            /** Value Sent */
+            value_sent: number;
+            /** Lines */
+            lines: components["schemas"]["ChallanLineRow"][];
+            /** Returns */
+            returns: components["schemas"]["ChallanReturn"][];
+            /** Note */
+            note: string;
+        };
+        /**
          * Changeover
          * @description Setup time when a resource switches from one setup group to another (≈ PP-DS setup matrix).
          *
@@ -4811,6 +5041,11 @@ export interface components {
             /** Freight Orders */
             freight_orders?: components["schemas"]["FreightOrder"][];
             transport?: components["schemas"]["TransportSettings"];
+            /** Third Party Orders */
+            third_party_orders?: components["schemas"]["ThirdPartyOrder"][];
+            /** Challans */
+            challans?: components["schemas"]["JobWorkChallan"][];
+            job_work?: components["schemas"]["JobWorkSettings"];
             /** Closed Orders */
             closed_orders?: components["schemas"]["ClosedOrder"][];
             /** Accuracy */
@@ -4908,6 +5143,37 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** DeemedSupply */
+        DeemedSupply: {
+            /** Challan */
+            challan: string;
+            /** Job Worker */
+            job_worker: string;
+            /** Job Worker Name */
+            job_worker_name: string;
+            /** Product */
+            product: string;
+            /** Product Name */
+            product_name: string;
+            /** Qty */
+            qty: number;
+            /** Value */
+            value: number;
+            /** Tax Rate */
+            tax_rate: number;
+            /** Tax */
+            tax: number;
+            /**
+             * Sent On
+             * Format: date
+             */
+            sent_on: string;
+            /**
+             * Due
+             * Format: date
+             */
+            due: string;
         };
         /** Deleted */
         Deleted: {
@@ -5271,6 +5537,47 @@ export interface components {
              * @default false
              */
             released: boolean;
+        };
+        /** DropShipView */
+        DropShipView: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Currency */
+            currency: string;
+            /** Orders */
+            orders: components["schemas"]["ThirdPartyRow"][];
+            /** Open Value */
+            open_value: number;
+            /** Margin */
+            margin: number;
+        };
+        /**
+         * DropShipment
+         * @description The supplier's dispatch advice: what left their place for the customer, and when.
+         */
+        DropShipment: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Reference
+             * @description Their dispatch note or lorry receipt number
+             * @default
+             */
+            reference: string;
+            /**
+             * Final
+             * @description Nothing more comes: closes the order even if short
+             * @default false
+             */
+            final: boolean;
         };
         /** DroppedSeries */
         DroppedSeries: {
@@ -7199,6 +7506,42 @@ export interface components {
             /** Field */
             field: string | null;
         };
+        /** Itc04Row */
+        Itc04Row: {
+            /** Table */
+            table: string;
+            /** Challan */
+            challan: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Job Worker */
+            job_worker: string;
+            /** Job Worker Gstin */
+            job_worker_gstin: string;
+            /** Job Worker State */
+            job_worker_state: string;
+            /** Their Challan */
+            their_challan: string;
+            /** Product */
+            product: string;
+            /** Description */
+            description: string;
+            /** Hsn */
+            hsn: string;
+            /** Uqc */
+            uqc: string;
+            /** Qty */
+            qty: number;
+            /** Value */
+            value: number | null;
+            /** Goods */
+            goods: string;
+            /** Kind */
+            kind: string;
+        };
         /** ItemChange */
         ItemChange: {
             /** Key */
@@ -7304,6 +7647,125 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+        };
+        /**
+         * JobWorkChallan
+         * @description Parts of a production order sent to a job worker (≈ components provided to the vendor and the delivery challan
+         *     for job work).
+         */
+        JobWorkChallan: {
+            /**
+             * Id
+             * @description The challan number (GST: up to 16 characters)
+             */
+            id: string;
+            /**
+             * Job Worker
+             * @description A supplier location
+             */
+            job_worker: string;
+            /**
+             * Ship From
+             * @description The plant the parts leave
+             */
+            ship_from: string;
+            /**
+             * Order
+             * @description The production order whose work is done outside
+             */
+            order: string;
+            /**
+             * Sent On
+             * Format: date
+             */
+            sent_on: string;
+            /** Lines */
+            lines: components["schemas"]["ChallanLine"][];
+            /**
+             * Charge
+             * @description Job charge per unit processed
+             * @default 0
+             */
+            charge: number;
+            /**
+             * Vehicle
+             * @description Vehicle number, printed on the challan
+             * @default
+             */
+            vehicle: string;
+            /** Returns */
+            returns?: components["schemas"]["ChallanReturn"][];
+            /** Closed On */
+            closed_on?: string | null;
+            /**
+             * Cancelled
+             * @default false
+             */
+            cancelled: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** JobWorkSettings */
+        JobWorkSettings: {
+            /**
+             * Inputs Days
+             * @description Inputs must come back within this many days (GST: one year)
+             * @default 365
+             */
+            inputs_days: number;
+            /**
+             * Capital Goods Days
+             * @description Capital goods must come back within this many days (GST: three years)
+             * @default 1095
+             */
+            capital_goods_days: number;
+            /**
+             * Warn Days
+             * @description A challan this close to its limit is named
+             * @default 30
+             */
+            warn_days: number;
+        };
+        /** JobWorkView */
+        JobWorkView: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Currency */
+            currency: string;
+            /** Company Gstin */
+            company_gstin: string;
+            /** Challans */
+            challans: components["schemas"]["ChallanRow"][];
+            /** Stock */
+            stock: components["schemas"]["StockAtJobWorker"][];
+            /** Deemed */
+            deemed: components["schemas"]["DeemedSupply"][];
+            /** To Send */
+            to_send: components["schemas"]["OrderToSend"][];
+            /** Period */
+            period: string;
+            /**
+             * Period Start
+             * Format: date
+             */
+            period_start: string;
+            /**
+             * Period End
+             * Format: date
+             */
+            period_end: string;
+            /** Itc04 */
+            itc04: components["schemas"]["Itc04Row"][];
+            /** Value Out */
+            value_out: number;
+            /** Deemed Tax */
+            deemed_tax: number;
         };
         /** KeepRequest */
         KeepRequest: {
@@ -9262,6 +9724,33 @@ export interface components {
              */
             qty: number;
         };
+        /** OrderToSend */
+        OrderToSend: {
+            /** Order */
+            order: string;
+            /** Product */
+            product: string;
+            /** Product Name */
+            product_name: string;
+            /** Location */
+            location: string;
+            /** Qty */
+            qty: number;
+            /** Start */
+            start: string | null;
+            /** Job Worker */
+            job_worker: string | null;
+            /** Job Worker Name */
+            job_worker_name: string;
+            /** Charge */
+            charge: number;
+            /** Parts */
+            parts: {
+                [key: string]: unknown;
+            }[];
+            /** On Challans */
+            on_challans: string[];
+        };
         /** OrderView */
         OrderView: {
             /** Id */
@@ -9413,6 +9902,85 @@ export interface components {
          * @enum {string}
          */
         OutlierMethod: "none" | "mad";
+        /** OutsideActionRequest */
+        OutsideActionRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "order" | "send_order" | "dispatch" | "cancel_order" | "send_parts" | "back_processed" | "back_unused" | "write_off" | "cancel_challan";
+            /** Id */
+            id?: string | null;
+            /** Customer */
+            customer?: string | null;
+            /** Supplier */
+            supplier?: string | null;
+            /** Product */
+            product?: string | null;
+            /** Qty */
+            qty?: number | null;
+            /** Wanted */
+            wanted?: string | null;
+            /** Price */
+            price?: number | null;
+            /** Cost */
+            cost?: number | null;
+            /**
+             * Customer Ref
+             * @default
+             */
+            customer_ref: string;
+            /** Production Order */
+            production_order?: string | null;
+            /** Parts */
+            parts?: components["schemas"]["ChallanPartInput"][] | null;
+            /** Charge */
+            charge?: number | null;
+            /**
+             * Vehicle
+             * @default
+             */
+            vehicle: string;
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
+            /**
+             * Final
+             * @default false
+             */
+            final: boolean;
+            /** Used */
+            used?: {
+                [key: string]: number;
+            } | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /** Date */
+            date?: string | null;
+        };
+        /** OutsideActionResponse */
+        OutsideActionResponse: {
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
+            /** Message */
+            message: string;
+            /** Id */
+            id: string | null;
+        };
+        /** OutsideView */
+        OutsideView: {
+            drop_ship: components["schemas"]["DropShipView"];
+            job_work: components["schemas"]["JobWorkView"];
+        };
         /**
          * OvertimeUse
          * @description Overtime as a choice of the schedule (N117).
@@ -9525,6 +10093,12 @@ export interface components {
             available: number;
             /** Scheduled */
             scheduled: boolean;
+        };
+        /** PartsRequest */
+        PartsRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Order */
+            order: string;
         };
         /** PasswordChange */
         PasswordChange: {
@@ -10430,6 +11004,12 @@ export interface components {
              * @description Tax on its sales (0.12 = 12 %); empty = the company's rate. A customer's own rate (an exemption, an export) goes before it
              */
             tax_rate?: number | null;
+            /**
+             * Hsn
+             * @description HSN code (4, 6 or 8 digits), printed on job-work challans and in ITC-04
+             * @default
+             */
+            hsn: string;
             /**
              * Setup Group
              * @description Sequence-dependent setup family (colour, allergen, grade…)
@@ -13942,6 +14522,30 @@ export interface components {
              */
             seconds: number;
         };
+        /** StockAtJobWorker */
+        StockAtJobWorker: {
+            /** Job Worker */
+            job_worker: string;
+            /** Job Worker Name */
+            job_worker_name: string;
+            /** Product */
+            product: string;
+            /** Product Name */
+            product_name: string;
+            /** Unit */
+            unit: string;
+            /** Qty */
+            qty: number;
+            /** Value */
+            value: number;
+            /** Challans */
+            challans: string[];
+            /**
+             * First Due
+             * Format: date
+             */
+            first_due: string;
+        };
         /** StockChange */
         StockChange: {
             /** Location */
@@ -14736,6 +15340,129 @@ export interface components {
             base: number;
             /** Amount */
             amount: number;
+        };
+        /**
+         * ThirdPartyOrder
+         * @description A sales line bought from a supplier who ships it straight to the customer, with the purchase order it makes.
+         */
+        ThirdPartyOrder: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Date
+             * Format: date
+             * @description Wanted by the customer on
+             */
+            date: string;
+            /**
+             * Price
+             * @description Net sale price per unit
+             */
+            price: number;
+            /**
+             * Supplier
+             * @description Who ships it
+             */
+            supplier: string;
+            /**
+             * Cost
+             * @description Purchase price per unit, in the supplier's currency
+             */
+            cost: number;
+            /**
+             * Currency
+             * @description Purchase currency; empty = the company's
+             */
+            currency?: string | null;
+            /**
+             * Customer Ref
+             * @description The customer's own order number
+             * @default
+             */
+            customer_ref: string;
+            /**
+             * Ordered On
+             * Format: date
+             */
+            ordered_on: string;
+            /**
+             * Sent On
+             * @description When the purchase order went to the supplier
+             */
+            sent_on?: string | null;
+            /** Shipments */
+            shipments?: components["schemas"]["DropShipment"][];
+            /**
+             * Cancelled
+             * @default false
+             */
+            cancelled: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** ThirdPartyRow */
+        ThirdPartyRow: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /** Customer Name */
+            customer_name: string;
+            /** Product */
+            product: string;
+            /** Product Name */
+            product_name: string;
+            /** Supplier */
+            supplier: string;
+            /** Supplier Name */
+            supplier_name: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Price */
+            price: number;
+            /** Cost */
+            cost: number;
+            /** Currency */
+            currency: string;
+            /** Margin */
+            margin: number | null;
+            /**
+             * Ordered On
+             * Format: date
+             */
+            ordered_on: string;
+            /** Sent On */
+            sent_on: string | null;
+            /** Shipped */
+            shipped: number;
+            /** Billed */
+            billed: number;
+            /** Supplier Invoiced */
+            supplier_invoiced: number;
+            /** Status */
+            status: string;
+            /** Late */
+            late: boolean;
+            /** Shipments */
+            shipments: components["schemas"]["DropShipment"][];
+            /** Customer Ref */
+            customer_ref: string;
+            /** Note */
+            note: string;
         };
         /**
          * ToBill
@@ -19982,6 +20709,111 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TransportActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_outside_api_outside_post: {
+        parameters: {
+            query?: {
+                as_of?: string | null;
+                period_start?: string | null;
+                period_end?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutsideView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_outside_action_api_outside_act_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OutsideActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutsideActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_outside_parts_api_outside_parts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PartsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
                 };
             };
             /** @description Validation Error */

@@ -711,11 +711,13 @@ def view(ds: Dataset, on: date | None = None, period_start: date | None = None,
         if not parts:
             continue
         ordered = rc.ordered_qty if rc.ordered_qty is not None else rc.qty
+        last = max((c for c in ds.challans if c.order == rc.id and not c.cancelled), key=lambda c: (c.sent_on, c.id),
+                   default=None)
+        who = sub.supplier if sub else (last.job_worker if last else None)     # the routing's, else who has it now
         to_send.append(OrderToSend(order=rc.id, product=rc.product, product_name=_name(ds, rc.product),
                                    location=rc.location, qty=round(max(0.0, ordered - _made(ds, rc.id, rc.product)), 6),
-                                   start=rc.start_date, job_worker=sub.supplier if sub else None,
-                                   job_worker_name=_name(ds, sub.supplier) if sub else "",
-                                   charge=sub.cost_per_unit if sub else 0.0, parts=parts,
+                                   start=rc.start_date, job_worker=who, job_worker_name=_name(ds, who) if who else "",
+                                   charge=sub.cost_per_unit if sub else (last.charge if last else 0.0), parts=parts,
                                    on_challans=on_challan.get(rc.id, [])))
     s0, s1, label = _half_year(day)
     if period_start and period_end:

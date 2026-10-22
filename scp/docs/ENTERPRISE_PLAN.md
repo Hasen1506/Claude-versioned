@@ -82,6 +82,9 @@ tendering by message, open). Phase 6 done.
 | 6.3 | No transport planning (§14) | Carriers, freight orders that group deliveries, load building by weight and volume, freight cost and its settlement |
 
 ## Phase 7: Wider supply and money
+Done: 7.1 (N305–N310; the job charge in cost and postings with 7.4, the GST portal file and e-way bill, stock at job
+workers in planning and third-party lines on sales orders, open).
+
 | # | Gap (guide §) | Build |
 |---|---|---|
 | 7.1 | No drop-ship; job work only adds days (§16.3, §10.1) | Third-party orders; job-work subcontracting with parts sent out as stock at the supplier (GST job-work challan) |

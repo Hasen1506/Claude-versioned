@@ -24,6 +24,7 @@ export interface NavGroup {
 const supply: NavPage = { id: "plan", label: "Supply plan", question: "What do we make, buy and move, and when?", run: "plan" };
 const promise: NavPage = { id: "promise", label: "Promise dates", question: "What can we promise each customer, and when?", run: "promise" };
 const actuals: NavPage = { id: "execution", label: "Stock & actuals", question: "What actually happened: goods received, used and shipped, and the stock on hand?", run: "actuals" };
+const buying: NavPage = { id: "buying", label: "Buying", question: "What should we order, from whom, and where are our orders?", run: "purchasing" };
 const setup: NavPage = { id: "setup", label: "Guided setup", question: "What is my company made of, and what's still missing?" };
 
 // Nine places to go, one per job: plan, serve customers, buy, run the stock, see the results, set up. A job with
@@ -45,7 +46,10 @@ export const NAV: NavGroup[] = [
       promise,
       { id: "selling", label: "Selling", question: "What do we ship and bill, and who owes us what?", run: "sales" },
     ] },
-    { id: "buying", label: "Buying", question: "What should we order, from whom, and where are our orders?", run: "purchasing" },
+    { ...buying, tabs: [
+      buying,
+      { id: "outside", label: "Job work & drop-ship", question: "What do suppliers make or ship for us outside our walls, and what is at job workers?", optional: true },
+    ] },
     { ...actuals, tabs: [
       actuals,
       { id: "warehouse", label: "Warehouse", question: "In which bin is each product, what goes where, and what do we pick?", optional: true },

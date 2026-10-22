@@ -1086,6 +1086,60 @@ fictional carriers:
 | N303 | The fill bars hid their own percentage: the text sat under the bar. This also affected the bins on the Warehouse page (6.1). | Minor | **Fixed** on both pages. |
 | N304 | One vehicle goes to one place: no multi-stop tours. A delivery bigger than one vehicle is named, not split. Freight is not added to a transfer's value in the books, nor to the cost to serve on Money. A settled bill is shown as to pay on *Carriers*, not in what we owe. A carrier's answer is recorded by hand. | Minor | Open: multi-stop tours and splitting, freight into the books and cost to serve (with 7.4), freight bills in payables, tendering by message. |
 
+### 7.1: Third-party orders and job work with the GST challan
+
+ENTERPRISE_PLAN 7.1, in a browser on the Kaveri Kitchenware example (*Buying → Job work & drop-ship*, then *Selling →
+Invoices* and *Buying → Invoices*), through the API, and through the engine at 500 challans and 2,000 orders. Kaveri
+gains two fictional suppliers and a firm order:
+* *Bhosari winding works*, a job worker who winds motors on Kaveri's parts, with a GSTIN.
+* *Vasai appliance works*, who make the 1.5 L kettle and ship it straight to marketplace warehouses.
+* MO-100461, 600 motors of 750 W to make in the week of 5 Oct, while the winding machines are full.
+
+The products carry HSN codes, and the plant and the company carry GSTINs.
+
+* *Job work. Input:* MO-100461's parts for Bhosari, at ₹18 a motor, on lorry MH12 AB 4521. *Processing:* the parts
+  are what the bill needs for 600 good motors:
+  * Copper wire: 0.55 kg ÷ 0.985 (motors lost) ÷ 0.98 (wire lost) = 341.86 kg.
+  * Lamination sets: 1 ÷ 0.985 ÷ 0.99 = 615.29, so 616 whole sets.
+
+  They leave Pune as issues to the order, so its backflush never takes them again, and are held on challan JW-00001.
+  The message says "Back by Tue 28 Sep 2027, or they count as supplied to the job worker (GST section 143)" and asks
+  for three printed copies. *Print challan* prints them: original, duplicate and triplicate, each with both GSTINs,
+  HSN codes, units and taxable values.
+* *Back.* 580 motors come back on Bhosari's challan BWW/114.
+  * They used 330.47 kg of wire and 594.78 sets, and are received on the order.
+  * "Job charge INR 10,440.00 due" (580 × 18), waiting on *Buying → Invoices* as a line of its own, matched like an
+    order line.
+  * Five sets come back unused into plant stock, which takes the issue back for five.
+  * Left at Bhosari: 11.40 kg of wire and 16.22 sets.
+  * *Production orders with work done outside* offers the last 20 motors' five sets to Bhosari again, at ₹18.
+* *Output:* stock at job workers by part and value; challans due within 30 days, and past the limit with the tax
+  due on their value; the go-live check names a challan past it (JOBWORK_DUE). *ITC-04* for Apr–Sep 2026 has two
+  tables:
+  * Table 4 lists what was sent: HSN 85441110, KGS, value.
+  * Table 5A lists what came back: 580 motors as processed goods on BWW/114, and 5 sets as inputs.
+
+  It downloads as CSV. A loss written off is not a return.
+* *Drop-ship. Input:* 500 kettles for *E-commerce marketplaces* by 16 Oct, shipped by Vasai at ₹742.
+  *Processing:* taken at the kettle's ₹1,190 with ₹2,24,000 margin; sent; Vasai's dispatch advice of 300 (LR 66012).
+  No stock moves and the plan does not change. *Output:*
+  * 300 × 1,190 = ₹3,57,000 waits on *Selling → Invoices*, and is billed there.
+  * 300 × 742 waits on *Buying → Invoices* for Vasai's invoice. A bill for 301 is blocked by the three-way match;
+    their delivery costs stay out of our stock's value.
+  * The last 195 close the order five short: the margin becomes 495 × 448 = ₹2,21,760.
+  * An open third-party order counts against the customer's credit limit.
+* *At 500 challans and 2,000 third-party orders:* the job-work page in 0.03 s, the drop-ship page in 0.04 s, what is
+  to bill in 0.01 s, what is to invoice in 0.04 s, the checks in 0.02 s.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N305 | A production order without reservations backflushed its whole bill, whatever was already issued to it. Parts sent to a job worker, or issued by hand, were taken a second time when the order was received. | Major | **Fixed:** the backflush takes what everything made so far needs, less what was issued to the order. A test catches it. |
+| N306 | Parts counted in whole units went out as fractions (615.29 lamination sets). After the last motors came back, 0.71 of a set stayed "at the job worker" for ever. | Major | **Fixed:** whole parts go out rounded up. The return that finishes the order uses up the bill's fraction of a part. The parts the job worker says they used can be given instead of the bill's. |
+| N307 | A third-party order closed short kept the margin of the quantity ordered. | Minor | **Fixed:** closed short, the margin is on what was shipped. |
+| N308 | An order partly at a job worker was offered again "not in the routing", with no job charge. | Minor | **Fixed:** the job worker and charge of its last challan are offered. |
+| N309 | The page header counted an order closed short, not yet billed, as open. | Minor | **Fixed:** open means still to send or to dispatch. |
+| N310 | The job charge is not in the motors' cost or stock value. Tax on deemed supplies is shown, not invoiced. ITC-04 is a CSV, not the GST portal's file. There is no e-way bill. The job worker's own challans are not checked. Planning does not count parts at a job worker as available for the order. A third-party order is a document of its own, not a line of a sales order, and is sent without a printed order. | Minor | Open: the job charge and postings with 7.4, the portal file and e-way bill, the planning view of stock at job workers, third-party lines on sales orders and their order document (with 7.2). |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

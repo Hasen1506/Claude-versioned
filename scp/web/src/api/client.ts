@@ -10,6 +10,7 @@ import type {
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
   WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, CyclePlan, PutawayProposal, PickList, WarehouseActionResponse,
   TransportView, TransportAction, TransportActionResponse,
+  OutsideView, OutsideAction, OutsideActionInput, OutsideActionResponse,
   WarehouseAction,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
@@ -356,6 +357,15 @@ export const api = {
   transportAct: (dataset: Dataset, action: TransportAction, extra: {
     order?: string; lanes?: string[]; billed?: number; bill?: string; date?: string;
   } = {}) => write<TransportActionResponse>("/api/transport/act", dataset, { action, ...extra }),
+  /** Work done outside: third-party orders suppliers ship to customers, job-work challans and ITC-04 (Enterprise 7.1). */
+  outside: (ds: Dataset, asOf?: string) =>
+    planPost<OutsideView>(`/api/outside${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ""}`, ds),
+  /** One step outside: a third-party order taken, sent, dispatched, cancelled; parts sent, back, written off. */
+  outsideAct: (dataset: Dataset, action: OutsideAction, extra: Partial<OutsideActionInput> = {}) =>
+    write<OutsideActionResponse>("/api/outside/act", dataset, { action, ...extra }),
+  /** What a production order's bill needs for what is left to make, less what is at job workers already. */
+  outsideParts: (dataset: Dataset, order: string) =>
+    withDataset<{ product: string; qty: number; location: string }[]>("/api/outside/parts", dataset, { order }),
   warehouse: (ds: Dataset, location: string) =>
     planPost<WarehouseView>(`/api/warehouse?location=${encodeURIComponent(location)}`, ds),
   /** Where the stock in no bin would be put away, by the place's rules (nothing is changed). */

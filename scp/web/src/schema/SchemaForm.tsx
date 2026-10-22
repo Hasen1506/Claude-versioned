@@ -65,6 +65,8 @@ const TITLE: Record<string, string> = {
   sales_order: "Held for sales order", order_stock: "Stock held for sales orders", delivery_check: "Check stock when a delivery is made", carry_forward: "Unused carries forward", single_delivery: "Ship the whole order together", working_day_fences: "Time fence and goods receipt in working days",
   pick_pack_workdays: "Picking and packing (working days)", loading_workdays: "Loading (working days)",
   transport_planning_workdays: "Booking the transport (working days)",
+  hsn: "HSN code (GST)", inputs_days: "Inputs back within (days)", capital_goods_days: "Capital goods back within (days)",
+  warn_days: "Name a challan this many days before its limit",
   reschedule_out_tolerance_days: "Early by up to this is left alone (days)",
   capacity_direction: "When a day is full, first try", capacity_max_early_days: "Build at most this many days ahead",
   earliness_weight: "Weight: an hour early", makespan_weight: "Weight: an hour to clear the window", start_rule: "Start rule",

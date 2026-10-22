@@ -294,6 +294,17 @@ def test_cancelled_before_dispatch_carries_no_margin(kaveri):
     assert row.status == "cancelled" and row.margin == 0 and dsh.view(ds).margin == 0 and "cancelled" in rep.message
 
 
+def test_an_order_partly_out_is_offered_again_to_the_same_job_worker(kaveri):
+    ds, _ = _sent(kaveri)
+    assert jw.view(ds).to_send == []                                   # everything it needs is out there
+    ds, _ = jw.receive(ds, "JW-00001", 580, on=date(2026, 10, 12))
+    ds, _ = jw.return_unused(ds, "JW-00001", "RM-STAMP", 5, on=date(2026, 10, 12))
+    (o,) = jw.view(ds).to_send
+    # 20 still to make need 20 × 1.0255 = 20.51 sets; 616 − 594.78 − 5 = 16.22 are there: 4.29, five whole ones
+    assert (o.order, o.qty, o.job_worker, o.charge) == ("MO-100461", 20, "SUP-WIND", 18)
+    assert o.parts == [{"product": "RM-STAMP", "qty": 5, "location": "PLT-PUNE"}]
+
+
 def test_goods_back_after_parts_came_back_unused_never_take_the_gap_from_the_plant(kaveri):
     ds, _ = _sent(kaveri)
     ds, _ = jw.return_unused(ds, "JW-00001", "RM-STAMP", 100, on=date(2026, 10, 8))    # 516 sets left there
