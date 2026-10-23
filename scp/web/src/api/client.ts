@@ -8,7 +8,7 @@ import type {
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
   User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
-  WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, AccountingView, AccountingExport, IntercompanyView, IntercompanyAction, IntercompanyActionInput, IntercompanyActionResponse, CyclePlan, PutawayProposal, PickList, WarehouseActionResponse,
+  WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, PolicyView, PolicyApplyResponse, PolicyApplyInput, AccountingView, AccountingExport, IntercompanyView, IntercompanyAction, IntercompanyActionInput, IntercompanyActionResponse, CyclePlan, PutawayProposal, PickList, WarehouseActionResponse,
   TransportView, TransportAction, TransportActionResponse,
   OutsideView, OutsideAction, OutsideActionInput, OutsideActionResponse,
   PortalView, PortalAction, PortalActionInput, PortalActionResponse, PortalLink,
@@ -301,6 +301,11 @@ export const api = {
   /** Write the multi-echelon recommendation as fixed policies; keys "location|product", null = every stage that differs. */
   applyPlacement: (dataset: Dataset, keys: string[] | null) =>
     write<PlacementResponse>("/api/inventory/apply", dataset, { keys }),
+  /** Inventory policy (Enterprise 8.2): each product kept at a place with its class, rule, target and service. */
+  inventoryPolicy: (ds: Dataset) => planPost<PolicyView>("/api/inventory/policy", ds),
+  /** One policy for the chosen products at places, keys "location|product". */
+  inventoryPolicyApply: (dataset: Dataset, input: PolicyApplyInput) =>
+    write<PolicyApplyResponse>("/api/inventory/policy/apply", dataset, { ...input }),
   promise: (ds: Dataset) => planPost<PromiseResult>("/api/promise", ds),
   bop: (ds: Dataset) => planPost<PromiseResult>("/api/promise/bop", ds),
   promiseCheck: (dataset: Dataset, order: DemandRecord) =>

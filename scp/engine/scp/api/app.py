@@ -38,6 +38,7 @@ from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
 from ..inventory import InventoryResult, PlacementApplied, apply_placement, run_inventory
+from ..inventory.policy import PolicyError, PolicyView, apply_policy, policy_view
 from ..model import Dataset, DemandRecord, ForecastModelId, StockType
 from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
@@ -455,6 +456,41 @@ def post_inventory_apply(req: PlacementRequest) -> PlacementResponse:
     except KeyError as e:
         raise HTTPException(404, str(e.args[0])) from None
     return PlacementResponse(**answer(req.dataset, new), applied=info)
+
+
+@app.post("/api/inventory/policy", response_model=PolicyView)
+def post_inventory_policy(ds: PlanData) -> PolicyView:
+    """Inventory policy (Enterprise 8.2): every product kept at a place with its ABC-XYZ class, rule, review, service
+    target beside its class's suggestion, safety stock, reorder point and the one suggested, and the service achieved."""
+    return policy_view(ds)
+
+
+class PolicyApplyRequest(Out):
+    dataset: PlanData
+    keys: list[str]                                  # "location|product"
+    method: Literal["none", "fixed", "days_of_supply", "service_level", "fill_rate"] | None = None
+    service_level: float | Literal["suggested"] | None = None
+    days: float | None = None
+    qty: float | None = None
+    review_period_days: float | None = Field(None, ge=0, le=365)
+    reorder_point: Literal["suggested"] | None = None
+
+
+class PolicyApplyResponse(Out):
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
+    message: str
+
+
+@app.post("/api/inventory/policy/apply", response_model=PolicyApplyResponse)
+def post_inventory_policy_apply(req: PolicyApplyRequest) -> PolicyApplyResponse:
+    keys = [(k.split("|", 1)[0], k.split("|", 1)[1]) for k in req.keys if "|" in k]
+    try:
+        new, msg = apply_policy(req.dataset, keys, method=req.method, service_level=req.service_level, days=req.days,
+                                qty=req.qty, review_period_days=req.review_period_days, reorder_point=req.reorder_point)
+    except PolicyError as e:
+        raise HTTPException(422, str(e)) from None
+    return PolicyApplyResponse(**answer(req.dataset, new), message=msg)
 
 
 @app.post("/api/sop", response_model=SopResult)

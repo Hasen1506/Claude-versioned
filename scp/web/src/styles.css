@@ -574,6 +574,7 @@ tr.total td { font-weight: 800; border-top: 1.5px solid var(--ink); }
 .age-bar > span { display: block; height: 100%; background: var(--series-1); }
 .age-bar > span.late { background: var(--critical); }
 .neg-text { color: var(--critical-text); font-weight: 700; }
+.warn-text { color: var(--warning-text); }
 td.nowrap, .nowrap { white-space: nowrap; }
 
 /* ---- proof: end-to-end scenarios with hand-derived answers ---- */

@@ -1281,6 +1281,37 @@ books, goods in transit, customers, suppliers, GR/IR, group companies) agreed at
 | N325 | Nothing was settled between the companies of the group (N320). | Minor | **Fixed:** an inter-company invoice is settled from its row (the buyer pays, or the seller pays a credit note back). Each company shows what the others owe it and what it owes. A settled invoice cannot be cancelled. |
 | N326 | The journal's residual line on a sales, purchase or inter-company document hid mistakes in it (a mutation test showed it). | Minor | **Fixed:** anything a money document leaves over goes to the suspense account and the page says so. |
 | N327 | A sales invoice shipped from a place of another company of the group is numbered in the main company's series and printed with its GSTIN. Duty and freight taken into stock wait for customs and forwarders' bills that are not entered here (only carriers' freight bills are). A cancelled document drops out of the journal instead of being reversed, so a file already in Tally needs the cancellation by hand. There is no year-end closing. The Tally file is checked for its structure, not imported into Tally. | Minor | Open. |
+| N328 | On the Problems list, an owner typed and "Seen" clicked straight after could lose the acknowledgement: each change wrote back the list it started from, so the owner's answer, arriving last, put the item back to open (seen in CI). | Serious | **Fixed.** Changes go one at a time, each applied to the list as it stands when its answer comes; a browser test holds the owner's answer back to make it come last. |
+
+### 8.2: Inventory policy
+
+ENTERPRISE_PLAN 8.2 and docs/CONFORMANCE.md §1, on the Kaveri Kitchenware example (*Supply → Inventory policy*), in the
+browser, and at 5,000 products × 20 places.
+
+* *Input:*
+  * Kaveri as it ships: 20 products kept at places, each with its own safety stock (8 for a service level, 1 for a
+    fill rate, 5 in days of cover, 2 fixed, 4 none), all planned by MRP.
+  * Classed by annual usage value and by the variability the safety stock uses: 11 AX, 5 BX, 4 CX.
+* *Processing:*
+  * The page is found from the menu: *Supply*, then its *Inventory policy* tab (the multi-echelon page beside it is
+    now *Buffer placement*).
+  * Class AX chosen and given its suggested target in one step.
+* *Output:*
+  * Before: four distribution-centre products had a 97 % target where their class suggests 98 %. The Bhiwandi 500 W
+    mixer grinder arrived in full by the requested date on 4 of its 9 customer orders (44 %) against 97 %.
+  * After: five targets set to 98 %; the six AX products whose safety stock is in days of cover or fixed are named as
+    left alone; no target is below its class's suggestion; the Bhiwandi mixer grinder's safety stock grows from 209.
+  * At 5,000 × 20: 11,635 rows in 4.2 s (7.9 MB); the table shows 500 at a time with a search.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N329 | Inventory policy was not presented as one: the safety stock, lot size and reorder point were on *Products at places* one product at a time, placement on an optional *Buffers* tab, ABC-XYZ only on Demand, and no page used the words. | Serious | **Fixed.** *Inventory policy* under Supply: class, rule ((s, Q), (s, S), MRP, DDMRP), review, target beside the class's suggestion, safety stock, reorder point and the suggested one, cover and the service achieved. |
+| N330 | No product's service achieved was shown against its target: OTIF was per order and customer only. | Serious | **Fixed.** The share of the place's customer orders delivered in full by the requested date, per product and per class. On Kaveri it shows the Bhiwandi mixer grinder at 44 % against 97 %. |
+| N331 | A class could not be given a policy: a target, method or review period was set product by product. | Serious | **Fixed.** Choose products or a class and give them a method, a target (or each its class's suggestion), a review period and the suggested reorder point in one step. |
+| N332 | The reorder point was typed by hand with nothing to say what it should be. | Minor | **Fixed.** s = d̄·(L + R) + SS beside it, a note when it is more than 10 % away, and a step that sets it. |
+| N333 | A fill-rate target would have been compared with a class's cycle service level, and a target given to a product whose safety stock is in days of cover would have changed nothing silently. | Minor | **Fixed.** The two kinds of target are shown and counted apart; products whose safety stock is not set by a target are left and named. |
+| N334 | At 5,000 × 20 the message named every product left alone and the table drew 11,635 rows. | Minor | **Fixed.** Five named and the rest counted; 500 rows with a search. |
+| N335 | Periodic review is only in the safety-stock formula: orders are not placed on a review calendar. Safety stock for slow, lumpy demand uses the normal approximation. There is no cost of a shortage to choose a target by cost, and no single-period (season) buy. | Minor | Open: CONFORMANCE I7, I18 (next in 8.2's list); I23 and I24 in IDEAS.md. |
 
 ## Found in the second reality check (after Phase E)
 
@@ -1322,7 +1353,6 @@ on a desktop and at phone width. Phases F–J are the proposal at the end of thi
 What held up: the network builder, product wizard, stock and demand uploads (once the columns matched), the
 checklist, plan everything, requisitions to a purchase order with a late confirmation that planning used at once, the
 roll-forward report, and every page at phone width except *Machines & shifts* (no page scrolls sideways).
-| N328 | On the Problems list, an owner typed and "Seen" clicked straight after could lose the acknowledgement: each change wrote back the list it started from, so the owner's answer, arriving last, put the item back to open (seen in CI). | Serious | **Fixed.** Changes go one at a time, each applied to the list as it stands when its answer comes; a browser test holds the owner's answer back to make it come last. |
 
 ### Proposed next phases
 

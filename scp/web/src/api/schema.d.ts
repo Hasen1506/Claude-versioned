@@ -1759,6 +1759,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/inventory/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Inventory Policy
+         * @description Inventory policy (Enterprise 8.2): every product kept at a place with its ABC-XYZ class, rule, review, service
+         *     target beside its class's suggestion, safety stock, reorder point and the one suggested, and the service achieved.
+         */
+        post: operations["post_inventory_policy_api_inventory_policy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/inventory/policy/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Inventory Policy Apply */
+        post: operations["post_inventory_policy_apply_api_inventory_policy_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sop": {
         parameters: {
             query?: never;
@@ -11683,6 +11721,153 @@ export interface components {
              */
             released_qty: number;
         };
+        /** PolicyApplyRequest */
+        PolicyApplyRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Keys */
+            keys: string[];
+            /** Method */
+            method?: ("none" | "fixed" | "days_of_supply" | "service_level" | "fill_rate") | null;
+            /** Service Level */
+            service_level?: number | "suggested" | null;
+            /** Days */
+            days?: number | null;
+            /** Qty */
+            qty?: number | null;
+            /** Review Period Days */
+            review_period_days?: number | null;
+            /** Reorder Point */
+            reorder_point?: "suggested" | null;
+        };
+        /** PolicyApplyResponse */
+        PolicyApplyResponse: {
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
+            /** Message */
+            message: string;
+        };
+        /** PolicyCell */
+        PolicyCell: {
+            /** Cell */
+            cell: string;
+            /** Rows */
+            rows: number;
+            /** Safety Stock Value */
+            safety_stock_value: number;
+            /** Suggested */
+            suggested: number | null;
+            /** Targets */
+            targets: number[];
+            /** Orders */
+            orders: number;
+            /** Served */
+            served: number;
+            /** Achieved */
+            achieved: number | null;
+        };
+        /** PolicyRow */
+        PolicyRow: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Abc */
+            abc: string;
+            /** Xyz */
+            xyz: string | null;
+            /** Cv */
+            cv: number | null;
+            /** Cv From */
+            cv_from: string;
+            /** Usage Value */
+            usage_value: number;
+            /** Rule */
+            rule: string;
+            /** Rule Label */
+            rule_label: string;
+            /** Lot */
+            lot: string;
+            /** Order Qty */
+            order_qty: number | null;
+            /** Order Up To */
+            order_up_to: number | null;
+            /** Review Days */
+            review_days: number;
+            /** Method */
+            method: string;
+            /** Target */
+            target: number | null;
+            /** Target Kind */
+            target_kind: string;
+            /** Target From */
+            target_from: string;
+            /** Suggested */
+            suggested: number | null;
+            /** Mean Daily */
+            mean_daily: number;
+            /** Lead Time Days */
+            lead_time_days: number;
+            /** Lead Time Std Days */
+            lead_time_std_days: number;
+            /** Safety Stock */
+            safety_stock: number;
+            /** Safety Stock Value */
+            safety_stock_value: number;
+            /** Reorder Point */
+            reorder_point: number | null;
+            /** Suggested Reorder Point */
+            suggested_reorder_point: number | null;
+            /** On Hand */
+            on_hand: number;
+            /** Cover Days */
+            cover_days: number | null;
+            /** Orders */
+            orders: number;
+            /** Served */
+            served: number;
+            /** Achieved */
+            achieved: number | null;
+            /** Notes */
+            notes: string[];
+        };
+        /** PolicyView */
+        PolicyView: {
+            /** Ok */
+            ok: boolean;
+            /** Currency */
+            currency: string;
+            /** Window Days */
+            window_days: number;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Rows */
+            rows: components["schemas"]["PolicyRow"][];
+            /** Cells */
+            cells: components["schemas"]["PolicyCell"][];
+            /**
+             * Safety Stock Value
+             * @default 0
+             */
+            safety_stock_value: number;
+            /**
+             * Below Suggestion
+             * @default 0
+             */
+            below_suggestion: number;
+            /**
+             * Reorder Off
+             * @default 0
+             */
+            reorder_off: number;
+            /**
+             * Short Of Target
+             * @default 0
+             */
+            short_of_target: number;
+        };
         /** PoolingRow */
         PoolingRow: {
             /** Product */
@@ -21309,6 +21494,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlacementResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_inventory_policy_api_inventory_policy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_inventory_policy_apply_api_inventory_policy_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyApplyResponse"];
                 };
             };
             /** @description Validation Error */

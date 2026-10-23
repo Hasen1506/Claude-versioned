@@ -160,3 +160,9 @@ customers at unit value, on-hand, customer invoices and supplier invoices with t
 on 9 Oct 2026. Not built yet:
 - **Targets for the working-capital measures (low, S).** They are ungraded until a company sets a target. A
   suggested target from the company's own last quarter would grade them from day one.
+
+## Inventory policy (CONFORMANCE §1)
+- **A cost of a shortage.** A cost per unit short (or per order late) on the product, so a target can be chosen where
+  the next point of service costs more in stock than it saves in shortages, instead of from the ABC-XYZ table.
+- **A single-period buy.** For a season's or an event's stock bought once (newsvendor): the quantity where the chance
+  of selling the last unit equals underage ÷ (underage + overage) cost.

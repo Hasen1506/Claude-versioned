@@ -24,7 +24,7 @@ export function Inventory({ route }: { route: string[] }) {
   const view = ((route[1] as View) || "overview") as View;
 
   const head = (
-    <StageHeader title="Buffers" kicker="Where to hold safety stock across the network, and how much, for the service you promise customers."
+    <StageHeader title="Buffer placement" kicker="Where to hold safety stock across the network, and how much, for the service you promise customers. Each product's own policy is on Inventory policy."
       how={<>The guaranteed-service model (<Term t="MEIO" />) tries every placement of buffers along each product's path and keeps the one
         that is cheapest to hold for the <Term t="Service level">service level</Term> promised to customers. <Term t="DDMRP" /> sizes
         decoupling buffers with red, yellow and green zones. Pooling shows what holding stock in fewer places would save.</>}

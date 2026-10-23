@@ -19,6 +19,7 @@ const Execution = lazy(() => import("./pages/Execution").then((m) => ({ default:
 const Warehouse = lazy(() => import("./pages/Warehouse").then((m) => ({ default: m.Warehouse })));
 const Transport = lazy(() => import("./pages/Transport").then((m) => ({ default: m.Transport })));
 const Group = lazy(() => import("./pages/Group").then((m) => ({ default: m.Group })));
+const InventoryPolicy = lazy(() => import("./pages/InventoryPolicy").then((m) => ({ default: m.InventoryPolicy })));
 const Accounts = lazy(() => import("./pages/Accounts").then((m) => ({ default: m.Accounts })));
 const Outside = lazy(() => import("./pages/Outside").then((m) => ({ default: m.Outside })));
 const Scan = lazy(() => import("./pages/Scan").then((m) => ({ default: m.Scan })));
@@ -124,6 +125,7 @@ export function App() {
           : page === "finance" ? <Finance route={route} />
           : page === "group" ? <Group route={route} />
           : page === "accounts" ? <Accounts route={route} />
+          : page === "policy" ? <InventoryPolicy route={route} />
           : page === "tower" ? <Tower route={route} />
           : page === "versions" ? <Versions />
           : page === "whatif" ? <WhatIf />

@@ -86,7 +86,7 @@ SESSION_COOKIE, CSRF_COOKIE, CSRF_HEADER = "scp_session", "scp_csrf", "x-csrf-to
 # the cost in units of one anonymous call (roadmap D): what is not listed costs 1
 ANON_COSTS: dict[str, int] = {
     "/api/plan": 20, "/api/plan/trace": 10, "/api/schedule": 30, "/api/schedule/compare": 40, "/api/sop": 20,
-    "/api/forecast": 10, "/api/inventory": 10, "/api/finance": 10, "/api/capacity/level": 10, "/api/compare": 40,
+    "/api/forecast": 10, "/api/inventory": 10, "/api/inventory/policy": 5, "/api/finance": 10, "/api/capacity/level": 10, "/api/compare": 40,
     "/api/promise": 5, "/api/promise/bop": 5, "/api/promise/check": 5, "/api/tower": 10, "/api/actuals": 5,
     "/api/purchasing": 5, "/api/sales": 5, "/api/network": 2, "/api/validate": 1,
     "/api/whatif": 80,                       # roadmap E: up to four full plans in one call
