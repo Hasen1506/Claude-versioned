@@ -85,11 +85,11 @@ test("the storekeeper: Pune's goods in and out for Thursday, then Delhi's goods 
   // the 750 W grinder run (was MO-0018-01) finishes Thu 1 Oct: confirmed, its parts issued
   const run = page.getByRole("row", { name: /was MO-0018-01/ });
   await run.getByRole("button", { name: /^Receive / }).click();
-  await expect(page.locator(".banner.info").first()).toContainText(/1,650 made at Pune plant \(Chakan\) on Thu 1 Oct \(complete\); 5 parts issued/, { timeout: 45_000 });
+  await expect(page.locator(".banner.info").first()).toContainText(/1,650 Mixer grinder 750 W made at Pune plant \(Chakan\) on Thu 1 Oct \(complete\); 5 parts issued/, { timeout: 45_000 });
   // and the transfer of them to Bhiwandi (was TO-0012-01) leaves the plant
   const transfer = page.getByRole("row", { name: /was TO-0012-01/ });
   await transfer.getByRole("button", { name: /^Ship / }).click();
-  await expect(page.locator(".banner.info").first()).toContainText(/1,067 shipped from Pune plant \(Chakan\).*1,067 now in transit to Bhiwandi DC \(Mumbai\)/, { timeout: 45_000 });
+  await expect(page.locator(".banner.info").first()).toContainText(/1,067 Mixer grinder 750 W shipped from Pune plant \(Chakan\).*1,067 now in transit to Bhiwandi DC \(Mumbai\)/, { timeout: 45_000 });
 
   // Delhi: the opening stock still waits in goods in
   await home("the storekeeper");
@@ -129,4 +129,7 @@ test("the owner: the month's S&OP cycle opened from the rail, its data step sign
 
   await rail("Performance");
   await expect(page.getByRole("tab", { name: /KPIs/, selected: true })).toBeVisible();
+  // the customer-service measures include the unit fill rate and the order cycle time (N361)
+  await expect(page.getByText("Fill rate (units)").first()).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByText("Order fulfilment cycle time").first()).toBeVisible();
 });

@@ -24,6 +24,26 @@ MIN_DAYS = 28
 TREND_WEEKS = 12                 # weekly points of the working-capital trend, the planning start the last
 
 
+def shipped_by_due(ds: Dataset) -> dict[str, float]:
+    """Per closed sales order, the units its deliveries in the journal shipped by its requested date (orders with no
+    delivery in the journal are left out)."""
+    due = {c.id: c.due_date for c in ds.closed_orders if c.kind == "sales"}
+    out: dict[str, float] = {}
+    for m in ds.movements:
+        if m.type is MovementType.SALE and m.reference in due:
+            out[m.reference] = out.get(m.reference, 0.0) + (m.qty if m.date <= due[m.reference] else 0.0)
+    return out
+
+
+def units_by_due(c: ClosedOrder, journal: dict[str, float]) -> float:
+    """What of a closed sales order was there by the requested date: from its deliveries in the journal, else all of
+    it when the last delivery was by then, else (how much is not known) none."""
+    units = journal.get(c.id)
+    if units is None:
+        units = c.delivered_qty if c.last_delivery is not None and c.last_delivery <= c.due_date else 0.0
+    return min(units, c.ordered_qty)
+
+
 def grade(value: float | None, target: float | None, direction: str, unit: str) -> str:
     if value is None or target is None or direction == "none":
         return "none"
@@ -191,6 +211,51 @@ class Kpis:
                      breakdown_by="customer", breakdown=brk,
                      note="Documentation, damage and invoicing are outside this system, so perfect order here is "
                           "the delivery part of the composite."))
+
+    def fill_and_cycle_time(self) -> None:
+        """The unit fill rate (SCOR RL.2.x: units there by the date asked ÷ units ordered) and the order fulfilment
+        cycle time (RS.1.1: order received to delivered, from the order's header date)."""
+        sales = [c for c in self.closed if c.kind == "sales" and not c.cancelled]
+        journal = shipped_by_due(self.ds)
+        num = den = 0.0
+        by: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        for c in sales:
+            u = units_by_due(c, journal)
+            num += u
+            den += c.ordered_qty
+            by[c.location][0] += u
+            by[c.location][1] += c.ordered_qty
+        brk = [KpiRow(label=k, value=v[0] / v[1] if v[1] > EPS else None, numerator=v[0], denominator=v[1])
+               for k, v in sorted(by.items())]
+        self.add(Kpi(id="fill_rate", name="Fill rate (units)", unit="ratio", direction="up",
+                     definition="Units delivered by the customer's requested date ÷ units ordered, over the sales "
+                                "orders closed in the window (cancelled ones left out)",
+                     source="Closed-order log; the deliveries in the journal split an order delivered partly late",
+                     value=num / den if den > EPS else None, numerator=num, denominator=den, n=len(sales),
+                     breakdown_by="customer", breakdown=brk,
+                     note="" if sales else "No sales orders closed in the window yet."))
+        placed = {h.id: h.order_date for h in self.ds.sales_orders}
+        days: list[tuple[str, float]] = []
+        for c in sales:
+            head = (c.source_order or {}).get("order")
+            on = placed.get(head) if head else None
+            if on is not None and c.last_delivery is not None:
+                days.append((c.location, float((c.last_delivery - on).days)))
+        tot = sum(d for _, d in days)
+        per: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        for cus, d in days:
+            per[cus][0] += d
+            per[cus][1] += 1
+        self.add(Kpi(id="order_cycle_time", name="Order fulfilment cycle time", unit="days", direction="down",
+                     definition="Days from the order's date to its last delivery, averaged over the order lines closed "
+                                "in the window",
+                     source="Closed-order log and the sales order headers' order dates",
+                     value=tot / len(days) if days else None, numerator=tot, denominator=float(len(days)),
+                     n=len(days), breakdown_by="customer",
+                     breakdown=[KpiRow(label=k, value=v[0] / v[1], numerator=v[0], denominator=v[1])
+                                for k, v in sorted(per.items())],
+                     note="" if days else "No closed order line with an order date yet: orders taken on Customer "
+                                          "orders carry one."))
 
     # ---- supply -------------------------------------------------------------------------------------
     def supplier(self) -> None:

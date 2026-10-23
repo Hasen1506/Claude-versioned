@@ -127,6 +127,7 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     k.forecast()
     k.confirmation()
     k.otif()
+    k.fill_and_cycle_time()
     k.supplier()
     k.adherence()
     if plan.ok:
@@ -147,7 +148,7 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
         out.notes.append("The supply plan is blocked by readiness errors: plan-based KPIs and exceptions are missing.")
     k.ageing(live)
     order_ids = ["forecast_accuracy", "forecast_bias", "confirmation_rate", "otif_confirmed", "otif_requested",
-                 "perfect_order", "supplier_reliability", "schedule_adherence", "days_of_supply", "excess_obsolete",
+                 "perfect_order", "fill_rate", "order_cycle_time", "supplier_reliability", "schedule_adherence", "days_of_supply", "excess_obsolete",
                  "inventory_turns", "dio", "dso", "dpo", "cash_to_cash",
                  "plan_stability", "exception_ageing", "cost_to_serve"]
     out.kpis = sorted(k.out, key=lambda x: order_ids.index(x.id) if x.id in order_ids else 99)

@@ -13,6 +13,7 @@ import { go, href } from "../lib/router";
 import { store, useStore } from "../state/store";
 
 const SPREAD: Record<string, string> = { gamma: "gamma spread", poisson: "Poisson spread" };
+const ACHIEVED_IN: Record<string, string> = { cycles: "cycles without a miss", units: "units by the date asked", orders: "orders" };
 const METHOD: Record<string, string> = { none: "none", fixed: "a fixed quantity", days_of_supply: "days of cover",
   service_level: "for a cycle service level", fill_rate: "for a fill rate" };
 const key = (r: { location: string; product: string }) => `${r.location}|${r.product}`;
@@ -58,9 +59,11 @@ export function InventoryPolicy({ route }: { route: string[] }) {
       time is Poisson. The reorder point that keeps it is <b>s = d̄ · (L + R) + SS</b>.
       A product on a reorder point with a review period is ordered on review days only (every R days, Mondays unless
       another day is given): each order covers what falls short until the next review's order can arrive.
-      What is achieved is the share of the customer orders shipped from the place in the last {v?.window_days ?? 91} days
-      that arrived in full by the date the customer asked for. The numbers are the supply plan's own: the same demand
-      rate, lead time and safety stock.</>}
+      What is achieved is measured as the target is set, over the customer orders shipped from the place in the
+      last {v?.window_days ?? 91} days: against a cycle service level, the share of replenishment cycles (one receipt
+      to the next) in which every order arrived in full by the date the customer asked for; against a fill rate, the
+      share of the units ordered that arrived by then; with no target, the share of orders in full on time. The
+      numbers are the supply plan's own: the same demand rate, lead time and safety stock.</>}
     answer={v?.ok ? <>{plural(v.rows.length, "product")} kept at places; {v.below_suggestion
       ? `${plural(v.below_suggestion, "target")} below what its class suggests` : "every target at or above its class's suggestion"}
       {v.short_of_target ? `, ${v.short_of_target} short of its target` : ""}.</> : undefined} />;
@@ -76,13 +79,13 @@ export function InventoryPolicy({ route }: { route: string[] }) {
         <StatTile label="Safety stock held" value={money(v.safety_stock_value, cur)} sub="at unit value, every product at its place" />
         <StatTile label="Below their class" value={v.below_suggestion} sub="cycle service targets under the class's suggestion" />
         <StatTile label="Reorder points off" value={v.reorder_off} sub="more than 10 % from d̄·(L + R) + SS" />
-        <StatTile label="Short of their target" value={v.short_of_target} sub={`orders in full on time, last ${v.window_days} days`} />
+        <StatTile label="Short of their target" value={v.short_of_target} sub={`measured as each target is set, last ${v.window_days} days${v.not_measured ? `; ${v.not_measured} not measured (no receipt in the window)` : ""}`} />
       </div>
       {done && <div className="banner ok" role="status"><Badge sev="ok">Done</Badge>{done}</div>}
       <Panel title="By class" flush>
         <div className="table-wrap"><table className="t" aria-label="Classes">
           <thead><tr><th>Class</th><th className="num">Products</th><th className="num">Safety stock</th>
-            <th className="num">Suggested target</th><th>Targets set</th><th className="num">Achieved</th></tr></thead>
+            <th className="num">Suggested target</th><th>Targets set</th><th className="num">Orders on time</th></tr></thead>
           <tbody>{v.cells.map((c) => (
             <tr key={c.cell} className={`clickable${cell === c.cell ? " selected" : ""}`} onClick={() => go("policy", cell === c.cell ? "" : c.cell)}>
               <td><b>{c.cell}</b></td><td className="num">{c.rows}</td><td className="num">{money(c.safety_stock_value, cur)}</td>
@@ -132,7 +135,9 @@ function Row({ r, cur, chosen, onToggle }: { r: PolicyRow; cur: string; chosen: 
         {r.suggested_reorder_point != null && <div className="faint small">suggested {qty(r.suggested_reorder_point)}</div>}</td>
       <td className="num">{qty(r.on_hand)}{r.cover_days != null && <div className="faint small">{qty(r.cover_days)} days</div>}</td>
       <td className="num">{r.achieved != null ? <span className={short ? "neg-text" : ""}>{pct(r.achieved, 0)}</span> : <span className="faint">—</span>}
-        <div className="faint small">{r.orders ? `${r.served} of ${r.orders} orders` : "no orders"}</div></td>
+        <div className="faint small">{r.achieved_of > 0 ? `${qty(r.achieved_ok)} of ${qty(r.achieved_of)} ${ACHIEVED_IN[r.achieved_in] ?? r.achieved_in}`
+          : r.orders ? "cycles not measured" : "no orders"}</div>
+        {r.achieved_in !== "orders" && r.orders > 0 && <div className="faint small">{r.served} of {r.orders} orders on time</div>}</td>
     </tr>
   );
 }

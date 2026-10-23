@@ -37,7 +37,7 @@ Read against SPT ch. 4–7 and CPIM "inventory management". Audited 23 October 2
 | I17 | Intermittent demand: Croston / SBA / TSB forecast | `demand/models` | Demand | test_demand | there |
 | I18 | Safety stock for intermittent or lumpy demand (non-normal: Poisson, gamma, bootstrap) | `plan/safety` gamma (by mean and σ over L + R) and Poisson, for a cycle level and a fill rate (`safety_stock.distribution`) | Inventory policy: a note where demand over the lead time varies widely (CV over 0.5) with what a gamma spread would hold; *Give a policy* → demand spread | test_policy (hand-worked: the exponential's 4·ln 20 and 4·ln 10, Poisson s = 5 and the shortage sums); e2e inventory-policy (Chennai 5 HP pump, 18.3 → 21.3) | there (8.2): Buffer placement (multi-echelon) still sizes by the normal; no bootstrap from history |
 | I19 | Measured lead-time spread fed to safety stock | EP 4.4 | Buying → suppliers | test_demand_spread | there |
-| I20 | Achieved service against the target, per product at a place | `inventory/policy` from the closed-order log | Inventory policy → achieved, per product and class | test_policy (five orders: on time, late, short; a transfer not counted) | there (8.2): measured as orders in full by the requested date, the record kept; a cycle service level per replenishment cycle is not logged |
+| I20 | Achieved service against the target, per product at a place, measured as the target is set | `inventory/policy` from the closed-order log and the journal: replenishment cycles without a miss for a cycle level, units by the requested date for a fill rate (N359) | Inventory policy → achieved, per product; orders on time per class | test_policy (hand-worked: receipts cut the window into 3 cycles, 1 clean; 36 of 50 units, 40 with a split delivery in the journal) | there (8.5) |
 | I21 | Excess, obsolete and slow-moving stock | `tower/kpis` | Performance | test_tower | there |
 | I22 | Holding cost rate and ordering cost | settings `wacc` + `holding_spread`; `ordering_cost` on lot sizing and source | Settings; Products at places | test_mrp | there |
 | I23 | Cost of a shortage (to choose the service level by cost) | — | — | — | missing (the what-if sweep reads cost against service, but no shortage cost) |
@@ -306,3 +306,91 @@ controlling and finance basics the planning guide relies on (costing, valuation,
 At the audit: 16 of 20 there, 3 partial, 1 missing (F15). The plan says what it costs and earns, not what cash it
 needs and when: on Kaveri, four weeks of production and transfers are paid before the first customer pays.
 **After F15:** 17 of 20 there, 3 partial (F14, F17, F18), all in IDEAS.md.
+
+## 9. Capacity and scheduling
+
+Added in 8.5: the audit left capacity inside supply planning (M16, M17) and gave scheduling no rows. Read against
+CPIM "capacity management" and "production activity control", the S/4 guide's PP-DS (§8), and Pinedo, *Scheduling:
+Theory, Algorithms, and Systems*. Audited 23 October 2026.
+
+| # | Concept | Engine | Page and name | Oracle | Status |
+|---|---|---|---|---|---|
+| C1 | Work centres with shift calendars, breaks, efficiency and units in parallel | `ResourceClock`, `Resource` (B1) | Set up → Machines & shifts | test_capacity (hours by hand) | there |
+| C2 | Operations with setup, run, queue and move times; batch cycles | `schedule/core.OpSpec`, routings (B2, H2) | Set up → make | test_schedule, test_structure | there |
+| C3 | Capacity requirements per machine per day against what it has (CRP) | `plan/mrp` daily buckets | Supply → Levelling | test_capacity | there |
+| C4 | Rough-cut capacity per month (RCCP) | `sop/plan` resource rows | Supply → Capacity plan | test_sop (LP by hand) | there |
+| C5 | Levelling: moving load to earlier days within limits | `plan/level` | Supply → Levelling | test_capacity, e2e golden | there |
+| C6 | Capacity-constrained material plan (orders planned where there is room) | C3 | Supply plan | test_capacity_mrp | there |
+| C7 | Overtime and an added shift as decisions, with their cost | `sop` overtime, `capacity_add_hours_per_week` (P5) | Capacity plan; Machines & shifts | test_sop, test_planning_depth | there |
+| C8 | The binding limit and what one more hour is worth (shadow price) | `sop/lp` duals and ranging | Capacity plan → limits | test_sop (dual by hand) | there |
+| C9 | Finite scheduling forward from release and backward from due date | `schedule/heuristics` (EDD, backward) | Supply → Shop floor | test_schedule | there |
+| C10 | Dispatching rules: EDD, SPT, least slack, critical ratio | `heuristics` (EDD, SPT, slack, CR, campaign) | Shop floor → rule | test_schedule_ppds (CR 2 against 10 takes the long order first, where least slack takes the short one) | there (8.5, N362) |
+| C11 | Sequence-dependent setups: changeover matrix, setup groups, campaigns | `setup_rule`, campaign heuristic | Shop floor → changeovers | test_schedule | there |
+| C12 | Optimised sequence with a weighted objective (lateness, changeovers, earliness) | `schedule/optimize` (CP-SAT) | Shop floor → *Best possible* | test_schedule (checker on every result) | there |
+| C13 | Alternative machines; a tool or mould as a second resource; crews | `pin`, tools, `LabourDay` | Shop floor | test_schedule | there |
+| C14 | Frozen zone: the next hours keep their sequence | frozen zone (D1) | Shop floor | test_schedule | there |
+| C15 | Scheduling waits for parts; the schedule's dates go back into the plan and promises | C1, C2 of Phase C | Shop floor → apply | test_schedule, e2e golden | there |
+| C16 | Board: drag an order, see the change, keep or reset | web board (D5) | Shop floor | e2e golden (resequence → reset) | there |
+| C17 | Order release and confirmation with parts used (backflush or counted), scrap | `actuals/post.receive`, `scrap` | Stock & actuals → Goods in & out | test_actuals, e2e persona-day | there: order level, not per operation |
+| C18 | Measured yield against the bill of materials | `actuals/yields` | Stock & actuals | test_actuals | there |
+| C19 | Schedule adherence | `tower/kpis.schedule_adherence` | Performance → KPIs | test_tower | there |
+| C20 | OEE (availability × performance × quality) measured from what ran | a planning input only (`efficiency`) | Machines & shifts | — | partial: planned with, never measured |
+| C21 | Bottleneck scheduling (drum-buffer-rope: the constraint sets the pace, a time buffer before it) | — (the shadow price names the constraint) | — | — | missing |
+| C22 | Rate-based (repetitive) production: a line's rate per shift, takt | — | — | — | missing |
+
+**What this section says:** the scheduler is deep and every result is checked by an independent feasibility
+checker; 18 of 22 there, 2 partial, 2 missing at the audit. What a scheduler would miss is critical ratio (C10,
+cheap), OEE from records (C20) and rate-based lines (C22) for the kitchenware assembly kind of plant. **After C10:**
+19 of 22 there; C20, C21 and C22 to IDEAS.md.
+
+## 10. The S&OP process
+
+Added in 8.5: the audit gave the monthly process one row (D14). Read against the IBP S&OP process, Wallace & Stahl,
+*Sales & Operations Planning: The How-To Handbook*, and CPIM "sales and operations planning". Audited 23 October 2026.
+
+| # | Concept | Engine | Page and name | Oracle | Status |
+|---|---|---|---|---|---|
+| P1 | A monthly cycle of five steps (data, demand review, supply review, pre-S&OP, executive), each with an owner and a sign-off in order | `sop/cycle` (EP 4.1) | Plan → S&OP cycle | test_sop_cycle; e2e sop-cycle, persona-day | there |
+| P2 | Each signed step frozen as it was signed | version store | S&OP cycle → each step's version | test_sop_cycle | there |
+| P3 | Volume and revenue month by month against the budget | `cycle.figures` | S&OP cycle → figures | test_sop_cycle (hand-worked budget shares) | there |
+| P4 | By product family | `FamilyFigures` | S&OP cycle | test_sop_cycle | there |
+| P5 | Unconstrained demand beside the constrained supply plan, with the gap and the limits that cause it | `figures` supply steps, `limits`, `fill_rate` | S&OP cycle → supply review | test_sop_cycle | there |
+| P6 | Scenarios compared in the supply review (demand up, a shift added) | `sop` levers; stored versions as columns (EP 5.3) | Capacity plan; Versions | test_sop, test_whatif | there: compared on Capacity plan, not inside the cycle page |
+| P7 | Decisions recorded with the sign-off (minutes) | `MINUTES` for pre and exec | S&OP cycle | test_sop_cycle | there |
+| P8 | A horizon of 18 to 24 months, monthly | `sop` buckets over `settings.horizon_days` (182 on the examples) | Capacity plan | — | partial: the S&OP plan sees only the operational horizon |
+| P9 | Financial view: margin, inventory value and cash by month beside the volume plan | revenue only in the cycle; margin, stock and cash on Money | Money | test_finance | partial: the executive step shows revenue, not margin or stock |
+| P10 | The month's plan released to the operational plan (build-ahead targets) | `sop/release` | Capacity plan → release | test_sop | there |
+| P11 | Product review: new and dying products as a step | NPI rules, discontinuation exist in demand and MRP | Demand | — | missing as a step |
+| P12 | How well S&OP works: plan stability, forecast accuracy by family, the plan against what happened | `plan_stability`, forecast KPIs | Performance | test_tower | partial: not per cycle |
+
+**What this section says:** the process and its sign-offs are there; what an S&OP lead would object to first is P8.
+A plant that decides on a new press or a second supplier needs to see a year and more ahead, and the S&OP plan stops
+where the weekly plan stops. 7 of 12 there, 4 partial, 1 missing.
+
+## 11. Performance measures
+
+Added in 8.5. Read against SCOR level 1 (reliability, responsiveness, agility, cost, asset management) and the S/4
+guide's KPI list (§18.2). Audited 23 October 2026.
+
+| # | Concept | Engine | Page and name | Oracle | Status |
+|---|---|---|---|---|---|
+| K1 | Perfect order fulfilment (RL.1.1) | `perfect_order` | Performance → KPIs | test_tower | there |
+| K2 | OTIF to the requested and the confirmed date | `otif_requested`, `otif_confirmed` | KPIs | test_tower | there |
+| K3 | Confirmed on the requested date | `confirmation_rate` | KPIs | test_tower | there |
+| K4 | Forecast accuracy (1 − WMAPE) and bias | `forecast_accuracy`, `forecast_bias` | KPIs; Demand → Value add | test_tower, test_value_add | there |
+| K5 | Supplier delivery reliability | `supplier_reliability` | KPIs; Buying → suppliers | test_tower | there |
+| K6 | Schedule adherence | `schedule_adherence` | KPIs | test_tower | there |
+| K7 | Inventory turns, days of supply, DIO | `inventory_turns`, `days_of_supply`, `dio` | KPIs | test_tower (hand-worked) | there |
+| K8 | Cash-to-cash cycle (AM.1.1) with DSO and DPO | `cash_to_cash`, `dso`, `dpo` | KPIs; Money | test_tower | there |
+| K9 | Excess and obsolete stock | `excess_obsolete` | KPIs | test_tower | there |
+| K10 | Cost to serve | `cost_to_serve` | KPIs; Money | test_finance | there |
+| K11 | Plan stability and exception ageing | `plan_stability`, `exception_ageing` | KPIs | test_tower | there |
+| K12 | Inventory record accuracy | `actuals/cycle` (exact ÷ counted, by class) | Stock & actuals → cycle counts | test_valuation | there: not on the KPI page |
+| K13 | Order fulfilment cycle time (RS.1.1): order received to delivered | `order_cycle_time` (header's order date to last delivery) | KPIs → Customer service | test_tower (5 and 13 days: 9) | there (8.5, N361) |
+| K14 | Unit fill rate | `fill_rate` (units by the requested date ÷ ordered; the journal splits a partly late order) | KPIs → Customer service | test_tower (240 of 350; 300 of 350 with a split delivery) | there (8.5, N361) |
+| K15 | Upside flexibility and adaptability (AG.1.1–1.3) | the what-if sweep answers it on request | What-if | test_whatif | partial |
+| K16 | Total supply chain management cost (CO.1.001) | Money: purchase, conversion, transport, holding | Money | test_finance | partial: not one figure |
+
+**What this section says:** reliability, asset and cost measures are there with their definitions on the page;
+responsiveness (K13) and the unit fill rate (K14) were not. 12 of 16 there at the audit, 2 partial, 2 missing.
+**After K13 and K14:** 14 of 16 there, 2 partial (K15, K16).

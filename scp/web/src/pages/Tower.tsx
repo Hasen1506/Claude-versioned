@@ -18,7 +18,7 @@ type View = "kpis" | "inbox" | "worklist" | "ask" | "quality" | "settings";
 // The §18.2 set, grouped the way a weekly review reads it.
 const GROUPS: { title: string; ids: string[] }[] = [
   { title: "Demand", ids: ["forecast_accuracy", "forecast_bias"] },
-  { title: "Customer service", ids: ["confirmation_rate", "otif_confirmed", "otif_requested", "perfect_order"] },
+  { title: "Customer service", ids: ["confirmation_rate", "otif_confirmed", "otif_requested", "perfect_order", "fill_rate", "order_cycle_time"] },
   { title: "Supply & production", ids: ["supplier_reliability", "schedule_adherence"] },
   { title: "Inventory", ids: ["days_of_supply", "excess_obsolete"] },
   { title: "Working capital", ids: ["inventory_turns", "dio", "dso", "dpo", "cash_to_cash"] },

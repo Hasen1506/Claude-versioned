@@ -497,7 +497,7 @@ test("customer orders: check a new order → take it → change it → deliver p
   await page.getByRole("button", { name: "Deliver", exact: true }).click();
   await page.getByLabel("Quantity to deliver").fill("20");
   await page.getByRole("button", { name: "Post the delivery" }).click();
-  await expect(saved).toContainText("SO-88222: 20 delivered");
+  await expect(saved).toContainText("SO-88222: 20 Mixer grinder 500 W delivered");
   await expect(saved).toContainText("30 still open");
 
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -782,7 +782,7 @@ test("control tower: KPIs graded → drill into OTIF → worklist → assign & a
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/tower");
   await page.getByRole("button", { name: "Recalculate", exact: true }).click();
-  await expect(page.locator(".kpi-card")).toHaveCount(18);
+  await expect(page.locator(".kpi-card")).toHaveCount(20);
   // working capital: the example has no goods issues or invoices yet, so no number is shown, and the formula is stated
   const dso = page.getByRole("button", { name: /^Days sales outstanding \(DSO\):/ });
   await expect(dso.locator(".kpi-value")).toHaveText("—");

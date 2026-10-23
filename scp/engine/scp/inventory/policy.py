@@ -5,7 +5,10 @@ annual usage value (ABC) and by the variability its safety stock is sized with (
 R days); the rule — reorder point with a fixed quantity (s, Q), reorder point up to a maximum (s, S), time-phased MRP
 or a DDMRP buffer; the service target and where it comes from, beside the one its ABC-XYZ cell suggests; the safety
 stock the policy holds, the reorder point set and the one the numbers suggest (s = d̄·(L + R) + SS); and the service
-achieved: the share of its customer orders shipped from the place that were delivered in full by the requested date.
+achieved, measured as the target is set (N359): against a cycle service level, the share of replenishment cycles
+(from one receipt at the place to the next) in which every customer order shipped from it arrived in full by the
+requested date; against a fill rate, the share of the units ordered that arrived by then; with no target, the share
+of orders in full on time.
 
 The numbers are the planner's own: the demand rate, its variance, the lead time and its spread, the lot and the
 safety stock come from the functions supply planning and inventory optimisation use (scp.plan.rates), so this page
@@ -20,7 +23,7 @@ from datetime import date
 from pydantic import Field
 
 from ..demand.pipeline import service_level as cell_service_level
-from ..model import LocationType, LotSizePolicy, MrpType, SafetyStockMethod
+from ..model import LocationType, LotSizePolicy, MovementType, MrpType, SafetyStockMethod
 from ..model.common import Out
 from ..model.dataset import Dataset
 from ..model.master import review_days as first_review
@@ -30,7 +33,7 @@ from ..plan.leadtime import lead_time_std_days, nominal_lead_time_days
 from ..plan.safety import SSInputs, sigma_lt, statistical_ss
 from ..plan.rates import bucket_days, horizon_flows, node_role, policy_safety_stock, typical_lot
 from ..time import Buckets
-from ..tower.kpis import Kpis
+from ..tower.kpis import Kpis, shipped_by_due, units_by_due
 from ..validate import Issue, has_errors, validate
 
 EPS = 1e-9
@@ -82,7 +85,10 @@ class PolicyRow(Out):
     cover_days: float | None
     orders: int                           # closed customer orders shipped from here in the KPI window
     served: int                           # of them, delivered in full by the requested date
-    achieved: float | None
+    achieved: float | None                # measured as the target is set: of `achieved_of` `achieved_in`, `achieved_ok`
+    achieved_in: str = "orders"           # "cycles" (cycle service level) | "units" (fill rate) | "orders"
+    achieved_of: float = 0.0              # cycles with an order, units ordered, or orders
+    achieved_ok: float = 0.0              # cycles without a miss, units by the requested date, orders in full on time
     notes: list[str] = Field(default_factory=list)
 
 
@@ -108,6 +114,7 @@ class PolicyView(Out):
     below_suggestion: int = 0             # rows whose cycle service target is below their cell's suggestion
     reorder_off: int = 0                  # reorder-point rows whose s is more than 10 % from the suggestion
     short_of_target: int = 0              # rows whose achieved service is below the target
+    not_measured: int = 0                 # rows with a target and orders whose service could not be measured
 
 
 def _rule(lp) -> str:
@@ -119,6 +126,25 @@ def _rule(lp) -> str:
         rule = "sS" if lp.lot_sizing.policy is LotSizePolicy.MIN_MAX else "sQ"
         return "R" + rule if lp.reorder_point is not None and lp.safety_stock.review_period_days >= 0.5 else rule
     return "mrp"
+
+
+def _achieved(kind: str, orders: list[tuple[date, float, float, bool]], receipts: list[date], n: int, ok: int
+              ) -> tuple[str, float, float]:
+    """The service achieved, measured as the target is set: (what is counted, of how many, how many met)."""
+    if kind == "fill":
+        return "units", sum(o[1] for o in orders), sum(o[2] for o in orders)
+    if kind == "cycle":
+        # a replenishment cycle runs from one receipt to the next; an order belongs to the cycle its date falls in.
+        # With no receipt in the window the cycles cannot be told apart: nothing is measured
+        cuts = sorted(set(receipts))
+        if not cuts:
+            return "cycles", 0.0, 0.0
+        cycles: dict[int, bool] = {}
+        for d, _, _, met in orders:
+            i = sum(1 for c in cuts if c <= d)
+            cycles[i] = cycles.get(i, True) and met
+        return "cycles", float(len(cycles)), float(sum(cycles.values()))
+    return "orders", float(n), float(ok)
 
 
 def _xyz(cv: float | None, x: float, y: float) -> str | None:
@@ -142,13 +168,20 @@ def policy_view(ds: Dataset) -> PolicyView:
     # customer orders shipped from each place, as the OTIF figures count them
     k = Kpis(ds)
     served: dict[tuple[str, str], list[int]] = defaultdict(lambda: [0, 0])
+    shipped: dict[tuple[str, str], list[tuple[date, float, float, bool]]] = defaultdict(list)
+    journal = shipped_by_due(ds)
     for c in k.closed:
         if c.kind != "sales" or not c.counterparty:
             continue
         x = served[(c.counterparty, c.product)]
         x[0] += 1
-        if k._in_full(c) and c.last_delivery is not None and c.last_delivery <= c.due_date:
-            x[1] += 1
+        ok = k._in_full(c) and c.last_delivery is not None and c.last_delivery <= c.due_date
+        x[1] += ok
+        shipped[(c.counterparty, c.product)].append((c.due_date, c.ordered_qty, units_by_due(c, journal), ok))
+    receipts: dict[tuple[str, str], list[date]] = defaultdict(list)
+    for m in ds.movements:
+        if m.type is MovementType.RECEIPT and k.since <= m.date <= k.as_of:
+            receipts[(m.location, m.product)].append(m.date)
 
     kept = [lp for lp in ds.location_products
             if ds.location_type(lp.location) is not LocationType.CUSTOMER and node_role(ds, (lp.location, lp.product)) == "stocking"]
@@ -204,7 +237,12 @@ def policy_view(ds: Dataset) -> PolicyView:
         if flow.cv_source.get(n) == "default" and statistical:
             notes.append("its demand variability is the company default, not measured")
         o, ok = served.get(n, [0, 0])
-        achieved = ok / o if o else None
+        kind = "fill" if m is SafetyStockMethod.FILL_RATE else "cycle" if statistical else ""
+        a_in, a_of, a_ok = _achieved(kind, shipped.get(n, []), receipts.get(n, []), o, ok)
+        achieved = a_ok / a_of if a_of > EPS else None
+        if a_in == "cycles" and a_of <= EPS and o:
+            notes.append("no receipt at the place in the window, so its replenishment cycles cannot be told apart: "
+                         "the cycle service is not measured")
         suggested = cell_service_level(fs, abc[n], xyz) if xyz else None
         view.rows.append(PolicyRow(
             location=lp.location, product=lp.product, abc=abc[n], xyz=xyz, cv=cv,
@@ -214,12 +252,13 @@ def policy_view(ds: Dataset) -> PolicyView:
             review_days=review, method=m.value, distribution=lp.safety_stock.distribution, exposure_cv=cv_e,
             next_review=(first_review(lp.safety_stock.review_from, review, s.planning_start)[0]
                          if rule[0] == "R" else None), target=target,
-            target_kind="fill" if m is SafetyStockMethod.FILL_RATE else "cycle" if statistical else "",
+            target_kind=kind,
             target_from=("product" if lp.safety_stock.service_level else "company") if statistical else "",
             suggested=suggested, mean_daily=mean, lead_time_days=lt, lead_time_std_days=lt_sd,
             safety_stock=pol.qty, safety_stock_value=pol.qty * uv, reorder_point=lp.reorder_point,
             suggested_reorder_point=suggested_s, on_hand=lp.on_hand,
-            cover_days=lp.on_hand / mean if mean > EPS else None, orders=o, served=ok, achieved=achieved, notes=notes))
+            cover_days=lp.on_hand / mean if mean > EPS else None, orders=o, served=ok, achieved=achieved,
+            achieved_in=a_in, achieved_of=a_of, achieved_ok=a_ok, notes=notes))
 
     cells: dict[str, list[PolicyRow]] = defaultdict(list)
     for r in view.rows:
@@ -239,6 +278,7 @@ def policy_view(ds: Dataset) -> PolicyView:
                            and abs(r.reorder_point - r.suggested_reorder_point) > 0.1 * r.suggested_reorder_point)
     view.short_of_target = sum(1 for r in view.rows if r.achieved is not None and r.target is not None
                                and r.achieved < r.target - EPS)
+    view.not_measured = sum(1 for r in view.rows if r.target is not None and r.orders and r.achieved is None)
     view.ok = True
     return view
 

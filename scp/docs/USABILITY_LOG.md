@@ -1562,8 +1562,25 @@ tabs) and each job's textbook tasks were looked for by name.
 | N353 | Firming recalculated only the plan and the stock: Home still told the buyer to order the purchase firming had already put on a purchase order. | Serious | **Fixed.** Firming calculates everything again. |
 | N354 | After someone's change on another page, Home showed out-of-date answers until *Plan everything again* was pressed, so the next person read yesterday's work. | Medium | **Fixed.** Home calculates again on opening when anything is out of date, as each page already does for its own result. |
 | N355 | The storekeeper had no list of what comes in and goes out at their place on a day. | Serious | **Fixed.** *Stock & actuals → Goods in & out*: the place, *only what is due by* the posting date, counts to receive, to ship and past due; a transfer still to leave is due on its shipping day, not its arrival. |
-| N356 | A production confirmation says "1,650 made at Pune plant" without the product. | Minor | Open. |
+| N356 | A production confirmation says "1,650 made at Pune plant" without the product. | Minor | **Fixed (8.5).** Receipts, shipments and deliveries name the product: "1,650 Mixer grinder 750 W made at Pune plant". |
 | N357 | *Selling → Invoices* and *Buying → Supplier invoices* count what is still to invoice in the tab's number, so "Invoices 2" shows with no invoice yet. | Minor | Open: the number is the tab's work, as on the other tabs; the tab could say so. |
+
+### 8.5: The matrix and the day, read as a planner would
+
+This is a desk review: CONFORMANCE.md and the 8.4 day, read against the references by the same hands that wrote
+them, looking for what a planner, a scheduler or an S&OP lead would object to first. A review by someone who plans
+for a living is still owed. Each finding below is one such a reader would raise.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N358 | The matrix skipped three areas a planner looks at first: scheduling had no rows (capacity sat inside supply, M16–M17), the monthly S&OP process had one (D14), and the measures none. | Serious | **Fixed.** CONFORMANCE §9 Capacity and scheduling (18 of 22 there at the audit), §10 The S&OP process (7 of 12), §11 Performance measures (12 of 16). |
+| N359 | *Inventory policy* compares each target with "achieved", but the target is a cycle service level (no stock-out in a replenishment cycle) or a fill rate (units from stock), and achieved was neither: the share of order lines delivered in full by the requested date. A 95 % fill-rate target beside 92 % of orders on time is not short or long of anything. | Serious | **Fixed.** Achieved is measured as the target is set: against a cycle level, the replenishment cycles (one receipt at the place to the next) in which every order arrived in full on time; against a fill rate, the units there by the requested date, the journal splitting an order delivered partly late; with no target, orders on time. The row says which (*1 of 3 cycles without a miss*); *Short of their target* counts like with like. |
+| N360 | The S&OP plan sees only the weekly plan's horizon (182 days on the examples): a press, a second shift or a second supplier is decided on a year and more ahead. | Serious | Open: next. |
+| N361 | The measures have no unit fill rate and no order fulfilment cycle time (SCOR RL.2.x, RS.1.1): a planner tuning safety stock reads the first, a sales head the second. | Medium | **Fixed.** *Fill rate (units)* and *Order fulfilment cycle time* (the header's order date to the last delivery) under Performance → KPIs → Customer service, by customer. |
+| N362 | The shop floor's rules have no critical ratio (time left ÷ work left), the rule most planners know by name. | Minor | **Fixed.** *Critical ratio* among the start rules and in the comparison. |
+| N363 | The day had no demand planner, no scheduler and no one taking a customer's order, and the planner firmed without acting on a single reschedule message. | Medium | Open. |
+| N364 | The S&OP cycle's executive step shows volume and revenue against the budget, not the margin or the stock it costs: the money is on another page. | Medium | Open. |
+| N365 | Taking a customer order that needs new supply said to make it firm on *Stock & actuals → Open orders & firming*, a tab 8.4 had moved. | Minor | **Fixed.** It says *Supply → Firm orders*. |
 
 ## Found in the second reality check (after Phase E)
 

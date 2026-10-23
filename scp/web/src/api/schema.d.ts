@@ -12058,6 +12058,21 @@ export interface components {
             served: number;
             /** Achieved */
             achieved: number | null;
+            /**
+             * Achieved In
+             * @default orders
+             */
+            achieved_in: string;
+            /**
+             * Achieved Of
+             * @default 0
+             */
+            achieved_of: number;
+            /**
+             * Achieved Ok
+             * @default 0
+             */
+            achieved_ok: number;
             /** Notes */
             notes: string[];
         };
@@ -12095,6 +12110,11 @@ export interface components {
              * @default 0
              */
             short_of_target: number;
+            /**
+             * Not Measured
+             * @default 0
+             */
+            not_measured: number;
         };
         /** PoolingRow */
         PoolingRow: {
@@ -15039,11 +15059,11 @@ export interface components {
             profile: string;
             /**
              * Start Rule
-             * @description How the first sequence is built: earliest due date, shortest job first, least slack, campaigns by setup group, or backward from the due date (just in time)
+             * @description How the first sequence is built: earliest due date, shortest job first, least slack, critical ratio, campaigns by setup group, or backward from the due date (just in time)
              * @default edd
              * @enum {string}
              */
-            start_rule: "edd" | "spt" | "slack" | "campaign" | "backward";
+            start_rule: "edd" | "spt" | "slack" | "cr" | "campaign" | "backward";
             /**
              * Optimizer
              * @description Search for a better machine choice and sequence with a constraint solver (CP-SAT), then time it on the shift calendar; never worse than the dispatching rule and local search

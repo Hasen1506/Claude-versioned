@@ -1,7 +1,7 @@
 """Enterprise 8.2: inventory policy in one table (docs/CONFORMANCE.md §1). Every figure is worked by hand from the
 textbook definitions (Silver, Pyke & Thomas): ABC by annual usage value, XYZ by the weekly coefficient of variation,
-SS = z·σ_L for a cycle service level, the reorder point s = d̄·(L + R) + SS, and the service achieved as the share
-of the place's customer orders delivered in full by the requested date."""
+SS = z·σ_L for a cycle service level, the reorder point s = d̄·(L + R) + SS, and the service achieved measured as the
+target is set: replenishment cycles without a miss for a cycle level, units by the requested date for a fill rate."""
 from __future__ import annotations
 
 import math
@@ -92,14 +92,54 @@ def test_a_review_period_adds_its_days_to_the_exposure_and_the_reorder_point():
     assert r.suggested_reorder_point == pytest.approx(10 * 7 + ss, rel=1e-6)
 
 
-def test_the_service_achieved_is_the_share_of_orders_in_full_by_the_requested_date():
-    v = policy_view(ds(shop()))
+def receipts(d: dict, *days: int) -> dict:
+    start = date.fromisoformat(START)
+    d["movements"] = [{"id": f"GR-{i}", "date": (start - timedelta(days=n)).isoformat(), "type": "receipt",
+                       "location": "P", "product": "A", "qty": 100} for i, n in enumerate(days)]
+    return d
+
+
+def test_the_service_achieved_against_a_cycle_target_counts_replenishment_cycles_without_a_miss():
+    # receipts at P 21, 18 and 14 days before the start cut the window into cycles; the orders were due 20, 19 (on
+    # time), 18 (on time), 17 (late) and 10 days before (short): [−21, −18) clean, [−18, −14) late, [−14, 0) short,
+    # and the time before −21 had no order. 1 of 3 cycles, against a 95 % cycle target
+    v = policy_view(ds(receipts(shop(), 21, 18, 14)))
     r = rows(v)["A"]
-    # five customer orders: three on time in full, one late, one short; the transfer is not counted
-    assert (r.orders, r.served, r.achieved) == (5, 3, 0.6)
+    assert (r.orders, r.served) == (5, 3)                 # the transfer is not counted
+    assert (r.achieved_in, r.achieved_of, r.achieved_ok) == ("cycles", 3, 1)
+    assert r.achieved == pytest.approx(1 / 3)
     assert v.short_of_target == 1 and v.below_suggestion == 1 and v.reorder_off == 1
     ax = next(c for c in v.cells if c.cell == "AX")
     assert (ax.rows, ax.orders, ax.served, ax.targets) == (1, 5, 3, [0.95])
+    # no receipt in the window: the cycles cannot be told apart, so nothing is measured, and the row says why
+    v = policy_view(ds(shop()))
+    r = rows(v)["A"]
+    assert (r.achieved_in, r.achieved_of, r.achieved_ok, r.achieved) == ("cycles", 0, 0, None)
+    assert any("cannot be told apart" in n for n in r.notes) and (v.short_of_target, v.not_measured) == (0, 1)
+
+
+def test_the_service_achieved_against_a_fill_rate_counts_the_units_there_by_the_requested_date():
+    d = shop()
+    d["location_products"][0]["safety_stock"]["method"] = "fill_rate"
+    r = rows(policy_view(ds(d)))["A"]
+    # 10 + 10 + 10 on time, the late order's 10 after the date, the short one's 6 on time: 36 of 50
+    assert (r.target_kind, r.achieved_in, r.achieved_of, r.achieved_ok) == ("fill", "units", 50, 36)
+    assert r.achieved == pytest.approx(0.72)
+    # a delivery in the journal splits an order: 4 of the late order's 10 left on the requested date
+    due = date.fromisoformat(START) - timedelta(days=17)
+    d["movements"] = [{"id": "GI-1", "date": due.isoformat(), "type": "sale", "location": "P", "product": "A",
+                       "qty": 4, "reference": "SO-3"},
+                      {"id": "GI-2", "date": (due + timedelta(days=2)).isoformat(), "type": "sale", "location": "P",
+                       "product": "A", "qty": 6, "reference": "SO-3"}]
+    r = rows(policy_view(ds(d)))["A"]
+    assert (r.achieved_of, r.achieved_ok) == (50, 40)
+
+
+def test_with_no_target_the_service_achieved_is_the_share_of_orders_in_full_on_time():
+    d = shop()
+    d["location_products"][0]["safety_stock"] = {"method": "fixed", "qty": 20}
+    r = rows(policy_view(ds(d)))["A"]
+    assert (r.target, r.achieved_in, r.achieved_of, r.achieved_ok, r.achieved) == (None, "orders", 5, 3, 0.6)
 
 
 def test_an_order_up_to_rule_and_a_product_without_safety_stock_say_so():

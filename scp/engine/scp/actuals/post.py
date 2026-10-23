@@ -80,6 +80,11 @@ def _on(ds: Dataset, on: date | None) -> date:
     return on or ds.settings.planning_start
 
 
+def _prod(ds: Dataset, pid: str) -> str:
+    p = ds.product_by_id.get(pid)
+    return (p.name if p and p.name else None) or pid
+
+
 def _q(q: float) -> float:
     return round(q, 6)
 
@@ -118,7 +123,7 @@ def ship(ds: Dataset, oid: str, qty: float | None = None, on: date | None = None
     transit = shipped[(frm, rc.product)] + q - got[(rc.location, rc.product)]
     return (ds.model_copy(update={"movements": [*ds.movements, *moves]}),
             ActionReport(ok=True, movements=[x.id for x in moves], doc=moves[0].doc,
-                         message=f"{oid}: {_n(q)} shipped from {_at(ds, frm)} on {on.isoformat()}{_batches(moves)}; "
+                         message=f"{oid}: {_n(q)} {_prod(ds, rc.product)} shipped from {_at(ds, frm)} on {on.isoformat()}{_batches(moves)}; "
                                  f"{_n(transit)} now in transit to {_at(ds, rc.location)}"
                                  + ("; " + "; ".join(notes) if notes else "") + "."))
 
@@ -273,7 +278,7 @@ def receive(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
     notes += more
     left = ordered - total
     status = ("closed short" if left > EPS else "complete") if closes else f"{_n(left)} still to come"
-    msg = (f"{oid}: {_n(q)} {'made' if rc.kind is ReceiptKind.PRODUCTION else 'received'} at {_at(ds, rc.location)} on "
+    msg = (f"{oid}: {_n(q)} {_prod(ds, rc.product)} {'made' if rc.kind is ReceiptKind.PRODUCTION else 'received'} at {_at(ds, rc.location)} on "
            f"{on.isoformat()}{_batches(moves)} ({status})"
            + ("; " + "; ".join(notes) if notes else "")
            + ". Stock and the order are updated when the plan moves past this date.")
@@ -390,7 +395,7 @@ def deliver(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
     ds, fixed = freeze_price(ds, oid)
     if fixed:
         notes.append(fixed)
-    msg = (f"{oid}: {_n(q)} delivered to {_at(ds, d.location)} from {_at(ds, frm)} on {on.isoformat()}{_batches(moves)} "
+    msg = (f"{oid}: {_n(q)} {_prod(ds, d.product)} delivered to {_at(ds, d.location)} from {_at(ds, frm)} on {on.isoformat()}{_batches(moves)} "
            f"({status})" + ("; " + "; ".join(notes) if notes else "")
            + ". Stock and the order are updated when the plan moves past this date.")
     return (ds.model_copy(update={"movements": [*ds.movements, *moves]}),

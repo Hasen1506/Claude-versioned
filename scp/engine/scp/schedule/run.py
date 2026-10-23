@@ -423,7 +423,7 @@ def _compare_schedules(ds: Dataset) -> ScheduleComparison:
         return out
     inst, *_ = build_instance(ds)
     names = {h.id: h.name for h in HEURISTICS}
-    for rule in ("edd", "spt", "slack", "campaign", "backward"):
+    for rule in ("edd", "spt", "slack", "cr", "campaign", "backward"):
         t = time.perf_counter()
         seqs, hold = start(inst, rule, cfg.backward_buffer_days)
         d = decode(inst, seqs, hold)

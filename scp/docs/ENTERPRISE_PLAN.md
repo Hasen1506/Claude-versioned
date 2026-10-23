@@ -131,6 +131,14 @@ owner from the screens only (`e2e/persona-day.spec.ts`): firming moved to *Suppl
 its own rail item, *Work waiting, by job* on Home and *To collect and pay* on Money, *Goods in & out* by place and day
 for the storekeeper; firming and opening Home calculate everything again. Next: 8.5, a practitioner's review.
 
+In progress: 8.5 (N358–N365). A desk review first, the matrix and the day read as a planner, a scheduler and an S&OP
+lead would read them; a review by someone who plans for a living is still owed. It found the matrix had skipped
+scheduling, the S&OP process and the measures (now CONFORMANCE §9–§11), that *Inventory policy* compared a cycle or
+fill-rate target with orders on time (now measured as the target is set), and that the measures had no unit fill rate
+or order cycle time, and the shop floor no critical ratio (all three added). Open: the S&OP plan's horizon, tied to
+the weekly plan's 182 days (N360, next); the S&OP cycle's money view (N364); a second day for a demand planner, a
+scheduler and the order desk (N363).
+
 | # | What | How |
 |---|---|---|
 | 8.1 | A conformance matrix (docs/CONFORMANCE.md) | Every concept from the references (S/4 guide sections; ASCM CPIM body of knowledge; Silver, Pyke & Thomas for inventory; Graves–Willems; the DDMRP standard; IBP S&OP), each with where it lives in the engine, which page shows it under which name, the test and its outside oracle; status *there*, *buried*, *partial*, *missing* |

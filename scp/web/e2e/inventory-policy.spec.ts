@@ -25,7 +25,10 @@ test("each product's policy in one table, a class given its suggested target in 
   await expect(row).toContainText("AX");
   await expect(row).toContainText("97.0% cycle");
   await expect(row).toContainText("class AX suggests 98%");
-  await expect(row).toContainText("4 of 9 orders");
+  // measured as the target is set (N359): Bhiwandi received nothing in the window, so its cycles are not told apart
+  await expect(row).toContainText("cycles not measured");
+  await expect(row).toContainText("4 of 9 orders on time");
+  await expect(page.locator(".tile", { hasText: "Short of their target" })).toContainText("6 not measured (no receipt in the window)");
   const before = first(await row.locator("td").nth(4).innerText());
   const below = page.locator(".tile", { hasText: "Below their class" }).locator(".value");
   await expect(below).toHaveText("4");

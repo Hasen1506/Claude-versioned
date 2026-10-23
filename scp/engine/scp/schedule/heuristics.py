@@ -40,7 +40,13 @@ HEURISTICS: list[Heuristic] = [
     Heuristic(id="slack", name="Least slack first",
               what="Orders with the least spare time between their work and their due date go first.",
               good_for="Protecting due dates when some orders have long routings or late parts.",
-              sap="Critical ratio / sequence by slack"),
+              sap="Sequence by slack"),
+    Heuristic(id="cr", name="Critical ratio",
+              what="Orders go in order of the time left to their due date divided by the work they still need: "
+                   "below 1 they are already behind, and the lowest goes first.",
+              good_for="The rule planners know by name; like least slack, but a long order with a day to spare "
+                       "waits behind a short one with an hour.",
+              sap="Critical ratio"),
     Heuristic(id="campaign", name="Campaigns by setup group",
               what="A machine that comes free stays on its setup group while orders of that group are ready, "
                    "then moves to the most urgent ready order.",
@@ -144,6 +150,13 @@ def start(inst: Instance, rule: str, buffer_days: float = 1.0) -> tuple[dict[str
             first, done = alone(inst, j)
             slack[j.id] = j.due - max(j.release, first) - (done - first)
         return _dispatch(inst, {j.id: (slack[j.id], j.due, j.id) for j in jobs.values()}), {}
+    if rule == "cr":
+        # CR = (due − now) ÷ the order's own flow time on an empty shop (APICS; Pinedo §14.2), now the schedule start
+        ratio = {}
+        for j in jobs.values():
+            first, done = alone(inst, j)
+            ratio[j.id] = j.due / max(done - first, 1e-6)
+        return _dispatch(inst, {j.id: (ratio[j.id], j.due, j.id) for j in jobs.values()}), {}
     if rule == "campaign":
         return _dispatch(inst, {j.id: (j.due, j.release, j.id) for j in jobs.values()}, stay=True), {}
     if rule == "backward":
