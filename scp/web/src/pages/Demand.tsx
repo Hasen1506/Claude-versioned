@@ -56,7 +56,7 @@ export function Demand({ route }: { route: string[] }) {
     <StageHeader title="Demand" kicker={view === "plan" ? "What customers will order, week by week: the demand the supply plan works to. Type it in, upload it, or forecast it from past sales."
       : "A forecast of what customers will order, from past sales. The supply plan uses it once you say so."}
       how={<>For each location and product the engine backtests a set of forecasting models on past sales and keeps the best
-        (lowest <Term t="WAPE" />). History is first cleansed of promotions and outliers; demand events lift the forecast, new products
+        (lowest <Term t="WAPE" />). History is first cleansed of promotions and outliers, and weeks out of stock are read as the demand they turned away; demand events lift the forecast, new products
         borrow a similar product's history, and consensus overrides adjust it. Using the forecast in the supply plan writes it into
         your demand data as forecast records (undoable).</>}
       answer={view !== "plan" && fc?.ok && fc.series.length > 0 && fc.summary && <>Customers are expected to order {qty(Math.round(fc.summary.total_final))} units over the next {plural(fc.periods.length, fc.period)},
@@ -321,8 +321,10 @@ function SeriesDetail({ s, fc }: { s: ForecastSeries; fc: ForecastResult }) {
     if (e && open && open.label === e && open.to === i - 1) open.to = i;
     else if (e) { open = { from: i, to: i, label: e }; spans.push(open); }
   });
-  const marks: Mark[] = hist.flatMap((h, i) => h.flag ? [{ i, v: h.raw, shape: h.flag === "event" ? "triangle" : "cross",
-    label: `${h.flag === "event" ? "Event" : "Outlier"}: ${qty(h.raw)} cleansed to ${qty(h.cleaned)}` } as Mark] : []);
+  const marks: Mark[] = hist.flatMap((h, i) => h.flag ? [{ i, v: h.raw,
+    shape: h.flag === "event" ? "triangle" : h.flag === "stockout" ? "square" : "cross",
+    label: h.flag === "stockout" ? `Out of stock: ${qty(h.raw)} sold, read as ${qty(h.cleaned)} demanded`
+      : `${h.flag === "event" ? "Event" : "Outlier"}: ${qty(h.raw)} cleansed to ${qty(h.cleaned)}` } as Mark] : []);
   const interval = Math.round((intervalSetting ?? 0.8) * 100);
   const lo = (100 - interval) / 2;
   const champ = s.leaderboard.find((m) => m.model === s.champion);
@@ -395,7 +397,7 @@ function SeriesDetail({ s, fc }: { s: ForecastSeries; fc: ForecastResult }) {
             <table className="t nowrap">
               <thead><tr><th>Period</th><th>Reason</th><th className="num">Raw</th><th className="num">Cleansed</th><th>Events</th></tr></thead>
               <tbody>{flagged.map((h) => (
-                <tr key={h.start}><td>{h.label}</td><td>{h.flag === "event" ? "Event / promo: baseline from neighbours" : "Outlier: clipped to robust bound"}</td>
+                <tr key={h.start}><td>{h.label}</td><td>{h.flag === "event" ? "Event / promo: baseline from neighbours" : h.flag === "stockout" ? "Out of stock: demand turned away added back, or read at the neighbours' level" : "Outlier: clipped to robust bound"}</td>
                   <td className="num">{qty(h.raw)}</td><td className="num">{qty(h.cleaned)}</td><td>{h.events.join(", ")}</td></tr>
               ))}</tbody>
             </table>

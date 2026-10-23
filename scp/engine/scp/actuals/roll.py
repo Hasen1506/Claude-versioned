@@ -38,6 +38,31 @@ from .stock import (
 )
 
 
+def sold_out(ds: Dataset, as_of: date) -> set[tuple[str, str, date]]:
+    """The days a sale left its shipping place with no free stock of the product at the end of the day: what sold
+    there is a floor on the demand, not the demand (a customer who came later found the shelf empty)."""
+    days: dict[tuple[str, str], set[date]] = defaultdict(set)
+    for m in ds.movements:
+        if m.type is MovementType.SALE and m.date < as_of:
+            days[(m.location, m.product)].add(m.date)
+    if not days:
+        return set()
+    moves: dict[tuple[str, str], list[GoodsMovement]] = defaultdict(list)
+    for m in before(ds, as_of):
+        if m.sales_order is None and (m.location, m.product) in days:
+            moves[(m.location, m.product)].append(m)
+    out: set[tuple[str, str, date]] = set()
+    for node, sale_on in days.items():
+        level, ms, i = 0.0, sorted(moves[node], key=lambda m: m.date), 0
+        for d in sorted(sale_on):
+            while i < len(ms) and ms[i].date <= d:
+                level += ms[i].signed
+                i += 1
+            if level <= EPS:
+                out.add((node[0], node[1], d))
+    return out
+
+
 def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
     prev = ds.settings.planning_start
     rep = RollReport(ok=False, from_date=prev, to_date=as_of, stock=[], orders=[], closed=[], accuracy=[],
@@ -225,14 +250,19 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
     have = {(h.location, h.product, h.date) for h in imported}
     was = {(h.location, h.product, h.date): h.qty for h in ds.history if h.from_journal}
     journal: dict[tuple[str, str, date], float] = defaultdict(float)
+    emptied = sold_out(ds, as_of)
+    out_of_stock: set[tuple[str, str, date]] = set()
     for m in ds.movements:
         if m.type is not MovementType.SALE:
             continue
         (loc, prod), day = sale_point(ds, m, keys)
         if day < as_of and (loc, prod, day) not in have:
             journal[(loc, prod, day)] += m.net
+            if (m.location, m.product, m.date) in emptied:
+                out_of_stock.add((loc, prod, day))
     history = imported + [SalesHistory(location=k[0], product=k[1], date=k[2], qty=round(q, 6),
-                                       price=ds.selling_price(k[0], k[1]), from_journal=True)
+                                       price=ds.selling_price(k[0], k[1]), stockout=k in out_of_stock,
+                                       from_journal=True)
                           for k, q in sorted(journal.items())]
     rep.history_added = sum(1 for k, q in journal.items() if abs(was.get(k, 0.0) - round(q, 6)) > EPS)
 

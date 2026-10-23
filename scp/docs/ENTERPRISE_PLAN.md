@@ -110,6 +110,9 @@ Done: 8.2, first part (N329–N335): *Supply → Inventory policy*, a policy giv
 22 of 25; then safety stock for demand that varies widely, by a gamma or Poisson spread (N340): 23 of 25, the other
 two in IDEAS.md. Next: 8.3, the other sections.
 
+In progress: 8.3, demand planning first (CONFORMANCE §2: 17 of 25 there at the audit). Done: stock-outs and lost sales
+read as demand (N341), 18 of 25. Next: a tracking signal per series (D18), then the forecast by product family (D13).
+
 | # | What | How |
 |---|---|---|
 | 8.1 | A conformance matrix (docs/CONFORMANCE.md) | Every concept from the references (S/4 guide sections; ASCM CPIM body of knowledge; Silver, Pyke & Thomas for inventory; Graves–Willems; the DDMRP standard; IBP S&OP), each with where it lives in the engine, which page shows it under which name, the test and its outside oracle; status *there*, *buried*, *partial*, *missing* |

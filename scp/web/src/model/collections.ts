@@ -331,11 +331,13 @@ export const COLLECTIONS: CollectionDef[] = [
   {
     key: "history", label: "Sales history", singular: "history row", defName: "SalesHistory", issueType: "history",
     group: "Demand inputs", keyOf: (_o, i) => `#${i}`,
-    blurb: "What actually sold, per location, product and date (long format). The forecast learns from it; promo rows are cleansed.",
+    blurb: "What actually sold, per location, product and date (long format). The forecast learns from it; promo rows are cleansed, and a row out of stock or with demand turned away is read as the demand it was.",
     columns: [
       { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
       { label: "Date", get: (o) => s(o.date) }, { label: "Qty", get: (o) => o.qty as number, num: true },
       { label: "Promo", get: (o) => (o.promo ? "yes" : "") },
+      { label: "Lost", get: (o) => ((o.lost_qty as number) > 0 ? (o.lost_qty as number) : ""), num: true },
+      { label: "Out of stock", get: (o) => (o.stockout ? "yes" : "") },
     ],
   },
   {

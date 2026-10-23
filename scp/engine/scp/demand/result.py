@@ -14,7 +14,7 @@ Abc = Literal["A", "B", "C"]
 Xyz = Literal["X", "Y", "Z"]
 Pattern = Literal["smooth", "erratic", "intermittent", "lumpy", "none"]
 Lifecycle = Literal["new", "mature", "inactive", "npi"]
-Flag = Literal["event", "outlier"]
+Flag = Literal["event", "outlier", "stockout"]
 
 
 class HistoryPoint(Out):

@@ -46,3 +46,43 @@ Read against SPT ch. 4–7 and CPIM "inventory management". Audited 23 October 2
 
 **What this section says** (audit): the arithmetic was there and checked; the *policy* was not presented as one.
 **After 8.2:** 23 of 25 there. Open: the cost of a shortage (I23) and a single-period buy (I24), both in IDEAS.md.
+
+## 2. Demand planning
+
+Read against CPIM "demand management" and "forecasting", Hyndman & Athanasopoulos *Forecasting: Principles and
+Practice* (FPP), Syntetos & Boylan on intermittent demand, Gilliland on forecast value add, and the S/4 guide's demand
+and consumption sections. Audited 23 October 2026.
+
+| # | Concept | Engine | Page and name | Oracle | Status |
+|---|---|---|---|---|---|
+| D1 | Demand history from sales, in any grain (day, week, month) | `SalesHistory` (period_days), journal sales rebuilt on each roll | Set up → Master data → history; upload reads monthly sheets | test_demand (periods), test_regressions | there |
+| D2 | History cleansed: events taken out, outliers clipped | `demand/pipeline._cleanse` (event baseline from neighbours, MAD on the residual) | Demand → each series: raw against cleansed | test_demand::test_history_promos_are_cleansed…, ::test_outliers_are_clipped… | there |
+| D3 | Demand pattern (smooth, erratic, intermittent, lumpy by ADI and CV²) | `_pattern` (Syntetos–Boylan cut-offs) | Demand → segment | test_demand::test_segmentation | there |
+| D4 | ABC and XYZ segmentation | `_abc`, `_xyz` | Demand; Inventory policy | test_demand, test_policy | there |
+| D5 | Statistical methods: naïve, seasonal naïve, moving average, SES, Holt damped, Holt–Winters, Croston/SBA/TSB, regression with seasonality | `demand/models` | Demand → methods | test_demand (constant, pure season, a line, Croston by hand) | there |
+| D6 | Method chosen by rolling-origin backtest on a scaled error (MASE), simpler wins ties | `demand/competition` | Demand → leaderboard per series | test_demand::test_backtest_origins, ::test_champion… | there |
+| D7 | Accuracy and bias measures (WAPE, MASE, bias) | `competition.Score` | Demand: WAPE, bias, WAPE saved over naïve | test_demand::test_metrics_by_hand | there |
+| D8 | Prediction intervals; a high-end forecast | `_sigma` from backtest error, P90 released | Demand; order checks (safe date) | test_demand::test_interval_grows…, test_demand_spread | there |
+| D9 | Promotions and other events, lift measured from past ones | `DemandEvent` (lift given or measured per kind) | Demand → events | test_demand::test_future_event_uses_given_or_measured_lift… | there |
+| D10 | New product from a like product, ramp-up, cannibalisation | `NpiRule` | Demand → new products | test_demand::test_npi_ramp_and_cannibalisation | there |
+| D11 | Planner overrides with a reason and an author | `ForecastOverride` (quantity or change) | Demand plan → override | test_demand::test_overrides_absolute_and_relative | there |
+| D12 | Forecast value add: naïve, statistical, events, overrides, per family and planner | `demand/value_add` | Demand → Value add | test_value_add; e2e value-add | there |
+| D13 | Forecast seen and adjusted at an aggregate (product family, region, all customers of a product) and spread down to the series | — (overrides per product, place and period only) | — | — | **missing**: a family's month cannot be read or changed as one number |
+| D14 | Consensus in a monthly S&OP cycle with sign-off and a frozen snapshot | `sop` cycle (EP 4.1) | Capacity plan → cycle | test_sop_cycle; e2e sop-cycle | there |
+| D15 | Forecast consumed by sales orders (forward and backward windows) | `plan/consumption` | Supply plan (requirements) | test_mrp | there |
+| D16 | Planning material: variants consume a base forecast; assembly forecast consumed by dependent demand | EP 4.3 | Products at places | test_planning_strategies | there |
+| D17 | Demand history corrected for days out of stock (censored, unconstrained demand) | `SalesHistory.lost_qty` (demand turned away, added back) and `stockout` (read at the neighbouring periods' level when it sold less); a week's roll marks journal history where a sale emptied the shipping place | Demand → series: □ marks, the cleansing log and a note of what was put back; Sales history: *Lost*, *Out of stock*; the upload reads them | test_demand::test_stock_outs_and_lost_sales…, test_actuals::test_history_from_the_journal_is_marked_out_of_stock…; e2e demand-stockout | there (8.3): a short delivery closed on an order is not yet turned into lost demand on its own |
+| D18 | Accuracy tracked after release, per series, with a tracking signal (cumulative error ÷ MAD) that flags a biased forecast | value add per family and planner, not per series; no tracking signal | Demand → Value add (totals) | — | **partial** |
+| D19 | Accuracy by lag (the forecast as it stood 1, 2, 3 … periods before) | `forecasting.fva_lag` (one lag) | Value add | test_value_add | partial: one lag at a time, no waterfall |
+| D20 | Working-day and holiday effects (a month with fewer selling days, a festival closure) | calendars plan supply, not demand | — | — | missing |
+| D21 | Price as a driver (elasticity) and other causal drivers | `SalesHistory.price` kept for value, not modelled; events stand in for price changes | Demand → events (price change kind) | — | partial |
+| D22 | Customer-provided forecasts (collaborative, CPFR) taken in and compared | — | — | — | missing |
+| D23 | Demand sensing: the next weeks adjusted from open orders and recent sales | — | — | — | missing (in IDEAS.md as advanced) |
+| D24 | Product lifecycle: a discontinued product's demand passed to its successor | `plan/mrp._follow_up` (S/4 discontinuation) | Products at places → follow-up | test_planning_depth (follow-up) | there |
+| D25 | A foundation model as a contender, licence checked | `demand/foundation` (TimesFM, off by default) | Settings | test_demand::test_foundation_model… | there |
+
+**What this section says** (audit): the statistical core is broad and checked by hand; what a demand planner does
+around it is thinner. The three that change numbers most are D13 (planners and S&OP work in families and months, and
+cannot here), D17 (stock-outs teach the forecast that demand fell) and D18 (no per-series alarm when a forecast keeps
+missing one way). 17 of 25 there, 3 partial, 5 missing. **Next in 8.3:** D17, D18, D13 in that order (each changes
+what the plan buys); D19–D23 to IDEAS.md unless cheap. **After D17:** 18 of 25 there.

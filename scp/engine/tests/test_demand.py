@@ -436,3 +436,29 @@ def test_a_series_whose_history_did_not_change_is_not_competed_again(monkeypatch
     shorter = d.model_copy(update={"history": [x for x in d.history if not (x.location == h.location and x.product == h.product and x.date == h.date)]})
     pipeline.run_forecast(shorter)
     assert len(ran) == 1
+
+
+def test_stock_outs_and_lost_sales_are_read_as_demand_not_sales():
+    # A: 40 weeks of 100. Week 38 sold out after 40 (the rest unknown); week 39 sold 70 and turned 30 away. Demand,
+    # not sales: week 38 reads at its neighbours' 100 and week 39 at 70 + 30, so every week is 100, 90 put back, and
+    # the forecast is the 100 demanded. B: a week short for a day that still sold 130 keeps its 130
+    vals = [100.0] * 40
+    vals[38], vals[39] = 40.0, 70.0
+    rows = weekly("P", "A", vals)
+    rows[38]["stockout"] = True
+    rows[39]["lost_qty"] = 30
+    other = weekly("P", "B", [100.0] * 20 + [130.0] + [100.0] * 19)
+    other[20]["stockout"] = True
+    r = run_forecast(ds(dataset(rows + other)))
+    s = next(x for x in r.series if x.product == "A")
+    assert [s.history[i].flag for i in (38, 39)] == ["stockout"] * 2
+    assert (s.history[38].raw, s.history[38].cleaned) == (40, 100)
+    assert (s.history[39].raw, s.history[39].cleaned) == (70, 100)
+    assert all(h.cleaned == 100 for h in s.history)
+    assert any(n.startswith("2 periods out of stock or with demand turned away: 90 put back") for n in s.notes)
+    assert all(p.statistical == pytest.approx(100) for p in s.forecast)
+    b = next(x for x in r.series if x.product == "B")
+    assert (b.history[20].flag, b.history[20].raw, b.history[20].cleaned) == ("stockout", 130, 130)
+    # read as sales, the same history forecasts less: the last weeks' dips pull it down
+    plain = run_forecast(ds(dataset(weekly("P", "A", vals)))).series[0]
+    assert sum(p.statistical for p in plain.forecast) < sum(p.statistical for p in s.forecast) - 1

@@ -270,3 +270,17 @@ def test_example_journal_rolls_forward_a_week():
     assert run_mrp(new).ok
     again, _ = roll_forward(new, date(2026, 10, 5))
     assert again.model_dump() == new.model_dump()
+
+
+def test_history_from_the_journal_is_marked_out_of_stock_where_a_sale_emptied_the_shelf():
+    # P had 10 of A. The walk-in sale of 5 on the 7th left 5 (K's history for the 8th, after the 1-day lane); the 25
+    # for SO1 on the 8th took it below zero: K's 9th sold what there was, so its demand is at least that, not that
+    d = net()
+    d["movements"] = _journal()
+    new, _ = roll_forward(ds(d), date(2026, 1, 12))
+    assert sorted((h.date.isoformat(), h.qty, h.stockout) for h in new.history) == [
+        ("2026-01-08", 5, False), ("2026-01-09", 25, True)]
+    # with 30 more on hand before the first sale, nothing ran out
+    d["movements"].append(mv(7, "2026-01-05", "receipt", "P", "A", 30, counterparty="S"))
+    new, _ = roll_forward(ds(d), date(2026, 1, 12))
+    assert not any(h.stockout for h in new.history)

@@ -1349,6 +1349,30 @@ browser, and at 5,000 products × 20 places.
 |---|---|---|---|
 | N340 | Every service target was sized as if demand over the lead time were normal, even where it varies so much that the normal puts weight on negative demand, and for slow movers sold a few at a time. | Minor | **Fixed.** A safety stock set by a target can read that demand as normal, gamma (by its mean and σ) or Poisson, for a cycle level and a fill rate. The policy page notes a CV over 0.5 and what a gamma spread would hold, and *Give a policy* sets the spread for a class. Buffer placement still uses the normal. |
 
+### 8.3: Demand planning
+
+ENTERPRISE_PLAN 8.3 and docs/CONFORMANCE.md §2: 25 concepts against CPIM, FPP, Syntetos–Boylan and Gilliland; 17
+there, 3 partial, 5 missing. Taken in the order they change what the plan buys.
+
+**Stock-outs read as demand (D17), on Kaveri.**
+
+* *Input:* the 500 W mixer grinder sold to West trade distributors, the company's biggest series (104 weeks, a trend
+  and seasonal regression as champion), supplied from Bhiwandi, the place that met 4 of 9 orders in full. Its last
+  two weeks are short: the week of 14 September sold out (497 sold), the week of 21 September sold 472 and turned 120
+  away.
+* *Processing:* the planner marks both in *Set up → Master data → Sales history*: *Out of stock* on the first, 120
+  *Lost* on the second; *Demand → Recalculate*.
+* *Output:*
+  * The series reads the first week at its neighbours' level (522) and the second as 472 + 120 = 592: "2 periods out
+    of stock or with demand turned away: 145 put back".
+  * The chart marks them □, and the cleansing log names them.
+  * The 26-week forecast goes from 14,806 to 15,029.
+  * Read as sales, those weeks would have taught the forecast that demand was falling.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N341 | The forecast learned from what was sold, not what was asked for: a week out of stock read as a week of low demand, so a shortage lowered the next forecast and made the next shortage likelier. | Serious | **Fixed.** Sales history takes the demand turned away (*Lost*) and *Out of stock*; the forecast adds the lost demand back and reads a stock-out period that sold less than its neighbours at their level; each week's roll marks journal history where a sale left the shipping place empty; the upload reads *Lost sales* and *Out of stock* columns. Open: a short delivery closed on an order is not yet written as lost demand on its own. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

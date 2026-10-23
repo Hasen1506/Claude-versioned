@@ -7441,7 +7441,7 @@ export interface components {
             /** Cleaned */
             cleaned: number;
             /** Flag */
-            flag: ("event" | "outlier") | null;
+            flag: ("event" | "outlier" | "stockout") | null;
             /**
              * Events
              * @default []
@@ -13971,6 +13971,18 @@ export interface components {
              * @default false
              */
             promo: boolean;
+            /**
+             * Lost Qty
+             * @description Demand turned away: asked for but not sold (out of stock, or a short delivery closed). The forecast learns from what was sold plus this
+             * @default 0
+             */
+            lost_qty: number;
+            /**
+             * Stockout
+             * @description Out of stock for part of it, so what sold is less than the demand by an amount nobody counted: the forecast reads it at the level of the periods around it when it sold less
+             * @default false
+             */
+            stockout: boolean;
             /**
              * Period Days
              * @description The row is a total over [date, date + period_days), e.g. a month of sales: it is spread evenly over those days. Empty = sold on `date`.

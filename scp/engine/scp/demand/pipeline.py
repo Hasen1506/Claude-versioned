@@ -73,12 +73,16 @@ class _Hist:
     adi: float | None = None
     cv2: float | None = None
     outlier_adjust: float = 0.0   # Σ (cleansed − raw) over outlier periods: what ABC ranks without
+    lost: np.ndarray = field(default_factory=lambda: np.zeros(0))   # demand turned away, per period
+    stockout_adjust: float = 0.0  # Σ demand put back for stock-outs and lost sales: what was asked, not sold
 
 
 def _aggregate(ds: Dataset, period: ForecastPeriod, cutoff: date) -> dict[tuple[str, str], _Hist]:
     ws = ds.settings.week_start
     qty: dict[tuple[str, str], dict[date, float]] = defaultdict(lambda: defaultdict(float))
     promo: dict[tuple[str, str], set[date]] = defaultdict(set)
+    lost: dict[tuple[str, str], dict[date, float]] = defaultdict(lambda: defaultdict(float))
+    short: dict[tuple[str, str], set[date]] = defaultdict(set)    # periods out of stock for part of them
     revenue: dict[tuple[str, str], float] = defaultdict(float)
     first: dict[tuple[str, str], date] = {}
     horizon_start = period_start(cutoff, period, ws)
@@ -103,10 +107,19 @@ def _aggregate(ds: Dataset, period: ForecastPeriod, cutoff: date) -> dict[tuple[
             qty[k][ps] += q * factor
             if r.promo:
                 promo[k].add(ps)
+            if r.stockout:
+                short[k].add(ps)
             revenue[k] += q * price
             if q > 0 and (k not in first or ps < first[k]):
                 first[k] = ps
     out: dict[tuple[str, str], _Hist] = {}
+    for r in ds.history:
+        if r.lost_qty <= 0:
+            continue
+        b, factor = base.get(r.product, (r.product, 1.0))
+        for ps, q in _spread(r.date, r.lost_qty, r.period_days, period, ws):
+            if ps < horizon_start:
+                lost[(r.location, b)][ps] += q * factor
     for k, by_period in qty.items():
         if k not in first:
             continue  # only zeros: nothing to learn from
@@ -117,10 +130,13 @@ def _aggregate(ds: Dataset, period: ForecastPeriod, cutoff: date) -> dict[tuple[
         h = _Hist(k[0], k[1], starts, raw, revenue[k])
         h.flags = [None] * len(starts)
         h.events = [[] for _ in starts]
+        h.lost = np.array([lost[k].get(s, 0.0) for s in starts], dtype=float)
         for i, s in enumerate(starts):
             if s in promo[k]:
                 h.flags[i] = "event"
                 h.events[i].append(HISTORY_PROMO)
+            elif s in short[k] or h.lost[i] > 0:
+                h.flags[i] = "stockout"
         out[k] = h
     return out
 
@@ -166,9 +182,19 @@ def _neighbour_median(y: np.ndarray, ok: np.ndarray, i: int, reach: int = 3) -> 
 
 def _cleanse(ds: Dataset, h: _Hist, ev_kind: dict[str, str]) -> None:
     fs = ds.forecasting
-    y = h.raw.copy()
-    h.pattern, h.adi, h.cv2 = _pattern(h.raw)
+    # 0. demand, not sales: what was turned away is added back; a period out of stock for part of it that sold less
+    #    than the periods around it is read at their level (censored demand: what sold is a floor, not the demand)
+    lost = h.lost if len(h.lost) == len(h.raw) else np.zeros(len(h.raw))
+    y = h.raw + lost
+    h.pattern, h.adi, h.cv2 = _pattern(y)
     unflagged = np.array([f is None for f in h.flags])
+    for i, f in enumerate(h.flags):
+        if f != "stockout":
+            continue
+        base = _neighbour_median(y, unflagged, i)
+        if base is not None and base > y[i]:
+            y[i] = base
+    h.stockout_adjust = float((y - h.raw)[[f == "stockout" for f in h.flags]].sum()) if len(y) else 0.0
     # 1. event periods → baseline from neighbouring normal periods; the ratio measures the lift
     for i, f in enumerate(h.flags):
         if f != "event":
@@ -458,6 +484,11 @@ def _series_from_history(ctx: _Ctx, h: _Hist, abc: tuple[str, float], pooled: di
     weekly_cv = None
     if error_cv is not None:
         weekly_cv = error_cv * float(np.sqrt(mean_days(ctx.period) / 7))
+    out_of_stock = sum(1 for f in h.flags if f == "stockout")
+    if out_of_stock:
+        notes.append(f"{out_of_stock} period{'' if out_of_stock == 1 else 's'} out of stock or with demand turned away: "
+                     f"{h.stockout_adjust:,.0f} put back, so the forecast learns from what was asked for, not only "
+                     "what could be sold.")
     factors, ev_ids = _event_factors(ctx, h.location, h.product, h.lifts, pooled, notes)
     segment = Segment(abc=abc[0], xyz=xyz, pattern=h.pattern, lifecycle=lifecycle, revenue=h.revenue,
                       revenue_share=abc[1], adi=h.adi, cv2=h.cv2, error_cv=error_cv,

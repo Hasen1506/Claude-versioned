@@ -179,6 +179,12 @@ class SalesHistory(Model):
     qty: float = Unit("qty")
     price: float | None = Unit("money_per_unit", default=None)
     promo: bool = False
+    lost_qty: float = Unit("qty", ge=0, default=0.0,
+                           description="Demand turned away: asked for but not sold (out of stock, or a short delivery "
+                                       "closed). The forecast learns from what was sold plus this")
+    stockout: bool = Field(False, description="Out of stock for part of it, so what sold is less than the demand by an "
+                                              "amount nobody counted: the forecast reads it at the level of the "
+                                              "periods around it when it sold less")
     period_days: int | None = Field(
         None, ge=1, le=366,
         description="The row is a total over [date, date + period_days), e.g. a month of sales: it is spread evenly "
