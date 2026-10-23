@@ -145,6 +145,7 @@ export type ServeRow = S["ServeRow"];
 export type CostLine = S["CostLine"];
 export type InventoryValue = S["InventoryValue"];
 export type CapacityAppraisal = S["CapacityAppraisal"];
+export type CashView = S["CashView"];
 
 export type TowerResult = S["TowerResult"];
 export type Kpi = S["Kpi"];

@@ -237,3 +237,14 @@ on 9 Oct 2026. Not built yet:
 * **Dock appointments (T16).** Loading and unloading slots per dock, booked by the freight orders.
 * **Shipment tracking (T17).** Events from the carrier (picked up, in transit, delivered) on the freight order.
 
+## Money (CONFORMANCE §8)
+
+* **Overhead rates (F14).** Overhead absorbed by rates on machine and labour hours and a share on material, in the
+  roll-up and the production order costs.
+* **Write-downs (F17).** Stock that will expire or no longer sells written down to what it can be sold for, posted to
+  the journal.
+* **Currency revaluation (F18).** Rates by date and open receivables and payables in other currencies revalued at the
+  period end.
+* **Cash with the bank (F15).** The cash projection started from the bank balance, with tax payments and fixed costs
+  (salaries, rent) on their dates.
+

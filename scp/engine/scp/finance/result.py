@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 
 from ..model.common import Out
+from .cash import CashView
 from ..validate import Issue
 
 PLAN_COSTS = ("purchase", "production", "setup", "ordering", "transport", "handling", "holding")
@@ -117,5 +118,6 @@ class FinanceResult(Out):
     inventory: InventoryValue | None = None
     serve: list[ServeRow] = []
     capacity: list[CapacityAppraisal] = []
+    cash: CashView | None = None     # what comes in and goes out week by week (finance/cash.py)
     notes: list[str] = []
     issues: list[Issue] = []

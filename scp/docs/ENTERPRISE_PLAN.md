@@ -122,7 +122,9 @@ handling units, cross-docking, space in the plan, warehouse measures and workloa
 Then transport (§7: 12 of 19 at the audit): collections planned as freight from the supplier (N348), 13 of 19;
 the landed cost by incoterm, multi-stop routes, carrier performance, billed freight in cost to serve, docks and
 tracking to IDEAS.md.
-Next in 8.3: money.
+Then money (§8: 16 of 20 at the audit): the cash the plan needs, week by week (N349), 17 of 20; overhead rates,
+write-downs and currency revaluation to IDEAS.md. 8.3 is done: every section has its audit, its fixes and the rest
+in IDEAS.md. Next: 8.4, walking each persona's week through the app end to end, then 8.5.
 
 | # | What | How |
 |---|---|---|

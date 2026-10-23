@@ -1508,6 +1508,27 @@ partial, 3 missing. Outbound transport matches S/4's basic TM; inbound was missi
 |---|---|---|---|
 | N348 | Transport planned only what Kaveri sends out: a purchase it collects (FOB Shenzhen) had no freight order, so the sea freight Kaveri pays was neither planned, booked nor checked against the bill. | Serious | **Fixed.** Sent purchase order lines from a supplier whose terms leave the carriage to the buyer (EXW, FCA, FAS, FOB) load their lane's transit time before they are due (or confirmed), for what is still expected; they share vehicles, carriers and tendering with the rest; shipping posts nothing; the bill goes to the receiving company. Open: incoterms in the landed cost, multi-stop routes, carrier performance, billed freight in cost to serve, docks and tracking are in IDEAS.md. |
 
+### 8.3: Money
+
+CONFORMANCE §8: 20 concepts against CPIM financial measures, Horngren's cost accounting and S/4 costing and
+finance; 16 there, 3 partial, 1 missing. What the plan costs and earns was there; when the money moves was not.
+
+**Cash by week (F15), on Kaveri.**
+
+* *Input:* the plan (production, transfers, purchases), the open orders and forecast at the customers' prices, what
+  was shipped and not billed; everyone's payment terms (customers net 30 by default, the suppliers 30 to 60 days).
+* *Processing:* *Money → Cash by week*.
+* *Output:*
+  * For the first four weeks only money goes out: production and transfers, ₹5.2 lakh, ₹1.5 lakh, ₹8.1 lakh and
+    ₹6.1 lakh, so the plan needs ₹20.9 lakh on top of the bank by the week of 19 Oct.
+  * The first customers pay in the week of 26 Oct (₹33.2 lakh shipped and to bill, ₹33.2 lakh of forecast); from
+    then on the plan pays its way.
+  * Over 26 weeks ₹19.5 Cr comes in and ₹6.0 Cr goes out.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N349 | The plan said what it costs and earns but not when the money moves: nothing showed that Kaveri pays four weeks of production and transfers before the first customer pays, ₹20.9 lakh at the lowest. | Serious | **Fixed.** *Money → Cash by week*: customers' invoices, what is to bill, open orders and forecast on the customers' terms; supplier invoices, open purchase orders, planned buying on the suppliers' terms; production and transfers when they start; freight on the carriers' terms; overdue and later amounts; the lowest running total. An order line shipped and not booked is to bill, not counted again as an open order. Open: overhead rates, write-downs, currency revaluation and the bank balance with fixed costs are in IDEAS.md. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

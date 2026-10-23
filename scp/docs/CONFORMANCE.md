@@ -272,3 +272,37 @@ and the measures of carriers and the freight in cost to serve are thin. At the a
 missing. The one that changes what is paid and planned is T11: on Kaveri, the Shenzhen parts are bought FOB, so the
 sea freight from Shenzhen is Kaveri's to book, and nothing planned it. **After T11:** 13 of 19 there, 4 partial (T12,
 T14, T15, T17), 2 missing (T13, T16), all in IDEAS.md.
+
+## 8. Money
+
+Read against CPIM "financial measures of supply chain performance", Horngren et al., *Cost Accounting*, and the S/4
+controlling and finance basics the planning guide relies on (costing, valuation, the journal). Audited 23 October
+2026.
+
+| # | Concept | Engine | Page and name | Oracle | Status |
+|---|---|---|---|---|---|
+| F1 | Cost rolled up through the bill of materials: parts, conversion and setup, with yield | `plan/costing.roll_up` | Products at places → cost | test_valuation | there |
+| F2 | Landed cost: price, exchange rate, duty, freight and handling | `landed_unit_cost` | Products at places → cost | test_valuation | there |
+| F3 | Valuation at standard or moving average, price differences | EP 6.2 | Money → stock in the books | test_valuation | there |
+| F4 | The plan's cost by category, served and unabsorbed adding up | `finance.ledger` | Money → summary | test_finance | there |
+| F5 | Stock value over time and its holding cost at the cost of capital | `inventory_value` | Money → inventory value | test_finance | there |
+| F6 | Cost to serve and margin per customer and product | `cost_to_serve` | Money → cost to serve & margin | test_finance | there |
+| F7 | Working capital: turns, DIO, DSO, DPO, cash to cash, ageing | `tower/capital` | Performance → working capital | test_kpi_working_capital | there |
+| F8 | Excess, obsolete and slow-moving stock in value | `tower/kpis` | Performance | test_tower | there |
+| F9 | Budget against the plan, in volume and revenue | EP 4.1 | S&OP cycle | test_sop_cycle | there |
+| F10 | Capacity investment appraisal: shadow prices, a re-solve, NPV | `finance/capacity` | Money → capacity investments | test_finance | there |
+| F11 | Receivables and payables with cash discounts and payment reminders | M3, N1 | Selling; Buying → invoices | test_order_to_cash, test_procure_to_pay | there |
+| F12 | Double-entry journal per company, checked against its documents, exported to Tally | EP 7.4 | Money → books | test_accounting | there |
+| F13 | Production order costs and their variances | P-phase costing | Stock & actuals | test_production_order_costs | there |
+| F14 | Overhead absorbed by rates (on machine and labour hours, on material) | an extra cost a unit on the routing | Set up → production | — | partial: no overhead rates |
+| F15 | Cash projection: what comes in and goes out week by week on everyone's payment terms, and the most cash needed | `finance/cash.cash_view` | Money → *Cash by week* | test_cash (hand-worked: 400 overdue, 100 + 600 paid in week 2 for −300 at the lowest, 900 in week 3, 2,000 after the last week; shipped lines to bill not to sell; credit notes, settled freight, supplier invoices, production and transfers when they start); e2e money-cash | there (8.3) |
+| F16 | Money at risk per exception | `tower/money` | Home inbox | test_tower | there |
+| F17 | Stock written down to what it can be sold for (expiring, obsolete) | expiry valued as written off in money at risk | Home inbox | test_tower | partial: no write-down posted |
+| F18 | Foreign currency: purchases at a rate; open items revalued | `settings.fx_rates` | Company | test_valuation | partial: one rate, no revaluation |
+| F19 | Profit and loss and balances by period from the journal | EP 7.4 | Money → books | test_accounting | there |
+| F20 | Transfer prices between the companies of a group | EP 7.3 | Group | test_intercompany | there |
+
+**What this section says** (audit): cost, value and the books are deep; what was missing is when the money moves.
+At the audit: 16 of 20 there, 3 partial, 1 missing (F15). The plan says what it costs and earns, not what cash it
+needs and when: on Kaveri, four weeks of production and transfers are paid before the first customer pays.
+**After F15:** 17 of 20 there, 3 partial (F14, F17, F18), all in IDEAS.md.

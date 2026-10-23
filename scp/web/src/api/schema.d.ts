@@ -4246,6 +4246,82 @@ export interface components {
             /** Scenarios */
             scenarios: components["schemas"]["ScenarioIn-Output"][];
         };
+        /** CashView */
+        CashView: {
+            /** Currency */
+            currency: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /** Weeks */
+            weeks: components["schemas"]["CashWeek"][];
+            /**
+             * Receipts
+             * @default 0
+             */
+            receipts: number;
+            /**
+             * Payments
+             * @default 0
+             */
+            payments: number;
+            /**
+             * Lowest
+             * @default 0
+             */
+            lowest: number;
+            /** Lowest Week */
+            lowest_week: string | null;
+            /**
+             * Overdue In
+             * @default 0
+             */
+            overdue_in: number;
+            /**
+             * Overdue Out
+             * @default 0
+             */
+            overdue_out: number;
+            /**
+             * Later In
+             * @default 0
+             */
+            later_in: number;
+            /**
+             * Later Out
+             * @default 0
+             */
+            later_out: number;
+            /**
+             * Unpriced
+             * @default 0
+             */
+            unpriced: number;
+            /** Notes */
+            notes: string[];
+        };
+        /** CashWeek */
+        CashWeek: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /** Receipts */
+            receipts: number;
+            /** Payments */
+            payments: number;
+            /** Net */
+            net: number;
+            /** Cumulative */
+            cumulative: number;
+            /** By */
+            by: {
+                [key: string]: number;
+            };
+        };
         /**
          * ChallanLine
          * @description A part sent on the challan, at its value when it left (the taxable value GST asks the challan to show).
@@ -6664,6 +6740,7 @@ export interface components {
              * @default []
              */
             capacity: components["schemas"]["CapacityAppraisal"][];
+            cash: components["schemas"]["CashView"] | null;
             /**
              * Notes
              * @default []
