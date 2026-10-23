@@ -11740,6 +11740,8 @@ export interface components {
             review_from?: string | null;
             /** Rule */
             rule?: ("mrp" | "reorder_point") | null;
+            /** Distribution */
+            distribution?: ("normal" | "gamma" | "poisson") | null;
             /** Reorder Point */
             reorder_point?: "suggested" | null;
         };
@@ -11804,6 +11806,13 @@ export interface components {
             next_review: string | null;
             /** Method */
             method: string;
+            /**
+             * Distribution
+             * @default normal
+             */
+            distribution: string;
+            /** Exposure Cv */
+            exposure_cv: number | null;
             /** Target */
             target: number | null;
             /** Target Kind */
@@ -13852,6 +13861,13 @@ export interface components {
              * @description A review day; the others fall every R days before and after it (default: Mondays, counted from 1 January 2024)
              */
             review_from?: string | null;
+            /**
+             * Distribution
+             * @description How demand over the lead time and review is spread when a target sizes the safety stock: normal; gamma for lumpy demand (its spread over 0.5 of its mean); Poisson for slow movers sold a few at a time
+             * @default normal
+             * @enum {string}
+             */
+            distribution: "normal" | "gamma" | "poisson";
         };
         /** SalesActionRequest */
         SalesActionRequest: {
