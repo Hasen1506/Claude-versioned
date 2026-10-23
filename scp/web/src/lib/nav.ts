@@ -60,6 +60,7 @@ export const NAV: NavGroup[] = [
   { label: "Results", items: [
     { ...money, tabs: [
       money,
+      { id: "accounts", label: "Accounts", question: "What do the books say: every posting, each account's balance, and the file for Tally?", optional: true },
       { id: "group", label: "Group companies", question: "What do the group's companies sell each other, at what price, and what profit is still in stock between them?", optional: true },
     ] },
     { id: "tower", label: "Performance", question: "Are we hitting our targets, and what needs following up?", run: "tower" },

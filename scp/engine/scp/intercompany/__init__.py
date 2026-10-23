@@ -15,6 +15,7 @@ billing and the group's view of the profit still in stock.
 """
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from datetime import date
 
@@ -34,6 +35,7 @@ from ..actuals.valuation import EPS, run_books, standards
 from ..model import Dataset, MovementType, ReceiptKind
 from ..model.common import Out
 from ..model.intercompany import IntercompanyInvoice, IntercompanyLine
+from ..model.sales import Payment
 
 _MAX_ROWS = 500
 _MAX_LINES = 500                           # lines on one document; more shipments go on further documents
@@ -56,6 +58,8 @@ class EntityRow(Out):
     purchases: float                       # from other companies in the period
     billed: float                          # net of credit notes, before tax, in the period
     tax: float
+    receivable: float = 0.0                # owed to it by the other companies on the day (tax included)
+    payable: float = 0.0                   # it owes the other companies
 
 
 class ShipmentRow(Out):
@@ -138,6 +142,8 @@ class InvoiceRow(Out):
     total: float
     cancelled: bool
     note: str
+    paid: float = 0.0                      # settled between the companies, to the day
+    open: float = 0.0
 
 
 class Consolidation(Out):
@@ -242,11 +248,14 @@ def _row(ds: Dataset, inv: IntercompanyInvoice) -> InvoiceRow:
         ship_to_name=_name(ds, inv.ship_to), place_of_supply=_state(ds, inv.ship_to), split=inv.split, lines=lines,
         net=inv.net, cgst=half if inv.split == "cgst_sgst" else 0.0,
         sgst=round(tax - half, 2) if inv.split == "cgst_sgst" else 0.0, igst=tax if inv.split == "igst" else 0.0,
-        tax=tax, total=round(inv.net + tax, 2), cancelled=inv.cancelled, note=inv.note)
+        tax=tax, total=round(inv.net + tax, 2), cancelled=inv.cancelled, note=inv.note,
+        paid=round(sum(p.amount + p.discount for p in inv.payments), 2), open=inv.open)
 
 
 def _day_of(ds: Dataset, as_of: date | None) -> date:
-    return as_of or max([ds.settings.planning_start, *(m.date for m in ds.movements)])
+    return as_of or max([ds.settings.planning_start, *(m.date for m in ds.movements),
+                         *(i.date for i in ds.intercompany_invoices),
+                         *(p.date for i in ds.intercompany_invoices for p in i.payments)])
 
 
 def view(ds: Dataset, as_of: date | None = None, period_start: date | None = None,
@@ -294,6 +303,10 @@ def view(ds: Dataset, as_of: date | None = None, period_start: date | None = Non
         if not inv.cancelled and p0 <= inv.date <= p1:
             sums[inv.seller]["billed"] += inv.sign * inv.net
             sums[inv.seller]["tax"] += inv.sign * inv.tax
+        if not inv.cancelled and inv.date <= day and inv.seller != inv.buyer:
+            left = inv.total - sum(p.amount + p.discount for p in inv.payments if p.date <= day)
+            sums[inv.seller]["receivable"] += inv.sign * left
+            sums[inv.buyer]["payable"] += inv.sign * left
 
     stock_by: dict[str, float] = defaultdict(float)
     places: dict[str, list[str]] = defaultdict(list)
@@ -311,7 +324,8 @@ def view(ds: Dataset, as_of: date | None = None, period_start: date | None = Non
                               cost=round(sm.get("cost", 0.0), 2),
                               margin=round(sm.get("sales", 0.0) - sm.get("cost", 0.0), 2),
                               purchases=round(sm.get("purchases", 0.0), 2), billed=round(sm.get("billed", 0.0), 2),
-                              tax=round(sm.get("tax", 0.0), 2)))
+                              tax=round(sm.get("tax", 0.0), 2), receivable=round(sm.get("receivable", 0.0), 2),
+                              payable=round(sm.get("payable", 0.0), 2)))
 
     orders = []
     shipped: dict[str, float] = defaultdict(float)
@@ -480,10 +494,44 @@ def cancel(ds: Dataset, iid: str) -> tuple[Dataset, IntercompanyReport]:
              and {ln.movement for ln in i.lines} & {ln.movement for ln in inv.lines}]
     if later:
         raise IntercompanyError(f"{', '.join(later)} credits shipments on {iid}: cancel it first")
+    if inv.payments:
+        raise IntercompanyError(f"{iid} has been settled in part or in full: it cannot be cancelled")
     new = ds.model_copy(update={"intercompany_invoices": [i.model_copy(update={"cancelled": True}) if i.id == iid
                                                           else i for i in ds.intercompany_invoices]})
     return new, IntercompanyReport(message=f"{iid} cancelled: its shipments are on the billing due list again.",
                                    invoices=[iid])
+
+
+def pay(ds: Dataset, iid: str, amount: float | None = None, on: date | None = None, reference: str = ""
+        ) -> tuple[Dataset, IntercompanyReport]:
+    """Settle an inter-company invoice: the buyer pays the seller (for a credit note, the seller pays back).
+    ``amount`` None = what is still open."""
+    inv = next((i for i in ds.intercompany_invoices if i.id == iid), None)
+    if inv is None:
+        raise IntercompanyError(f"there is no inter-company invoice {iid}")
+    if inv.cancelled:
+        raise IntercompanyError(f"{iid} is cancelled")
+    if inv.seller == inv.buyer:
+        raise IntercompanyError(f"{iid} is between two registrations of one company: nothing to settle")
+    left = inv.open
+    if left <= 0.005:
+        raise IntercompanyError(f"{iid} is already settled")
+    amt = left if amount is None else round(float(amount), 2)
+    if not math.isfinite(amt) or amt <= 0:
+        raise IntercompanyError("a payment needs an amount above zero")
+    if amt > left + 0.005:
+        raise IntercompanyError(f"{iid} only has {_money(ds, left)} open")
+    day = on or _day_of(ds, None)
+    if day < inv.date:
+        raise IntercompanyError(f"{iid} is dated {inv.date.isoformat()}: it cannot be paid before")
+    new = inv.model_copy(update={"payments": [*inv.payments, Payment(date=day, amount=amt, reference=reference[:64])]})
+    payer, payee = (inv.buyer, inv.seller) if inv.kind == "invoice" else (inv.seller, inv.buyer)
+    rest = new.open
+    msg = (f"{_money(ds, amt)} paid by {party(ds, payer).name} to {party(ds, payee).name} for {iid}"
+           + ("; settled." if rest <= 0.005 else f"; {_money(ds, rest)} still open."))
+    return (ds.model_copy(update={"intercompany_invoices": [new if i.id == iid else i
+                                                             for i in ds.intercompany_invoices]}),
+            IntercompanyReport(message=msg, invoices=[iid]))
 
 
 def missing_prices(ds: Dataset) -> list[tuple[str, str, str, str]]:
@@ -502,4 +550,4 @@ def missing_prices(ds: Dataset) -> list[tuple[str, str, str, str]]:
 
 
 __all__ = ["Consolidation", "EntityRow", "IntercompanyError", "IntercompanyReport", "IntercompanyView", "InvoiceRow",
-           "OrderRow", "ShipmentRow", "bill", "cancel", "missing_prices", "view"]
+           "OrderRow", "ShipmentRow", "bill", "cancel", "missing_prices", "pay", "view"]

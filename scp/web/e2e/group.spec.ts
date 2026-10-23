@@ -98,4 +98,20 @@ test("an inter-company transfer: firmed, shipped, received, billed at the transf
   await expect(inv).toContainText("cancelled");
   await page.getByRole("tab", { name: /To bill/ }).click();
   await expect(page.getByRole("button", { name: /^Bill 1 shipment$/ })).toBeVisible();
+
+  // billed again and settled: North pays what it owes, and neither company owes the other anything
+  await page.getByRole("button", { name: /^Bill 1 shipment$/ }).click();
+  await expect(done(page)).toContainText("invoice IC/0002", { timeout: 30_000 });
+  await page.getByRole("tab", { name: /Companies/ }).click();
+  expect(num(await north.locator("td").nth(10).innerText())).toBeCloseTo(num(await ours.locator("td").nth(9).innerText()), 0);
+  expect(num(await ours.locator("td").nth(9).innerText())).toBeGreaterThanOrEqual(amount - 0.5);   // the invoice, with any tax
+  await page.getByRole("tab", { name: /Invoices/ }).click();
+  const inv2 = page.getByRole("table", { name: "Inter-company invoices" }).getByRole("row", { name: /IC\/0002/ });
+  await inv2.getByRole("button", { name: "Settle IC/0002" }).click();
+  await expect(done(page)).toContainText("paid by Kaveri Appliances North Pvt Ltd (fictional) to Kaveri Kitchenware Pvt Ltd (fictional) for IC/0002; settled.", { timeout: 30_000 });
+  await expect(inv2).toContainText("settled");
+  await expect(inv2.getByRole("button", { name: "Cancel IC/0002" })).toHaveCount(0);
+  await page.getByRole("tab", { name: /Companies/ }).click();
+  expect(num(await ours.locator("td").nth(9).innerText())).toBe(0);
+  expect(num(await north.locator("td").nth(10).innerText())).toBe(0);
 });

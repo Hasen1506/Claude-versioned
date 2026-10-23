@@ -8,7 +8,7 @@ import type {
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
   User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
-  WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, IntercompanyView, IntercompanyAction, IntercompanyActionInput, IntercompanyActionResponse, CyclePlan, PutawayProposal, PickList, WarehouseActionResponse,
+  WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, AccountingView, AccountingExport, IntercompanyView, IntercompanyAction, IntercompanyActionInput, IntercompanyActionResponse, CyclePlan, PutawayProposal, PickList, WarehouseActionResponse,
   TransportView, TransportAction, TransportActionResponse,
   OutsideView, OutsideAction, OutsideActionInput, OutsideActionResponse,
   PortalView, PortalAction, PortalActionInput, PortalActionResponse, PortalLink,
@@ -351,7 +351,21 @@ export const api = {
     planPost<ValuationView>(`/api/valuation${books === "group" ? "?books=group" : ""}`, ds),
   /** The companies of the group: transfers between them, billing, invoices and the profit in stock (Enterprise 7.3). */
   intercompany: (ds: Dataset) => planPost<IntercompanyView>("/api/intercompany", ds),
-  /** Bill the shipments due between companies, or cancel an inter-company invoice. */
+  /** The accounts: the journal made from movements, invoices and payments, balances and checks (Enterprise 7.4). */
+  accounting: (ds: Dataset, start?: string, end?: string) => {
+    const q = new URLSearchParams();
+    if (start) q.set("period_start", start);
+    if (end) q.set("period_end", end);
+    return planPost<AccountingView>(`/api/accounting${q.size ? `?${q}` : ""}`, ds);
+  },
+  /** One company's vouchers as Tally's import file, or the journal as a spreadsheet. */
+  accountingExport: (ds: Dataset, format: "tally" | "csv", company = "", start?: string, end?: string) => {
+    const q = new URLSearchParams({ format, company });
+    if (start) q.set("period_start", start);
+    if (end) q.set("period_end", end);
+    return planPost<AccountingExport>(`/api/accounting/export?${q}`, ds);
+  },
+  /** Bill the shipments due between companies, cancel an inter-company invoice, or settle one. */
   intercompanyAct: (dataset: Dataset, action: IntercompanyAction, extra: Partial<IntercompanyActionInput> = {}) =>
     write<IntercompanyActionResponse>("/api/intercompany/act", dataset, { action, ...extra }),
   /** Cycle counting: each stocked product's ABC class, its last count and when it is next due (Enterprise 6.2). */

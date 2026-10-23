@@ -1138,7 +1138,7 @@ The products carry HSN codes, and the plant and the company carry GSTINs.
 | N307 | A third-party order closed short kept the margin of the quantity ordered. | Minor | **Fixed:** closed short, the margin is on what was shipped. |
 | N308 | An order partly at a job worker was offered again "not in the routing", with no job charge. | Minor | **Fixed:** the job worker and charge of its last challan are offered. |
 | N309 | The page header counted an order closed short, not yet billed, as open. | Minor | **Fixed:** open means still to send or to dispatch. |
-| N310 | The job charge is not in the motors' cost or stock value. Tax on deemed supplies is shown, not invoiced. ITC-04 is a CSV, not the GST portal's file. There is no e-way bill. The job worker's own challans are not checked. Planning does not count parts at a job worker as available for the order. A third-party order is a document of its own, not a line of a sales order, and is sent without a printed order. | Minor | Open: the job charge and postings with 7.4, the portal file and e-way bill, the planning view of stock at job workers, third-party lines on sales orders and their order document (with 7.2). |
+| N310 | The job charge is not in the motors' cost or stock value. Tax on deemed supplies is shown, not invoiced. ITC-04 is a CSV, not the GST portal's file. There is no e-way bill. The job worker's own challans are not checked. Planning does not count parts at a job worker as available for the order. A third-party order is a document of its own, not a line of a sales order, and is sent without a printed order. | Minor | Open: the portal file and e-way bill, the planning view of stock at job workers, third-party lines on sales orders and their order document (with 7.2). |
 
 ### 7.2: Supplier portal and UBL messages
 
@@ -1220,7 +1220,67 @@ turned on GST at 18 % with the CGST/SGST/IGST split; the browser test kept the e
 | N317 | Billing more than 500 shipments between one pair of places failed, because an invoice holds 500 lines. | Minor | **Fixed:** the rest go on further invoices. A number given by hand is refused when there would be more than one document. |
 | N318 | The rate showed to the paisa but was charged to four decimals. On 458 units, quantity × rate missed the taxable value by ₹1.28. The browser test caught it. | Minor | **Fixed:** transfer prices are to the paisa. |
 | N319 | The open inter-company orders listed STO-2201, already received. The companies table counted only the current month, so a shipment of 29 Oct showed nothing on 4 Nov. | Minor | **Fixed:** what has been received is not open. The table covers the financial year to date (from April with the rupee). |
-| N320 | The group shares one currency (no foreign subsidiary in its own). Planning treats the group as one company: no transfer price in planned cost, no planning per company. Cost plus is on the planned unit value, not the actual cost. Inter-company invoices have no e-invoice IRN or e-way bill. Nothing is settled between companies: their receivables and payables come with 7.4. | Minor | Open: settlement and postings with 7.4. |
+| N320 | The group shares one currency (no foreign subsidiary in its own). Planning treats the group as one company: no transfer price in planned cost, no planning per company. Cost plus is on the planned unit value, not the actual cost. Inter-company invoices have no e-invoice IRN or e-way bill. Nothing is settled between companies: their receivables and payables come with 7.4. | Minor | **Settled and posted with 7.4** (N325); a currency and planning per company open. |
+
+### 7.4: The accounts
+
+ENTERPRISE_PLAN 7.4, on the Kaveri Kitchenware example (*Money → Accounts*), through the API and in the browser. The
+API run turned on GST at 18 %; the browser test kept the example as it is. Every check (stock against the stock
+books, goods in transit, customers, suppliers, GR/IR, group companies) agreed at every step.
+
+* *Input:*
+  * Kaveri as it ships: 42 vouchers from 1 April (the financial year) to 3 October.
+  * In Kaveri's books: stock ₹2,68,71,650.76 against opening balances of ₹2,87,11,969.22. In Kaveri Appliances
+    North's books: stock ₹24,17,057.35.
+  * Two notes:
+    * Work in progress is ₹10,61,288.43 below zero, because goods were made with no parts issued to their orders.
+    * Two deliveries worth ₹33,23,500 are not invoiced, so their cost is in the books and their sales are not.
+* *Processing:*
+  * Buying:
+    * 10,000 heater elements arrive from Shenzhen on PO-4500012871.
+    * The invoice is entered at USD 1.35 (USD 13,500) and paid.
+    * The receipt credited GR/IR with the order's price in rupees (₹11,36,700) and *freight, duty and handling*
+      with the ₹2,79,840 of duty and freight the stock was valued with.
+    * The invoice cleared GR/IR against the supplier, and the payment cleared the supplier against the bank.
+  * Selling:
+    * Both deliveries are invoiced: INV-00001 (₹15,34,590) and INV-00002 (₹23,87,140), both with IGST.
+    * West trade distributors pay INV-00001.
+    * INV-00002 was shipped from the Delhi DC, so it is in Kaveri Appliances North's books.
+  * Inter-company:
+    * STO-02202 (525 kettles) ships to Delhi: ₹2,40,214.84 leaves Kaveri's stock to *cost of goods sold to group
+      companies*.
+    * In North's books, ₹2,54,630.25 is on the road against *inter-company GR/IR*.
+    * On arrival, the road is emptied into stock at the standard (₹2,47,575.34), and ₹7,054.91 goes to price
+      differences.
+    * IC/0001 is billed: Kaveri is owed ₹3,00,463.69 with IGST, North owes it with ₹45,833.44 input tax, and the
+      bill clears North's inter-company GR/IR.
+    * North settles it.
+* *Output:*
+  * 55 vouchers.
+  * Kaveri's bank holds ₹6,98,353.69: ₹15,34,590 from the customer, plus ₹3,00,463.69 from North, less
+    ₹11,36,700 to Shenzhen.
+  * North's bank is ₹3,00,463.69 down, and it is owed ₹23,87,140.
+  * Tally's file for each company: Kaveri has 41 vouchers and 16 ledgers; North has 14 vouchers and 12 ledgers.
+    Every voucher balances.
+  * The journal as CSV: 116 lines.
+  * In the browser, both deliveries are invoiced on *Selling* and one is paid. The tests then check:
+    * The bank balance equals the payment.
+    * North's customer owes its invoice.
+    * The journal holds the invoice's debit and the payment's credit.
+    * Every check agrees.
+    * The Tally file carries the bank's ledger name and the company name given in Tally.
+* *At 20,000 movements and 3,000 invoices with their payments (26,001 vouchers):* the view takes 2.1 s, Tally's
+  file 2.4 s (10 MB), and every check agrees.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N321 | A supplier's credit memo with delivery costs added them to the stock instead of taking them off. | Major | **Fixed:** they come off. |
+| N322 | A transfer receipt taken back left the goods nowhere: off the stock and not on the road. | Minor | **Fixed:** they are on the road again, at what they came in at. |
+| N323 | At a moving-average price, goods a customer sent back came in at the planned value, not at what they left at. Cost of sales did not take them back. | Major | **Fixed:** they come back at the value the sale left at, and cost of sales is reduced by it. |
+| N324 | Stock values carried fractions of a paisa, so a journal posting rounded to the paisa drifted from the stock books. | Minor | **Fixed:** each posting is rounded to the paisa and the value is their sum. The last unit out takes what is left. A sale at the average no longer counts as moving it. |
+| N325 | Nothing was settled between the companies of the group (N320). | Minor | **Fixed:** an inter-company invoice is settled from its row (the buyer pays, or the seller pays a credit note back). Each company shows what the others owe it and what it owes. A settled invoice cannot be cancelled. |
+| N326 | The journal's residual line on a sales, purchase or inter-company document hid mistakes in it (a mutation test showed it). | Minor | **Fixed:** anything a money document leaves over goes to the suspense account and the page says so. |
+| N327 | A sales invoice shipped from a place of another company of the group is numbered in the main company's series and printed with its GSTIN. Duty and freight taken into stock wait for customs and forwarders' bills that are not entered here (only carriers' freight bills are). A cancelled document drops out of the journal instead of being reversed, so a file already in Tally needs the cancellation by hand. There is no year-end closing. The Tally file is checked for its structure, not imported into Tally. | Minor | Open. |
 
 ## Found in the second reality check (after Phase E)
 

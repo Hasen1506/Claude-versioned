@@ -2504,9 +2504,50 @@ export interface paths {
         /**
          * Post Intercompany Action
          * @description Bill the shipments due between companies (an invoice per pair of places, a credit note for what came back),
-         *     or cancel an invoice.
+         *     cancel an invoice, or settle one (the buyer pays the seller).
          */
         post: operations["post_intercompany_action_api_intercompany_act_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/accounting": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Accounting
+         * @description The accounts (Enterprise 7.4): the double-entry journal made from the movements, invoices and payments, each
+         *     company's balances on the period's last day and its checks against the documents.
+         */
+        post: operations["post_accounting_api_accounting_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/accounting/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Accounting Export
+         * @description One company's vouchers of the period as Tally's import file, or the whole journal as a spreadsheet (CSV).
+         */
+        post: operations["post_accounting_export_api_accounting_export_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2862,6 +2903,53 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AccountBalance */
+        AccountBalance: {
+            /** Company */
+            company: string;
+            /** Account */
+            account: string;
+            /** Name */
+            name: string;
+            /** Group */
+            group: string;
+            /** Nature */
+            nature: string;
+            /**
+             * Party
+             * @default
+             */
+            party: string;
+            /**
+             * Party Name
+             * @default
+             */
+            party_name: string;
+            /** Debit */
+            debit: number;
+            /** Credit */
+            credit: number;
+            /** Balance */
+            balance: number;
+        };
+        /** AccountCheck */
+        AccountCheck: {
+            /** Company */
+            company: string;
+            /** What */
+            what: string;
+            /** Journal */
+            journal: number;
+            /** Expected */
+            expected: number;
+            /** Ok */
+            ok: boolean;
+            /**
+             * Why
+             * @default
+             */
+            why: string;
+        };
         /** AccountConfirm */
         AccountConfirm: {
             /**
@@ -2904,6 +2992,65 @@ export interface components {
             choices: {
                 [key: string]: string;
             };
+        };
+        /** AccountRow */
+        AccountRow: {
+            /** Code */
+            code: string;
+            /** Name */
+            name: string;
+            /** Group */
+            group: string;
+            /** Nature */
+            nature: string;
+            /** Ledger */
+            ledger: string;
+        };
+        /** AccountingExport */
+        AccountingExport: {
+            /** Name */
+            name: string;
+            /** Text */
+            text: string;
+        };
+        /** AccountingView */
+        AccountingView: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /**
+             * Period Start
+             * Format: date
+             */
+            period_start: string;
+            /**
+             * Period End
+             * Format: date
+             */
+            period_end: string;
+            /** Currency */
+            currency: string;
+            /** Companies */
+            companies: components["schemas"]["BooksCompany"][];
+            /** Accounts */
+            accounts: components["schemas"]["AccountRow"][];
+            /** Balances */
+            balances: components["schemas"]["AccountBalance"][];
+            /** Parties */
+            parties: components["schemas"]["AccountBalance"][];
+            /** Vouchers */
+            vouchers: components["schemas"]["Voucher"][];
+            /** Voucher Count */
+            voucher_count: number;
+            /** Checks */
+            checks: components["schemas"]["AccountCheck"][];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
         };
         /**
          * AccuracyRecord
@@ -3659,6 +3806,19 @@ export interface components {
              * @default
              */
             change: string;
+        };
+        /** BooksCompany */
+        BooksCompany: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Tally Name */
+            tally_name: string;
+            /** Vouchers */
+            vouchers: number;
+            /** Profit */
+            profit: number;
         };
         /** BopRow */
         BopRow: {
@@ -5944,6 +6104,16 @@ export interface components {
             billed: number;
             /** Tax */
             tax: number;
+            /**
+             * Receivable
+             * @default 0
+             */
+            receivable: number;
+            /**
+             * Payable
+             * @default 0
+             */
+            payable: number;
         };
         /** ErpAck */
         ErpAck: {
@@ -6360,6 +6530,19 @@ export interface components {
              * @description Per year for NPV; empty = the company WACC
              */
             discount_rate?: number | null;
+            /**
+             * Ledgers
+             * @description Accounting (Enterprise 7.4): the ledger name in Tally for an account of the journal, by its code (STOCK, GRIR, SALES, …); empty = ours
+             */
+            ledgers?: {
+                [key: string]: string;
+            };
+            /**
+             * Tally Company
+             * @description The company's name in Tally, for the export; empty = its name here
+             * @default
+             */
+            tally_company: string;
         };
         /** Finding */
         Finding: {
@@ -7384,7 +7567,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "bill" | "cancel";
+            action: "bill" | "cancel" | "pay";
             /** Id */
             id?: string | null;
             /** Movements */
@@ -7396,6 +7579,13 @@ export interface components {
              * @default
              */
             note: string;
+            /** Amount */
+            amount?: number | null;
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
         };
         /** IntercompanyActionResponse */
         IntercompanyActionResponse: {
@@ -7465,6 +7655,11 @@ export interface components {
              * @default
              */
             note: string;
+            /**
+             * Payments
+             * @description Settled between the companies: the buyer's payments (paid back, for a credit note)
+             */
+            payments?: components["schemas"]["Payment"][];
         };
         /** IntercompanyLine */
         IntercompanyLine: {
@@ -7971,6 +8166,16 @@ export interface components {
             cancelled: boolean;
             /** Note */
             note: string;
+            /**
+             * Paid
+             * @default 0
+             */
+            paid: number;
+            /**
+             * Open
+             * @default 0
+             */
+            open: number;
         };
         /** InvoiceView */
         InvoiceView: {
@@ -8310,6 +8515,36 @@ export interface components {
             value_out: number;
             /** Deemed Tax */
             deemed_tax: number;
+        };
+        /** JournalLine */
+        JournalLine: {
+            /** Account */
+            account: string;
+            /**
+             * Party
+             * @default
+             */
+            party: string;
+            /**
+             * Location
+             * @default
+             */
+            location: string;
+            /**
+             * Product
+             * @default
+             */
+            product: string;
+            /**
+             * Debit
+             * @default 0
+             */
+            debit: number;
+            /**
+             * Credit
+             * @default 0
+             */
+            credit: number;
         };
         /** KeepRequest */
         KeepRequest: {
@@ -17446,6 +17681,26 @@ export interface components {
             /** Company */
             company: string;
         };
+        /** Voucher */
+        Voucher: {
+            /** Number */
+            number: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Company */
+            company: string;
+            /** Type */
+            type: string;
+            /** Document */
+            document: string;
+            /** Narration */
+            narration: string;
+            /** Lines */
+            lines: components["schemas"]["JournalLine"][];
+        };
         /** WarehouseActionRequest */
         WarehouseActionRequest: {
             dataset: components["schemas"]["Dataset"];
@@ -22358,6 +22613,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IntercompanyActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_accounting_api_accounting_post: {
+        parameters: {
+            query?: {
+                period_start?: string | null;
+                period_end?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountingView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_accounting_export_api_accounting_export_post: {
+        parameters: {
+            query?: {
+                format?: "tally" | "csv";
+                company?: string;
+                period_start?: string | null;
+                period_end?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountingExport"];
                 };
             };
             /** @description Validation Error */

@@ -18,6 +18,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from .common import Id, Model, Ref, Unit
+from .sales import Payment
 
 
 class LegalEntity(Model):
@@ -86,6 +87,8 @@ class IntercompanyInvoice(Model):
     lines: list[IntercompanyLine] = Field(min_length=1, max_length=500)
     cancelled: bool = False
     note: str = Field("", max_length=400)
+    payments: list[Payment] = Field(default_factory=list, description="Settled between the companies: the buyer's "
+                                                                       "payments (paid back, for a credit note)")
 
     @property
     def net(self) -> float:
@@ -94,6 +97,16 @@ class IntercompanyInvoice(Model):
     @property
     def tax(self) -> float:
         return round(sum(ln.tax for ln in self.lines), 2)
+
+    @property
+    def total(self) -> float:
+        return round(self.net + self.tax, 2)
+
+    @property
+    def open(self) -> float:
+        """Still to settle (paid to the seller, or paid back to the buyer for a credit note)."""
+        return 0.0 if self.cancelled else round(max(0.0, self.total - sum(p.amount + p.discount
+                                                                          for p in self.payments)), 2)
 
     @property
     def sign(self) -> float:

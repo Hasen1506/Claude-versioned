@@ -344,6 +344,21 @@ A scheduled import can ask Tally Prime or Zoho Inventory directly (*Connect Tall
 - **Try it** and **Dry run** work as for a file: a pasted answer of Tally's (or one page of Zoho's) is read as the
   connector would; a dry run of `send:purchase_order` builds what would be sent and sends nothing.
 
+### The accounts to Tally
+
+*Money → Accounts → Tally* makes the journal (Enterprise 7.4) as Tally's import file. Each company of the group gets
+its own file: its ledgers, then its vouchers for the period. Ledgers are created under their Tally group: customers
+and suppliers by name under Sundry Debtors and Sundry Creditors, the others (Stock, GR/IR, Sales, Output IGST, Bank,
+…) under the groups listed on the page. In Tally Prime, go to *Gateway of Tally → Import → Vouchers* and choose the
+file. A debit is written as a negative amount with `ISDEEMEDPOSITIVE` Yes, which is how Tally keeps it.
+
+* Give each account the ledger name the books already use (*Ledger names in Tally*, kept in `finance.ledgers` by
+  the account's code), and the company's name in Tally (`finance.tally_company`).
+* The same journal comes as a spreadsheet: `POST /api/accounting/export?format=csv`. The Tally file is
+  `format=tally&company=<id>`, where an empty id is the company itself. Both take `period_start` and `period_end`.
+* A document cancelled after its voucher went to Tally is not reversed in the next file: put the cancellation into
+  Tally by hand.
+
 ## Shopify and Odoo
 
 *Connect Shopify* and *Connect Odoo* (`source_type` `shopify` or `odoo`) work as Tally and Zoho do: one kind a job,

@@ -69,7 +69,9 @@ export function Group({ route }: { route: string[] }) {
       <a href={href("data", "transfer_prices")}>transfer prices</a> that fits. Each shipment is <b>billed</b> on a GST
       tax invoice from the seller's own series (CGST and SGST in one state, IGST across); a transfer between two GST
       registrations of one company is billed too, at cost. The receiving company's books take the goods at what it
-      paid; the group's books keep them at what they cost the group, and the difference is the profit still in stock.</>}
+      paid; the group's books keep them at what they cost the group, and the difference is the profit still in stock.
+      An invoice is <b>settled</b> when the buyer pays it: each company's <a href={href("accounts")}>accounts</a>
+      carry what the others owe it and what it owes them until then.</>}
     answer={v ? <>{plural(n, "company", "companies")}; {v.consolidation.sales ? `${money(v.consolidation.sales, cur)} sold between them, ${money(v.consolidation.margin, cur)} margin, ${money(v.consolidation.unrealised, cur)} of it still in stock` : "nothing shipped between them yet"}
       {v.due ? `; ${plural(v.due, "shipment")} to bill (${money(v.due_value, cur)})` : "; everything shipped is billed"}.</> : undefined} />;
   return (
@@ -109,13 +111,15 @@ function Companies({ ds, v }: { ds: Dataset; v: IntercompanyView }) {
       actions={<a className="btn sm" href={href("data", "entities")}>Companies and their GSTINs</a>}>
       <div className="table-wrap"><table className="t" aria-label="Companies of the group">
         <thead><tr><th>Company</th><th>GSTIN</th><th>Places</th><th className="num">Stock in its books</th><th className="num">Sold to the group</th>
-          <th className="num">Cost of it</th><th className="num">Margin</th><th className="num">Bought from the group</th><th className="num">Billed</th></tr></thead>
+          <th className="num">Cost of it</th><th className="num">Margin</th><th className="num">Bought from the group</th><th className="num">Billed</th>
+          <th className="num">Owed to it</th><th className="num">It owes</th></tr></thead>
         <tbody>{v.entities.map((e) => <tr key={e.id || "-"}>
           <td><b>{e.name}</b>{!e.id && <div className="faint">this company</div>}</td><td className="mono">{e.tax_id || "—"}</td>
           <td>{e.places.map((p) => nm.loc(p)).join(", ") || "—"}</td>
           <td className="num">{exactMoney(e.stock, cur)}</td><td className="num">{exactMoney(e.sales, cur)}</td>
           <td className="num">{exactMoney(e.cost, cur)}</td><td className="num">{exactMoney(e.margin, cur)}</td>
           <td className="num">{exactMoney(e.purchases, cur)}</td><td className="num">{exactMoney(e.billed, cur)}</td>
+          <td className="num">{exactMoney(e.receivable ?? 0, cur)}</td><td className="num">{exactMoney(e.payable ?? 0, cur)}</td>
         </tr>)}</tbody>
       </table></div>
     </Panel>
@@ -188,7 +192,8 @@ function Invoices({ ds, v, step }: { ds: Dataset; v: IntercompanyView; step: Ste
   return <Panel flush title="Inter-company invoices and credit notes, latest first">
     <div className="table-wrap"><table className="t" aria-label="Inter-company invoices">
       <thead><tr><th>Number</th><th>Date</th><th>From</th><th>To</th><th>Place of supply</th><th className="num">Taxable value</th>
-        <th className="num">CGST</th><th className="num">SGST</th><th className="num">IGST</th><th className="num">Total</th><th></th></tr></thead>
+        <th className="num">CGST</th><th className="num">SGST</th><th className="num">IGST</th><th className="num">Total</th>
+        <th className="num">Open</th><th></th></tr></thead>
       <tbody>{v.invoices.map((i) => <tr key={i.id} className={i.cancelled ? "muted" : undefined}>
         <td className="mono"><b>{i.id}</b>{i.kind === "credit_note" && <div><Badge sev="info">credit note</Badge></div>}
           {i.cancelled && <div><Badge sev="error">cancelled</Badge></div>}</td>
@@ -197,10 +202,14 @@ function Invoices({ ds, v, step }: { ds: Dataset; v: IntercompanyView; step: Ste
         <td className="num">{exactMoney(i.net, cur)}</td><td className="num">{i.cgst ? exactMoney(i.cgst, cur) : "—"}</td>
         <td className="num">{i.sgst ? exactMoney(i.sgst, cur) : "—"}</td><td className="num">{i.igst ? exactMoney(i.igst, cur) : "—"}</td>
         <td className="num">{exactMoney(i.total, cur)}</td>
+        <td className="num">{i.cancelled || i.seller === i.buyer ? "—" : (i.open ?? 0) > 0.005 ? exactMoney(i.open ?? 0, cur) : <Badge sev="ok">settled</Badge>}</td>
         <td><div className="row">
           <button className="btn sm ghost" aria-label={`Print ${i.id}`} title="Three copies: original, duplicate, triplicate"
             onClick={() => printInvoice(i, ds)}>Print</button>
-          {!i.cancelled && <Edits><button className="btn sm ghost" disabled={step.busy} aria-label={`Cancel ${i.id}`}
+          {!i.cancelled && i.seller !== i.buyer && (i.open ?? 0) > 0.005 && <Edits><button className="btn sm" disabled={step.busy}
+            aria-label={`Settle ${i.id}`} title={i.kind === "credit_note" ? "The seller pays it back" : "The buyer pays what is open"}
+            onClick={() => step.run("pay", { id: i.id, date: v.as_of })}>Settle</button></Edits>}
+          {!i.cancelled && !(i.paid ?? 0) && <Edits><button className="btn sm ghost" disabled={step.busy} aria-label={`Cancel ${i.id}`}
             onClick={() => step.run("cancel", { id: i.id })}>Cancel</button></Edits>}
         </div></td>
       </tr>)}</tbody>

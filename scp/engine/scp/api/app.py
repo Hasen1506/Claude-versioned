@@ -6,7 +6,9 @@ members (see :mod:`scp.api.companies`); without a company, versions and the work
 """
 from __future__ import annotations
 
+import csv
 import datetime as dt
+import io
 import json
 import os
 import time
@@ -51,6 +53,7 @@ from .. import transport as tm
 from ..transport import TransportError, TransportReport, TransportView
 from ..transport import view as transport_view
 from .. import dropship as tp
+from .. import accounting as acct
 from .. import intercompany as ic
 from .. import jobwork as jw
 from ..dropship import DropShipError, DropShipView
@@ -1257,11 +1260,13 @@ def post_intercompany(ds: PlanData, as_of: dt.date | None = None, period_start: 
 
 class IntercompanyActionRequest(Out):
     dataset: PlanData
-    action: Literal["bill", "cancel"]
-    id: str | None = Field(None, max_length=16)        # bill: the number (one document); cancel: which
+    action: Literal["bill", "cancel", "pay"]
+    id: str | None = Field(None, max_length=16)        # bill: the number (one document); cancel, pay: which
     movements: list[str] | None = Field(None, max_length=500)   # bill: only these shipments
     date: dt.date | None = None
     note: str = Field("", max_length=400)
+    amount: float | None = Field(None, gt=0)           # pay: empty = what is open
+    reference: str = Field("", max_length=64)          # pay: the bank reference
 
 
 class IntercompanyActionResponse(Out):
@@ -1274,7 +1279,7 @@ class IntercompanyActionResponse(Out):
 @app.post("/api/intercompany/act", response_model=IntercompanyActionResponse)
 def post_intercompany_action(req: IntercompanyActionRequest) -> IntercompanyActionResponse:
     """Bill the shipments due between companies (an invoice per pair of places, a credit note for what came back),
-    or cancel an invoice."""
+    cancel an invoice, or settle one (the buyer pays the seller)."""
     ds = req.dataset
     try:
         if req.action == "bill":
@@ -1282,10 +1287,41 @@ def post_intercompany_action(req: IntercompanyActionRequest) -> IntercompanyActi
         else:
             if not req.id:
                 raise IntercompanyError("say which invoice")
-            new, r = ic.cancel(ds, req.id)
+            new, r = (ic.cancel(ds, req.id) if req.action == "cancel"
+                      else ic.pay(ds, req.id, req.amount, req.date, req.reference))
     except IntercompanyError as e:
         raise HTTPException(409, str(e)) from e
     return IntercompanyActionResponse(**answer(ds, new), message=r.message, invoices=r.invoices)
+
+
+@app.post("/api/accounting", response_model=acct.AccountingView)
+def post_accounting(ds: PlanData, period_start: dt.date | None = None, period_end: dt.date | None = None) -> Response:
+    """The accounts (Enterprise 7.4): the double-entry journal made from the movements, invoices and payments, each
+    company's balances on the period's last day and its checks against the documents."""
+    return respond("accounting", ds, lambda: acct.view(ds, period_start, period_end), period_start, period_end)
+
+
+class AccountingExport(Out):
+    name: str                              # the file's name
+    text: str
+
+
+@app.post("/api/accounting/export", response_model=AccountingExport)
+def post_accounting_export(ds: PlanData, format: Literal["tally", "csv"] = "tally", company: str = "",
+                           period_start: dt.date | None = None, period_end: dt.date | None = None) -> Response:
+    """One company's vouchers of the period as Tally's import file, or the whole journal as a spreadsheet (CSV)."""
+    def make() -> AccountingExport:
+        v = acct.view(ds, period_start, period_end, limit=10**9)
+        stem = f"journal-{v.period_start.isoformat()}-{v.period_end.isoformat()}"
+        if format == "csv":
+            buf = io.StringIO()
+            csv.writer(buf).writerows(acct.csv_rows(v, ds))
+            return AccountingExport(name=stem + ".csv", text=buf.getvalue())
+        if company and company not in ds.entity_by_id:
+            raise HTTPException(404, f"there is no company {company}")
+        return AccountingExport(name=f"tally-{company or 'main'}-{stem}.xml",
+                                text=acct.tally_xml(ds, company, period_start, period_end))
+    return respond("accounting-export", ds, make, format, company, period_start, period_end)
 
 
 # --- versions & scenarios (P8) -------------------------------------------------------------------
