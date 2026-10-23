@@ -312,11 +312,12 @@ class Dataset(Model):
         at = self.demand_lp_at(node)
         if at is None or at == node[0]:
             return lp
-        # the upstream policy as planning uses it: an MRP group's strategy and windows apply here too
+        # the upstream policy as planning uses it: an MRP group's strategy, windows and demand time fence apply too
         up = self.planning_lp((at, node[1]))
         return lp.model_copy(update={"strategy": up.strategy,
                                      "consumption_backward_days": up.consumption_backward_days,
-                                     "consumption_forward_days": up.consumption_forward_days})
+                                     "consumption_forward_days": up.consumption_forward_days,
+                                     "demand_time_fence_days": up.demand_time_fence_days})
 
     @cached_property
     def customer_price_by_key(self) -> dict[tuple[str, str], CustomerPrice]:

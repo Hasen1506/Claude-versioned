@@ -329,6 +329,7 @@ const CODE_LABEL: Record<string, string> = {
   PO_CONFIRMED_LATE: "Supplier confirmed late", PO_CONFIRMED_SHORT: "Supplier confirmed less", PO_NOT_CONFIRMED: "Not confirmed by the supplier",
   RECEIPT_OVERDUE: "Order overdue", STOCK_EXPIRES: "Stock expires unused", LOT_EXPIRES: "Lot larger than its shelf life",
   OVERTIME_PLANNED: "Kept on its day with overtime", SUPPLY_SPLIT: "Split to stay within capacity", FOLLOW_UP: "Follow-up takes over",
+  DEMAND_TIME_FENCE: "Only orders count this close", REVIEW_LATE: "First review too late",
 };
 export function codeLabel(code: string): string {
   if (CODE_LABEL[code]) return CODE_LABEL[code];

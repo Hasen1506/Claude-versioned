@@ -9346,6 +9346,12 @@ export interface components {
              */
             firming_type: number;
             /**
+             * Demand Time Fence Days
+             * @description Demand time fence (master scheduling): inside it only customer orders count; what is left of the forecast there is not planned. Working days when the company counts them so
+             * @default 0
+             */
+            demand_time_fence_days: number;
+            /**
              * Rescheduling Horizon Days
              * @description Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner (empty: the company's)
              */
@@ -9933,6 +9939,11 @@ export interface components {
              * @description Firming type inside the planning time fence (S/4 §8.5): 1 = new orders move to the fence end, and those inside it are firmed when the week rolls; 2 = no new orders inside the fence (the shortage is reported), firmed when the week rolls; 3 = as 1, firmed by hand; 4 = as 2, firmed by hand (empty: each product's own)
              */
             firming_type?: number | null;
+            /**
+             * Demand Time Fence Days
+             * @description Demand time fence: only customer orders count inside it (empty: each product's own)
+             */
+            demand_time_fence_days?: number | null;
             /**
              * Consumption Backward Days
              * @description Calendar days a sales order may reach back to consume forecast (empty: each product's own)

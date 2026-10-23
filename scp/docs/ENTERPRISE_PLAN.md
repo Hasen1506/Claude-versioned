@@ -113,7 +113,8 @@ two in IDEAS.md. Next: 8.3, the other sections.
 In progress: 8.3, demand planning first (CONFORMANCE §2: 17 of 25 there at the audit). Done: stock-outs and lost sales
 read as demand (N341), 18 of 25; a tracking signal per series (N342), 19 of 25; the forecast by product family (N343), 20 of
 25. The other five (accuracy by lag, working-day effects, price as a driver, customer forecasts, demand sensing) go to
-IDEAS.md. Next in 8.3: supply planning (MRP) against the S/4 guide and CPIM.
+IDEAS.md. Then supply planning (CONFORMANCE §3: 20 of 25 there at the audit): the demand time fence (N344), 21 of 25;
+kanban and MRP areas to IDEAS.md. Next in 8.3: buying, then selling, warehouse, transport and money.
 
 | # | What | How |
 |---|---|---|

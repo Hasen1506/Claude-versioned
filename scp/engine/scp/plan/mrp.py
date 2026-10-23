@@ -268,11 +268,16 @@ class _Planner:
         st.reqs, st.supplies = [], []
         st.targets = list(self._targets.get(node, ()))
         parts = st.lp.strategy is Strategy.ASSEMBLY
+        dtf = rates.demand_fence_end(self.ds, node, self.ds.demand_lp(node)) if self._indep.get(node) else None
+        fenced = 0.0
         for r, days in self._indep.get(node, ()):
             ids: list[str] = []
             for i, (d, q) in enumerate(self._split(node, r.date, r.qty, days if r.kind == "forecast" else None)):
                 if d >= self.b.end:
                     continue  # beyond horizon (validator warned)
+                if dtf is not None and r.kind == "forecast" and d < dtf:
+                    fenced += q   # inside the demand time fence only customer orders count
+                    continue
                 rid = r.id if i == 0 else f"{r.id}~{i}"
                 req = Requirement(id=rid, location=node[0], product=node[1], date=max(d, self.start),
                                   qty=q, kind=r.kind, priority=r.priority,
@@ -281,6 +286,10 @@ class _Planner:
                 ids.append(rid)
             if parts and r.kind == "forecast" and ids:
                 st.forecasts.append((r.id, r.date, days, ids))
+        if fenced > EPS:
+            self._exc("DEMAND_TIME_FENCE", "info",
+                      f"{fenced:,.1f} of forecast before {dtf.isoformat()} not planned: inside the demand time fence "
+                      "only customer orders count", node=node, when=self.start, qty=fenced)
         for rc in self._rc_at.get(node, ()):
             if rc.confirmations:        # confirmed in several deliveries: each arrives on its own day
                 for day, q in rc.expected_parts():

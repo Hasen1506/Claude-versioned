@@ -20,7 +20,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from ..model import LocationProduct, LocationType, LotSizePolicy, SafetyStockMethod, Strategy
+from ..model import DemandKind, LocationProduct, LocationType, LotSizePolicy, SafetyStockMethod, Strategy
 from ..model.dataset import Dataset
 from ..network import NetworkGraph, Node, SupplyOption
 from . import costing
@@ -50,6 +50,18 @@ def _lp(ds: Dataset, node: Node) -> LocationProduct:
     return ds.planning_lp(node)
 
 
+def demand_fence_end(ds: Dataset, node: Node, lp: LocationProduct) -> date | None:
+    """The end of the demand time fence from the planning start (None: none), counted as the planning time fence is:
+    in working days of the place's calendar when the company counts fences so, else calendar days."""
+    if lp.demand_time_fence_days <= 0:
+        return None
+    start = ds.settings.planning_start
+    if ds.settings.working_day_fences:
+        from .leadtime import location_calendar
+        return location_calendar(ds, node[0]).add_workdays(start, lp.demand_time_fence_days)
+    return start + timedelta(days=lp.demand_time_fence_days)
+
+
 def independent_demand(ds: Dataset, orders_consume: bool = False) -> dict[Node, list[tuple[IndependentReq, int]]]:
     """Each node's independent requirements as MRP plans them (forecast after consumption by sales orders,
     plus the orders, by planning strategy), each with the days it spreads over (an order: one). With
@@ -72,6 +84,13 @@ def independent_demand(ds: Dataset, orders_consume: bool = False) -> dict[Node, 
                      for r in effective_demand(rs, strategy, lp.consumption_backward_days,
                                                lp.consumption_forward_days, ds=ds, node=node,
                                                variants=variants.get(node, ()))]
+        # inside a demand time fence the customer orders are the demand, whatever the strategy: under make to stock
+        # (orders served from the forecast's stock) the orders due inside it are planned (the forecast there is not)
+        dtf = demand_fence_end(ds, node, lp) if strategy is Strategy.MTS else None
+        if dtf is not None:
+            out[node] += [(IndependentReq(f"D:{rid}", r.date, r.qty, "sales_order", r.priority, rid), 1)
+                          for rid, r in rs if r.kind is DemandKind.SALES_ORDER and r.date < dtf]
+            out[node].sort(key=lambda x: (x[0].date, 0 if x[0].kind == "sales_order" else 1, x[0].id))
     return out
 
 

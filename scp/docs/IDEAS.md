@@ -180,3 +180,12 @@ on 9 Oct 2026. Not built yet:
 * **Demand sensing (D23).** The next two or three weeks nudged by open orders and the latest days' sales.
 * **A short delivery closed on an order as lost demand.** The roll marks stock-outs from the journal; a closed short
   order could write its shortfall as `lost_qty` too.
+
+## Supply planning (CONFORMANCE §3)
+
+* **Kanban (M21).** Pull loops for repetitive parts: a number of cards and a container quantity per loop, the plan
+  replenishing what was used instead of netting forecasts.
+* **MRP areas (M22).** A storage location or a subcontractor planned on its own within a place.
+* **Range of coverage (M23).** Safety stock and a maximum as days of demand (a target range), not only a quantity.
+* **A planning calendar on time-phased MRP (M24).** Orders placed on given days, each covering to the next; the review
+  calendar now does this on a reorder point.

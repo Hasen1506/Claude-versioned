@@ -342,6 +342,9 @@ class MrpGroup(Model):
     planning_time_fence_days: float | None = Unit("days", default=None,
                                                   description="No new proposals inside this fence")
     firming_type: int | None = Field(None, ge=1, le=4, description=FIRMING + " (empty: each product's own)")
+    demand_time_fence_days: float | None = Unit("days", ge=0, le=365, default=None,
+                                                description="Demand time fence: only customer orders count inside it "
+                                                            "(empty: each product's own)")
     consumption_backward_days: float | None = Unit(
         "days", default=None, description="Calendar days a sales order may reach back to consume forecast (empty: "
                                           "each product's own)")
@@ -359,7 +362,7 @@ class MrpGroup(Model):
         """The fields of a product at a place that the group sets."""
         keys = ("strategy", "lot_sizing", "safety_time_days", "planning_time_fence_days", "consumption_backward_days",
                 "consumption_forward_days", "mrp_controller", "rescheduling_horizon_days",
-                "reschedule_out_tolerance_days", "firming_type")
+                "reschedule_out_tolerance_days", "firming_type", "demand_time_fence_days")
         return {k: getattr(self, k) for k in keys if getattr(self, k) is not None}
 
 
@@ -403,6 +406,10 @@ class LocationProduct(Model):
                                            description="No new proposals inside this fence: see the firming type. "
                                                        "Working days when the company counts them so")
     firming_type: int = Field(3, ge=1, le=4, description=FIRMING)
+    demand_time_fence_days: float = Unit("days", ge=0, le=365, default=0.0,
+                                         description="Demand time fence (master scheduling): inside it only customer "
+                                                     "orders count; what is left of the forecast there is not planned. "
+                                                     "Working days when the company counts them so")
     rescheduling_horizon_days: float | None = Unit(
         "workdays", le=365, default=None, description="Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner (empty: the company's)")
     reschedule_out_tolerance_days: float | None = Unit(

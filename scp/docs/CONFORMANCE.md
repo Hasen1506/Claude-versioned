@@ -86,3 +86,41 @@ around it is thinner. The three that change numbers most are D13 (planners and S
 cannot here), D17 (stock-outs teach the forecast that demand fell) and D18 (no per-series alarm when a forecast keeps
 missing one way). 17 of 25 there, 3 partial, 5 missing. **Next in 8.3:** D17, D18, D13 in that order (each changes
 what the plan buys); D19–D23 to IDEAS.md unless cheap. **After D17:** 18 of 25 there. **After D18:** 19 of 25 there, 2 partial. **After D13:** 20 of 25 there, 2 partial, 3 missing (D20, D22, D23).
+
+## 3. Supply planning (MRP and DRP)
+
+Read against the S/4 guide (§5–§9, as in the backtests), CPIM Part 1 "master scheduling" and "material requirements
+planning", and Vollmann et al. *Manufacturing Planning and Control*. Audited 23 October 2026.
+
+| # | Concept | Engine | Page and name | Oracle | Status |
+|---|---|---|---|---|---|
+| M1 | Gross to net, time-phased, on a working calendar | `plan/mrp.plan_node` | Supply plan; Products at places → MRP view | test_mrp, test_scenarios, test_s4_backtest_b | there |
+| M2 | BOM explosion by low-level code; phantoms; co- and by-products; yield and scrap | `plan/structure`, `network` (llc) | Set up → make; Supply plan | test_structure, test_planning_depth, test_s4_guide_part_a | there |
+| M3 | Lead-time offset (backward scheduling), safety time in working days | `plan/leadtime`, `_create_order` | Supply plan | test_mrp, test_s4_backtest_b | there |
+| M4 | Lot sizes and their modifiers (min, max, rounding, full batches) | `plan/lotsize` | Products at places | test_mrp, test_planning_depth | there |
+| M5 | Firm planned orders, planning time fence, firming types | `fence_end`, firming 1–4 (EP 2.3) | Stock & actuals → firm zone | test_s4_guide_part_c | there |
+| M6 | Demand time fence (master scheduling): inside it only customer orders count, the forecast is ignored | `demand_time_fence_days` on the product at a place (and its MRP group; customer channels follow it): forecast left after consumption inside it is not planned; under make to stock the orders inside it are; DEMAND_TIME_FENCE says how much | Products at places → strategy; Supply plan → messages | test_mrp::test_inside_the_demand_time_fence… (hand-worked: 30.71, 35, 70; working days); e2e demand-fence | there (8.3) |
+| M7 | Exception messages: reschedule in / out, cancel, past due, below safety stock | `_reschedule_in`, `_reschedule_out`, exceptions | Home → inbox; Supply plan → situations | test_s4_backtest_b, test_mrp | there |
+| M8 | Rescheduling horizon and tolerance | EP 2.1 | Settings; MRP groups | test_s4_guide_part_c | there |
+| M9 | Pegging (single and full), sales-order stock, fixed pegging | `_peg`, EP 2.5 | Products at places → where needed; trace | test_mrp, test_planning_strategies | there |
+| M10 | Strategies: make to stock, to order, assemble to order, planning with final assembly; consumption windows | `plan/consumption`, strategies | Products at places → strategy | test_planning_strategies, test_mrp | there |
+| M11 | MRP types: time-phased, reorder point (continuous and periodic), DDMRP, no planning | `MrpType` | Products at places; Inventory policy | test_mrp, test_policy, test_inventory | there |
+| M12 | Sourcing: make or buy by priority, quota arrangement, fixed source, source validity | `_choose` | Set up → sources | test_mrp, test_purchasing | there |
+| M13 | Special procurement: direct production, follow-up on discontinuation, subcontracting (job work) | EP 7.1, P4 | Job work & drop-ship | test_planning_depth, test_outside | there |
+| M14 | Alternative BOMs and routings; engineering change by validity date | `production_sources` validity | Set up → make | test_planning_depth | there |
+| M15 | Distribution (DRP): transfers along lanes, transit time, lane capacity | `transfer` options | Supply plan; Map | test_mrp, test_network | there |
+| M16 | Capacity requirements (CRP) per machine per day, and levelling | `plan/level`, capacity-constrained MRP | Supply → Levelling | test_capacity, test_capacity_mrp | there |
+| M17 | Rough-cut capacity in the monthly plan (RCCP) | `sop` LP with resource rows | Supply → Capacity plan | test_sop | there |
+| M18 | Supplier and lane capacity limits in planning | P5 | Supply plan | test_planning_depth | there |
+| M19 | Net change (re-plan what a change reaches) beside regenerative | EP 5.1 | Plan everything | test_incremental | there |
+| M20 | Shelf life: lots within it, expiry as a requirement | R15, O1 | Supply plan | test_planning_depth, test_s4_guide_part_c | there |
+| M21 | Kanban (pull loops: cards, container quantity, replenish what was used) | — | — | — | missing |
+| M22 | MRP areas (a storage location or a subcontractor planned on its own) | — (a place is the planning unit) | — | — | missing: places stand in for them |
+| M23 | Range of coverage (safety stock and the maximum in days of demand) | days of supply on safety stock | Products at places | test_mrp | partial: no maximum or target range in days |
+| M24 | Lot size by planning calendar (order on given days, covering to the next) | review calendar on a reorder point (8.2) | Inventory policy | test_policy | partial: time-phased MRP has no planning calendar |
+| M25 | Planned order converted to a purchase requisition or production order, released to the floor | firming, Buying, production orders | Buying; Shop floor | test_purchasing, test_production | there |
+
+**What this section says** (audit): supply planning is the deepest part of the app (much of it was rebuilt against the
+S/4 guide and backtested), and it shows: 20 of 25 there, 2 partial, 3 missing. The gap that changes numbers is M6: the
+next days are planned from forecast the customers have not ordered. **Next in 8.3:** M6; M21 and M22 to IDEAS.md;
+M23 and M24 noted. **After M6:** 21 of 25 there.

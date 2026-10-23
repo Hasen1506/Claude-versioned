@@ -1407,6 +1407,27 @@ there, 3 partial, 5 missing. Taken in the order they change what the plan buys.
 |---|---|---|---|
 | N343 | Planners and the S&OP meeting talk in families and months, but the forecast could only be read and changed series by series: a scheme for a whole family meant six edits that had to add up by hand. | Serious | **Fixed.** Family overrides (a total or a change, for all places or one) spread over the family's series by their own forecast. A series override is kept and the rest goes around it, in whole units that add up. The consensus grid has *By product family*, master data has *Family overrides*, the data check names a family no product has, and a release counts them among the forecast's inputs. Other aggregates (a region, every customer of a product) are not offered. |
 
+### 8.3: Supply planning
+
+CONFORMANCE §3: 25 concepts against the S/4 guide, CPIM master scheduling and MRP, and Vollmann et al.; 20 there, 2
+partial, 3 missing. The one that changes numbers was the demand time fence.
+
+**A demand time fence (M6), on Kaveri.**
+
+* *Input:* the 500 W mixer grinder at Bhiwandi. Its West trade and e-commerce channels follow its strategy (customer
+  orders consume the forecast), and West trade has ordered 450 for 1 October.
+* *Processing:* *Products at places → strategy*: a demand time fence of 5 working days, Monday 28 September to
+  Saturday 3 October.
+* *Output:*
+  * Inside the fence only customer orders count: of the forecast left after the orders, 124 at West trade and 190.4 at
+    e-commerce are not planned, and the plan's messages say so.
+  * West trade's first week needs 481 instead of 605, and Bhiwandi's 634 instead of 948.
+  * The plan buys 928 fewer mixer grinders.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N344 | There was no demand time fence: the next days were planned from forecast no customer had ordered, so the plan kept buying and moving for demand that was never coming that close in. | Serious | **Fixed.** `demand_time_fence_days` on a product at a place or its MRP group; a customer channel follows the place whose strategy it uses. Inside the fence the forecast left after consumption is not planned, and under make to stock the orders inside it are. Counted in working days when fences are, and named in the plan's messages. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution
