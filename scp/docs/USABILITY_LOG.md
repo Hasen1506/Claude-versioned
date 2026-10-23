@@ -557,7 +557,7 @@ ENTERPRISE_PLAN 2.7, in a browser and through the engine. Kumar orders a kit fro
 | N195 | A kit's lines were promised one by one: the pump for the 7th, the motor for the 14th, two deliveries to a customer who wanted one (§7.2). | Serious | **Fixed.** An order can ship as one delivery: every line on the date the last can come, or none. |
 | N196 | Allocations had one level: no family cap, a catch-all applied to customers who had their own, and what a week left unused was lost (§7.4). | Serious | **Fixed.** Family before product, the customer's own allocations before the catch-all, carry-forward per allocation. |
 | N197 | EOQ was the only optimising lot size, poor for lumpy demand (§8.3). | Minor | **Fixed.** Part-period balancing, least unit cost and Groff's rule, holding each requirement from its own date. |
-| N198 | The kit test company first had no source for the pump, and taking the order said only that the data has problems. | Minor | Open: the order form could name the problem (here "Pump has no way to be supplied") instead of pointing to Home. |
+| N198 | The kit test company first had no source for the pump, and taking the order said only that the data has problems. | Minor | **Fixed.** Both order forms, and taking an order, name the first problems that stop planning with their fix (on Kaveri with the switch's supplier deleted: "Rotary switch + PCB at Pune plant (Chakan) is needed but has no way to be supplied … (Say how it gets there …)"), and count the rest. |
 | N199 | A one-click what-if waited 5 seconds in its browser test for a plan run, and failed once under load. | Minor | **Fixed** in the test: it waits as long as the other plan runs. |
 
 | # | Found | Severity | Outcome |

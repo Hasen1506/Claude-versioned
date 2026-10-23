@@ -124,6 +124,18 @@ def test_a_delivery_beyond_the_stock_says_so_and_an_order_without_a_route_is_ref
         post(y, "deliver", order="SO-9")
 
 
+def test_an_order_the_data_stops_names_the_problem_and_its_fix():
+    # N198: a part with no way to be supplied stops planning; taking the order says which part and how to put it right
+    d = shop()
+    d["purchasing_sources"] = [p for p in d["purchasing_sources"] if p["product"] != "C"]
+    with pytest.raises(OrderError) as e:
+        accept(ds(d), order(20))
+    said = str(e.value)
+    assert said.startswith("the order cannot be checked until this is put right: C at P is needed but has no way")
+    assert "(Say how it gets there: made there, bought from a supplier, or shipped from another place" in said
+    assert "Home" not in said
+
+
 # ---- cancelling -----------------------------------------------------------------------------------------------
 def test_a_cancelled_order_frees_its_stock_and_does_not_count_against_otif():
     x, _ = accept(ds(shop()), order(6))

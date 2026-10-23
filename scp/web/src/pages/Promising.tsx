@@ -7,7 +7,7 @@ import {
 } from "../components/ui";
 import { addDays, day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Prod, namesOf, useNames } from "../lib/names";
-import { orderProblems, orderWarnings } from "../lib/orderchecks";
+import { checkBlocked, orderProblems, orderWarnings } from "../lib/orderchecks";
 import { highEnd, safeWords } from "../lib/safe";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
@@ -497,8 +497,13 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
     setBusy(true);
     setErr(null);
     try {
-      setOut(await api.promiseCheck(ds, order));
-      setChecked(key);
+      const res = await api.promiseCheck(ds, order);
+      const blocked = checkBlocked(res);
+      if (blocked) setErr(namesOf(ds).text(blocked));
+      else {
+        setOut(res);
+        setChecked(key);
+      }
     } catch (e) {
       setErr(String(e));
     } finally {

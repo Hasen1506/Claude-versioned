@@ -16,7 +16,7 @@ import { confirmationDocument, customerAddresses, customerEmail, invoiceDocument
 import { ServerSend } from "../components/ServerSend";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { download } from "../lib/tabular";
-import { orderWarnings } from "../lib/orderchecks";
+import { checkBlocked, orderWarnings } from "../lib/orderchecks";
 import { go, href } from "../lib/router";
 import { isStale, store, useFreshResult, useReadOnly, useStore } from "../state/store";
 
@@ -308,7 +308,12 @@ function LinesForm({ ds, customer, busy, submit, onSubmit, second }: {
     try {
       const recs = lines.map((l) => ({ location: customer, product: l.product, date: l.date, qty: l.qty, kind: "sales_order", priority: 5,
         complete_delivery: false, price: l.price }) as DemandRecord);
-      setChecked({ key, res: await api.promiseCheckLines(ds, recs) });
+      const res = await api.promiseCheckLines(ds, recs);
+      const blocked = checkBlocked(res);
+      if (blocked) {
+        setChecked(null);
+        setCheckErr(namesOf(ds).text(blocked));
+      } else setChecked({ key, res });
     } catch (e) {
       setCheckErr(String(e).replace(/^Error:\s*/, ""));
     } finally {

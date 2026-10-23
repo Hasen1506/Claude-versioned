@@ -142,11 +142,21 @@ def _promise(ds: Dataset, rec: DemandRecord) -> tuple[OrderPromise, list[Confirm
     """Check ``rec`` after every order already promised, and its schedule lines as confirmations to keep."""
     res = check_order(ds, rec)
     if not res.ok or res.checked is None:
-        raise OrderError("the data has problems that stop planning; fix them first (Home lists them)")
+        raise OrderError(blocking(res.issues))
     p = res.checked
     confs = [Confirmation(order=rec.id or "", ship_from=x.ship_from, ship_date=x.ship_date, date=x.date, qty=x.qty,
                           method=x.method, goods_issue=x.goods_issue) for x in p.lines]
     return p, confs
+
+
+def blocking(issues) -> str:
+    """What stops an order from being checked, named (N198): the first problems that stop planning, each with its fix."""
+    errs = [i for i in issues if i.severity == "error"]
+    if not errs:
+        return "the order could not be checked"
+    said = "; ".join(i.message.rstrip(".") + (f" ({i.hint})" if i.hint else "") for i in errs[:2])
+    more = f"; and {len(errs) - 2} more problems (the Data check lists them all)" if len(errs) > 2 else ""
+    return f"the order cannot be checked until this is put right: {said}{more}"
 
 
 def _check_parties(ds: Dataset, location: str, product: str) -> None:

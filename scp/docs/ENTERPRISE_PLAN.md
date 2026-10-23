@@ -96,6 +96,23 @@ cancellations and year-end closing, open).
 | 7.3 | One company per network (§17.5) | Several companies in one network with inter-company orders and transfer prices |
 | 7.4 | No accounting shadow (§15.1) | A double-entry journal from movements and invoices (stock, GR/IR, receivables, payables, COGS), exported to Tally |
 
+Done after phase 7: N198 (an order the data stops names the problem and its fix).
+
+## Phase 8: Conformance (checking the app against the books, not against itself)
+Phases 1–7 closed the gaps a benchmark written here found, and each was checked against hand-worked numbers. That
+proves the sums, not that the right things are there or can be found: inventory policy, for one, is in the engine (five
+safety-stock methods, multi-echelon, DDMRP, reorder point, min-max, ABC-XYZ service levels) but spread over "Buffers"
+(an optional tab) and "Products at places", with no page that says *inventory policy*. Phase 8 checks every section
+against outside references, then fixes what the check finds.
+
+| # | What | How |
+|---|---|---|
+| 8.1 | A conformance matrix (docs/CONFORMANCE.md) | Every concept from the references (S/4 guide sections; ASCM CPIM body of knowledge; Silver, Pyke & Thomas for inventory; Graves–Willems; the DDMRP standard; IBP S&OP), each with where it lives in the engine, which page shows it under which name, the test and its outside oracle; status *there*, *buried*, *partial*, *missing* |
+| 8.2 | Inventory policy, the first section | One policy per product at a place in one table: segment (ABC-XYZ), review (continuous / periodic R), method and service target, safety stock, reorder point s, order-up-to S or lot Q, achieved service from actuals; a policy assigned to a whole segment; textbook worked examples as oracles |
+| 8.3 | Every other section the same way | Demand, supply/MRP, capacity and scheduling, promising, buying, selling, warehouse, transport, money; each section's findings fixed in the same item |
+| 8.4 | Jobs, not pages | One working day each for a planner, a buyer, a storekeeper, an accountant and an owner, done from the screens only; where a job needs a page nobody would find, the page moves |
+| 8.5 | A practitioner's review | The matrix and the walkthroughs read by someone who plans for a living; their findings logged like the others |
+
 ## Pause points
 The work stops after each phase (and inside a phase after every two or three items) with everything committed,
 pushed and the PR updated, so the conversation can be compacted without losing anything.
