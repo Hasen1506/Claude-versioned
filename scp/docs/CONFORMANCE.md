@@ -21,10 +21,10 @@ Read against SPT ch. 4–7 and CPIM "inventory management". Audited 23 October 2
 | I1 | ABC classification by value | `demand/pipeline._abc` (cleansed history, company cut-offs) | Demand → each product's segment; Cycle counts by ABC; **Inventory policy** by annual usage value at each place (`inventory/policy`) | test_demand; test_policy (hand-worked usage values) | there (8.2) |
 | I2 | XYZ (variability) and the ABC-XYZ matrix | `demand/pipeline` segment (CV², ADI); `inventory/policy` by the weekly CV the safety stock uses, with where it comes from | Demand; Inventory policy → class | test_demand; test_policy | there (8.2) |
 | I3 | Service level per segment | `demand/pipeline.SERVICE_LEVEL`, company table `forecasting.service_levels` | Inventory policy: each target beside its class's suggestion; *By class* | test_policy | there (8.2) |
-| I4 | Policy assigned to a whole segment | MRP group shares lot size, strategy, fences | Inventory policy → *Give a policy* (a class or chosen products: method, target or the class's suggestion, review, reorder point) | test_policy; e2e inventory-policy | there (8.2) |
+| I4 | Policy assigned to a whole segment | MRP group shares lot size, strategy, fences | Inventory policy → *Give a policy* (a class or chosen products: method, target or the class's suggestion, rule, review, reorder point) | test_policy; e2e inventory-policy | there (8.2) |
 | I5 | Continuous review, reorder point (s, Q) | MRP type `reorder_point` + fixed or EOQ lot | Inventory policy → rule "Reorder point, fixed quantity (s, Q)"; Products at places → MRP 1 | test_mrp, test_s4_backtest_b, test_policy | there (8.2) |
 | I6 | Order-up-to (s, S) | `reorder_point` + `MIN_MAX` to max stock | Inventory policy → "Reorder point, order up to (s, S)" | test_mrp, test_policy | there (8.2) |
-| I7 | Periodic review (R, S), (R, s, S) | `review_period_days` widens the safety stock only; POQ covers N periods | — | — | partial: R is in the safety-stock formula but orders are not placed on a review calendar |
+| I7 | Periodic review (R, s, Q), (R, s, S) | `plan/mrp` review calendar on a reorder point (`review_period_days`, `review_from`); R also widens the safety stock | Inventory policy → "Periodic review, … (R, s, Q)", next review; *Give a policy* → ordered by a reorder point, review every R days | test_policy (hand-worked: weekly orders of 90, 70, 70, 40; order-up-to fills to S on arrival; uneven lead times); e2e inventory-policy | there (8.2) |
 | I8 | Time-phased (MRP) with safety stock | MRP type `deterministic` | Supply plan | golden, S/4 backtests | there |
 | I9 | Safety stock: fixed, days of cover | `plan/rates.policy_safety_stock` | Products at places → safety stock | test_mrp (fixed, days of cover) | there |
 | I10 | Safety stock for a cycle service level, demand and lead-time spread: SS = z·√((L+R)σ_d² + d̄²σ_L²) | `plan/safety.statistical_ss` | Inventory policy; Products at places | hand-worked in test_mrp::test_service_level_safety_stock_formula and test_policy | there |
@@ -45,5 +45,5 @@ Read against SPT ch. 4–7 and CPIM "inventory management". Audited 23 October 2
 | I25 | One place to see each product's policy | `inventory/policy` | **Supply → Inventory policy** | e2e inventory-policy (found from the menu) | there (8.2) |
 
 **What this section says** (audit): the arithmetic was there and checked; the *policy* was not presented as one.
-**After 8.2:** 21 of 25 there. Open: periodic review on a calendar (I7) and safety stock for lumpy demand (I18), next;
-the cost of a shortage (I23) and a single-period buy (I24) are in IDEAS.md.
+**After 8.2:** 22 of 25 there. Open: safety stock for lumpy demand (I18), next; the cost of a shortage (I23) and a
+single-period buy (I24) are in IDEAS.md.

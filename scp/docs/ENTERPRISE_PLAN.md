@@ -106,7 +106,8 @@ safety-stock methods, multi-echelon, DDMRP, reorder point, min-max, ABC-XYZ serv
 against outside references, then fixes what the check finds.
 
 In progress: 8.1 (docs/CONFORMANCE.md; section 1, inventory policy, written: 25 concepts: 12 there (two of them on a page nobody would look for), 4 buried, 2 partial, 7 missing).
-Done: 8.2, first part (N329–N335): *Supply → Inventory policy*, a policy given to a class, the suggested reorder point and the service achieved; inventory policy now 21 of 25 there. Next in 8.2: periodic review on a calendar and safety stock for lumpy demand.
+Done: 8.2, first part (N329–N335): *Supply → Inventory policy*, a policy given to a class, the suggested reorder point and the service achieved; inventory policy now 21 of 25 there. Then periodic review on a calendar and a class's rule in one step (N336–N339):
+22 of 25. Next in 8.2: safety stock for lumpy demand.
 
 | # | What | How |
 |---|---|---|

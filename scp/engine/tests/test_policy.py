@@ -115,8 +115,8 @@ def test_a_segment_is_given_its_suggested_target_and_the_reorder_point_follows()
     d, msg = apply_policy(ds(shop()), [("P", "A")], service_level="suggested", reorder_point="suggested")
     lp = d.location_product_by_key[("P", "A")]
     assert lp.safety_stock.service_level == 0.98
-    # the reorder point is suggested from the policy as it stood: 20 + 1.645 √56
-    assert lp.reorder_point == pytest.approx(round(20 + Z95 * math.sqrt(56), 2))
+    # the reorder point is suggested from the policy as it now is, the new target's: 20 + 2.054 √56 (not 1.645's)
+    assert lp.reorder_point == pytest.approx(round(20 + Z98 * math.sqrt(56), 2))
     assert msg == "Set 1 service target, 1 reorder point on 1 product at a place."
     r = rows(policy_view(d))["A"]
     assert r.safety_stock == pytest.approx(Z98 * math.sqrt(56), rel=1e-6)
@@ -163,3 +163,117 @@ def test_the_api_shows_the_table_and_applies_a_policy():
     assert r.json()["message"] == "Set 1 safety-stock method on 1 product at a place."
     r = client.post("/api/inventory/policy/apply", json={"dataset": shop(), "keys": ["P|B"], "method": "fixed"})
     assert r.status_code == 422 and "needs its quantity" in r.json()["detail"]
+
+
+def weekly(review: float = 7, **kw) -> dict:
+    """B bought with a 3-day lead time, 30 on hand, 10 used every day for the 28 days, a reorder point of 20 and no
+    safety stock. The plan starts on Monday 5 January, so a weekly review falls on the 5th, 12th, 19th and 26th."""
+    d = base()
+    d["products"] = [{"id": "B", "type": "RM"}]
+    d["location_products"] = [{"location": "P", "product": "B", "on_hand": 30, "mrp_type": "reorder_point",
+                               "reorder_point": 20, "lot_sizing": {"policy": "L4L"},
+                               "safety_stock": {"method": "none", "review_period_days": review}, **kw}]
+    d["production_sources"], d["resources"] = [], []
+    d["purchasing_sources"] = d["purchasing_sources"][:1]
+    start = date.fromisoformat(START)
+    d["demand"] = [{"location": "P", "product": "B", "date": (start + timedelta(days=i)).isoformat(), "qty": 10,
+                    "kind": "forecast"} for i in range(28)]
+    return d
+
+
+def orders(d: dict) -> list[tuple[str, str, float]]:
+    from scp.plan import run_mrp
+    return [(o.start_date.isoformat(), o.available_date.isoformat(), o.qty) for o in run_mrp(ds(d)).orders]
+
+
+def test_a_reorder_point_with_a_review_period_orders_on_review_days_only():
+    # continuous review: an order of 10 each day the stock would fall under 20
+    assert len(orders(weekly(0))) == 27
+    # every 7 days (R, s, Q) with lot-for-lot: short on the 6th (10 left); the only review before is the 5th, whose order
+    # arrives the 8th (late, said); it covers until the next review's order can arrive (the 15th): 10 a day to the
+    # 14th leaves −70, so 90. Then short on the 15th: the 12th's order arrives that day and covers to the 22nd (70);
+    # the same from the 19th; the 26th's covers the 29th to the end of the plan on 1 February (40)
+    assert orders(weekly()) == [("2026-01-05", "2026-01-08", 90), ("2026-01-12", "2026-01-15", 70),
+                                ("2026-01-19", "2026-01-22", 70), ("2026-01-26", "2026-01-29", 40)]
+    from scp.plan import run_mrp
+    late = [e for e in run_mrp(ds(weekly())).exceptions if e.code == "REVIEW_LATE"]
+    assert len(late) == 1 and "the first review that can order it is 2026-01-05" in late[0].message
+    # fixed lots of 50: what is short is ordered in whole lots on the same review days (100, 100, 50, 50)
+    q = orders(weekly(lot_sizing={"policy": "FIXED", "fixed_qty": 50}))
+    assert [(s, n) for s, _, n in q] == [("2026-01-05", 50), ("2026-01-05", 50), ("2026-01-12", 50),
+                                         ("2026-01-12", 50), ("2026-01-19", 50), ("2026-01-26", 50)]
+
+
+def test_order_up_to_fills_to_the_maximum_on_the_day_the_order_arrives():
+    # (R, s, S), S = 120: the 5th's order arrives the 8th, when the stock would be 30 − 40 = −10: 130 brings it to 120.
+    # From 120 on the 8th the stock is under 20 on the 19th; the 12th's order arrives the 15th, when 50 are left: 70
+    q = orders(weekly(lot_sizing={"policy": "MIN_MAX"}, max_stock=120))
+    assert q == [("2026-01-05", "2026-01-08", 130), ("2026-01-12", "2026-01-15", 70), ("2026-01-19", "2026-01-22", 70)]
+    from scp.plan import run_mrp
+    assert not [e for e in run_mrp(ds(weekly(lot_sizing={"policy": "MIN_MAX"}, max_stock=120))).exceptions
+                if e.code == "EXCESS_STOCK"]
+
+
+def test_reviews_fall_on_the_day_given_and_the_policy_names_the_rule():
+    # reviews every 7 days from a Wednesday: the 7th, 14th, … The 7th's order (arriving the 10th) is the first
+    q = orders(weekly(safety_stock={"method": "none", "review_period_days": 7, "review_from": "2025-12-31"}))
+    assert [s for s, _, _ in q] == ["2026-01-07", "2026-01-14", "2026-01-21", "2026-01-28"]
+    r = rows(policy_view(ds(weekly())))["B"]
+    assert r.rule == "RsQ" and r.rule_label == "Periodic review, reorder point, fixed quantity (R, s, Q)"
+    assert r.next_review == date(2026, 1, 5)
+    # a review period on time-phased MRP only widens the safety stock: said
+    d = weekly()
+    d["location_products"][0].update(mrp_type="deterministic")
+    assert any("orders whenever it is short" in n for n in rows(policy_view(ds(d)))["B"].notes)
+    # given through the policy step
+    d2, msg = apply_policy(ds(weekly(0)), [("P", "B")], review_period_days=14, review_from=date(2026, 1, 8))
+    ss = d2.location_product_by_key[("P", "B")].safety_stock
+    assert (ss.review_period_days, ss.review_from) == (14, date(2026, 1, 8))
+    assert msg == "Set 1 review period on 1 product at a place."
+
+
+def test_the_review_chosen_is_the_last_whose_order_arrives_in_time_when_lead_times_differ():
+    # a weekday calendar, a 1-day lead time and reviews every 10 days from 1 January 2024: Saturday 10 January, then
+    # Tuesday 20th, Friday 30th. An order from the Saturday review goes out on Monday and arrives Tuesday 13th, so
+    # that review's lead time is 3 days, the Tuesday one's only 1: what is short on Wednesday 21st comes from the
+    # Tuesday 20th review (arriving the 21st), not from the Saturday's, which a 3-day estimate would pick
+    d = weekly(10)
+    d["calendars"][0]["workdays"] = [0, 1, 2, 3, 4]
+    d["purchasing_sources"][0]["lead_time_days"] = 1
+    q = orders(d)
+    assert [(s, a) for s, a, _ in q] == [("2026-01-12", "2026-01-13"), ("2026-01-20", "2026-01-21"),
+                                         ("2026-01-30", "2026-01-31")]
+
+
+def test_a_class_is_put_on_a_periodic_reorder_point_in_one_step():
+    # B and C on time-phased MRP, put on a reorder point reviewed every 7 days with a 90 % target. Their reorder points
+    # come from the policy as it then is. B: 20 a day, 3 days' lead time, CV 0.3 set on the product (a week's σ is
+    # 0.3 × 140 = 42, so σ_d² = 42² / 7 = 252 a day): SS = z(0.9) √(10 × 252) and s = 20 × 10 + SS. C has no demand: no reorder point to
+    # order at, so it stays on MRP; nor any variability to size a target with, so its safety stock stays: both named
+    d = shop()
+    d["location_products"][1]["safety_stock"] = {"method": "none", "demand_cv": 0.3}
+    d["demand"] = [{"location": "K", "product": "A", "date": START, "qty": 280, "kind": "forecast", "period_days": 28}]
+    d["production_sources"][0]["components"] = [{"product": "B", "qty": 2}]
+    out, msg = apply_policy(ds(d), [("P", "B"), ("P", "C")], method="service_level", service_level=0.9,
+                            review_period_days=7, rule="reorder_point")
+    b, c = out.location_product_by_key[("P", "B")], out.location_product_by_key[("P", "C")]
+    z90 = 1.2815516
+    assert b.mrp_type.value == "reorder_point"
+    assert b.reorder_point == pytest.approx(round(200 + z90 * math.sqrt(10 * 252), 2))      # 264.33
+    assert c.mrp_type.value == "deterministic" and c.reorder_point is None
+    assert c.safety_stock.method.value == "none"
+    assert msg == ("Set 1 safety-stock method, 1 service target, 2 review periods, 1 rule, 1 reorder point on 2 "
+                   "products at places. Left as they were, no demand variability to size a service target with: C at "
+                   "P. Left as they were, no demand to set a reorder point from: C at P.")
+    assert rows(policy_view(out))["B"].rule == "RsQ"
+    # and back to MRP: the reorder point is kept for later but no longer orders
+    back, msg = apply_policy(out, [("P", "B")], rule="mrp")
+    assert back.location_product_by_key[("P", "B")].mrp_type.value == "deterministic"
+    assert msg == "Set 1 rule on 1 product at a place."
+    with pytest.raises(PolicyError, match="time-phased MRP or a reorder point"):
+        apply_policy(out, [("P", "B")], rule="kanban")
+    # without a CV of its own, B's is measured from the demand it feeds: A's 0.2 (2 B to each A, the same shape)
+    d["location_products"][1]["safety_stock"] = {"method": "none"}
+    cv_out, msg = apply_policy(ds(d), [("P", "B")], method="service_level")
+    assert cv_out.location_product_by_key[("P", "B")].safety_stock.demand_cv == pytest.approx(0.2)
+    assert msg.endswith("The demand variability is the one measured from the demand they feed for B at P.")

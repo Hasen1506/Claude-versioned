@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, PolicyApplyInput, PolicyRow, PolicyView } from "../api/types";
 import { Badge, Edits, MoreRows, Panel, ROW_LIMIT, StageHeader, StatTile } from "../components/ui";
-import { money, pct, plural, qty } from "../lib/format";
+import { day, money, pct, plural, qty } from "../lib/format";
 import { namesOf, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { store, useStore } from "../state/store";
@@ -53,6 +53,8 @@ export function InventoryPolicy({ route }: { route: string[] }) {
       the table). For a service target the safety stock is <b>SS = z · √((L + R)·σ²_d + d̄²·σ²_L)</b>, with L the lead
       time, R the review period, σ_d the spread of daily demand and σ_L of the lead time; for a fill rate, the k whose
       expected shortage per cycle is (1 − β) of the order. The reorder point that keeps it is <b>s = d̄ · (L + R) + SS</b>.
+      A product on a reorder point with a review period is ordered on review days only (every R days, Mondays unless
+      another day is given): each order covers what falls short until the next review's order can arrive.
       What is achieved is the share of the customer orders shipped from the place in the last {v?.window_days ?? 91} days
       that arrived in full by the date the customer asked for. The numbers are the supply plan's own: the same demand
       rate, lead time and safety stock.</>}
@@ -117,7 +119,7 @@ function Row({ r, cur, chosen, onToggle }: { r: PolicyRow; cur: string; chosen: 
         {r.notes.map((n) => <div key={n} className="small warn-text">{n}</div>)}</td>
       <td><b>{r.abc}{r.xyz ?? "–"}</b><div className="faint small">{r.cv != null ? `CV ${r.cv.toFixed(2)}, ${r.cv_from}` : "no demand"}</div>
         <div className="faint small">{money(r.usage_value, cur)} a year</div></td>
-      <td>{r.rule_label}<div className="faint small">{r.review_days > 0 ? `reviewed every ${qty(r.review_days)} days` : r.rule === "mrp" ? "each plan" : "continuous review"}
+      <td>{r.rule_label}<div className="faint small">{r.review_days > 0 ? `reviewed every ${qty(r.review_days)} days${r.next_review ? `, next on ${day(r.next_review)}` : ""}` : r.rule === "mrp" ? "each plan" : "continuous review"}
         {r.order_qty != null && r.rule !== "none" ? `; orders about ${qty(r.order_qty)} (${r.lot})` : ""}{r.order_up_to != null ? `; up to ${qty(r.order_up_to)}` : ""}</div></td>
       <td className="num">{qty(r.safety_stock)}<div className="faint small">{METHOD[r.method] ?? r.method}</div>
         {r.safety_stock_value > 0 && <div className="faint small">{money(r.safety_stock_value, cur)}</div>}</td>
@@ -140,7 +142,9 @@ function Apply({ v, ds, keys, cell, shown, onDone }: { v: PolicyView; ds: Datase
   const [days, setDays] = useState("");
   const [fixed, setFixed] = useState("");
   const [review, setReview] = useState("");
+  const [reviewFrom, setReviewFrom] = useState("");
   const [rop, setRop] = useState(false);
+  const [rule, setRule] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const to = keys.length ? keys : cell ? shown.map(key) : [];
@@ -156,6 +160,8 @@ function Apply({ v, ds, keys, cell, shown, onDone }: { v: PolicyView; ds: Datase
       if (method === "days_of_supply") input.days = Number(days);
       if (method === "fixed") input.qty = Number(fixed);
       if (review.trim()) input.review_period_days = Number(review);
+      if (reviewFrom) input.review_from = reviewFrom;
+      if (rule) input.rule = rule as PolicyApplyInput["rule"];
       if (rop) input.reorder_point = "suggested";
       const out = await api.inventoryPolicyApply(ds, input);
       store.replace(out.dataset, ds);
@@ -182,7 +188,11 @@ function Apply({ v, ds, keys, cell, shown, onDone }: { v: PolicyView; ds: Datase
           {statistical && <label className="field-inline">Target % <input className="input sm" inputMode="decimal" aria-label="Service target %" value={target} disabled={suggested}
             onChange={(e) => setTarget(e.target.value)} style={{ width: 70 }} /></label>}
           {statistical && <label className="row small"><input type="checkbox" checked={suggested} onChange={(e) => setSuggested(e.target.checked)} />its class's suggestion</label>}
+          <label className="field-inline">Ordered by <select className="input sm" aria-label="Rule" value={rule} onChange={(e) => setRule(e.target.value)}>
+            <option value="">the rule it has</option><option value="reorder_point">a reorder point (s, set to the suggestion)</option>
+            <option value="mrp">time-phased MRP</option></select></label>
           <label className="field-inline">Review every <input className="input sm" inputMode="decimal" aria-label="Review period in days" value={review} onChange={(e) => setReview(e.target.value)} style={{ width: 60 }} /> days</label>
+          {review.trim() !== "" && Number(review) > 0 && <label className="field-inline">from <input className="input sm" type="date" aria-label="A review day" value={reviewFrom} onChange={(e) => setReviewFrom(e.target.value)} /></label>}
           <label className="row small"><input type="checkbox" checked={rop} onChange={(e) => setRop(e.target.checked)} />the suggested reorder point</label>
           <button className="btn primary sm" disabled={busy || !to.length} onClick={apply}>{busy ? "Applying…" : `Apply to ${plural(to.length, "product")}`}</button>
         </div>

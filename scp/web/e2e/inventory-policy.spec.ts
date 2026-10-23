@@ -46,3 +46,29 @@ test("each product's policy in one table, a class given its suggested target in 
   expect(first(await after.locator("td").nth(4).innerText())).toBeGreaterThan(before);
   await page.screenshot({ path: "test-results/inventory-policy.png", fullPage: true });
 });
+
+// Enterprise 8.2, periodic review (CONFORMANCE I7). Input: Kaveri's class CX (the Delhi kettle, the mixer body and
+// both cartons at Pune), planned by time-phased MRP. Processing: the class is put on a reorder point reviewed every
+// 7 days in one step. Output: each reads as (R, s, Q) with its first review on Monday 28 September and a reorder point
+// from its demand, lead time, review and safety stock; the plan then orders them on review days (engine test_policy).
+test("a class put on a weekly reorder point in one step", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto("/");
+  await page.getByText("Kaveri Kitchenware").click();
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  await page.goto("/#/policy");
+  await expect(page.getByRole("heading", { name: "Inventory policy" })).toBeVisible();
+  const table = page.getByRole("table", { name: "Inventory policy" });
+  const carton = table.getByRole("row", { name: /Carton.*Pune/ }).first();
+  await expect(carton).toContainText("Time-phased (MRP)");
+
+  await page.getByRole("table", { name: "Classes" }).getByRole("row", { name: /^CX/ }).click();
+  await page.getByRole("combobox", { name: "Rule" }).selectOption("reorder_point");
+  await page.getByRole("textbox", { name: "Review period in days" }).fill("7");
+  await page.getByRole("button", { name: "Apply to 4 products" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Set 4 review periods, 4 rules, 4 reorder points on 4 products at places." }))
+    .toBeVisible({ timeout: 30_000 });
+  await expect(carton).toContainText("Periodic review, reorder point, fixed quantity (R, s, Q)");
+  await expect(carton).toContainText("reviewed every 7 days, next on Mon 28 Sep");
+  await expect(carton.locator("td").nth(6)).not.toContainText("—");
+});

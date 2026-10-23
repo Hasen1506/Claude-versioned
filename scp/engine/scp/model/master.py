@@ -5,7 +5,7 @@ small and mid-sized organisations. Object-local invariants are enforced here; cr
 from __future__ import annotations
 
 import math
-from datetime import date
+from datetime import date, timedelta
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -288,6 +288,15 @@ class LotSizing(Model):
         return self
 
 
+REVIEW_ANCHOR = date(2024, 1, 1)   # a Monday: reviews fall on it and every R days before and after it
+
+
+def review_days(review_from: date | None, period: float, start: date) -> tuple[date, int]:
+    """The first review day on or after ``start`` and the period in whole days (at least one)."""
+    r = max(1, round(period))
+    return start + timedelta(days=((review_from or REVIEW_ANCHOR) - start).days % r), r
+
+
 class SafetyStockPolicy(Model):
     method: SafetyStockMethod = SafetyStockMethod.NONE
     qty: float | None = Unit("qty", default=None, description="fixed: safety stock quantity")
@@ -296,7 +305,10 @@ class SafetyStockPolicy(Model):
                                        description="service_level / fill_rate target (default: settings)")
     demand_cv: float | None = Unit("fraction", le=5, default=None,
                                    description="Coefficient of variation of WEEKLY demand (forecast error)")
-    review_period_days: float = Unit("days", default=0.0, description="Periodic review interval R")
+    review_period_days: float = Unit("days", default=0.0, description="Periodic review interval R. On a reorder "
+                                     "point it is also the ordering calendar: orders are placed on review days only")
+    review_from: date | None = Field(None, description="A review day; the others fall every R days before and after "
+                                     "it (default: Mondays, counted from 1 January 2024)")
 
     @model_validator(mode="after")
     def _params(self) -> SafetyStockPolicy:

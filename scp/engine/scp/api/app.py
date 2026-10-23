@@ -473,6 +473,8 @@ class PolicyApplyRequest(Out):
     days: float | None = None
     qty: float | None = None
     review_period_days: float | None = Field(None, ge=0, le=365)
+    review_from: dt.date | None = None                  # a review day; the others every review period from it
+    rule: Literal["mrp", "reorder_point"] | None = None  # reorder point: s is set to the suggestion with it
     reorder_point: Literal["suggested"] | None = None
 
 
@@ -487,7 +489,8 @@ def post_inventory_policy_apply(req: PolicyApplyRequest) -> PolicyApplyResponse:
     keys = [(k.split("|", 1)[0], k.split("|", 1)[1]) for k in req.keys if "|" in k]
     try:
         new, msg = apply_policy(req.dataset, keys, method=req.method, service_level=req.service_level, days=req.days,
-                                qty=req.qty, review_period_days=req.review_period_days, reorder_point=req.reorder_point)
+                                qty=req.qty, review_period_days=req.review_period_days, review_from=req.review_from,
+                                rule=req.rule, reorder_point=req.reorder_point)
     except PolicyError as e:
         raise HTTPException(422, str(e)) from None
     return PolicyApplyResponse(**answer(req.dataset, new), message=msg)

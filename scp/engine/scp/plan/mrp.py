@@ -42,6 +42,7 @@ from ..model import (
     Strategy,
 )
 from ..model.common import DYNAMIC_LOTS
+from ..model.master import review_days
 from ..network import NetworkGraph, Node, SupplyOption, build_graph
 from ..time import Buckets
 from ..time.capacity import NoWorkingTime, day_capacity, hours_between, overtime_between
@@ -479,6 +480,19 @@ class _Planner:
         fence_end = self._fence_end(node, lp)
         hold = fence_end if fence_end is not None and lp.firming_type in (2, 4) else None
         held: list[tuple[date, float]] = []
+
+        def threshold_on(day: date) -> float:
+            bi = self.b.index_of(day)
+            ss = 0.0 if mto else (st.ss_by_bucket[bi] if 0 <= bi < len(self.b) else 0.0)
+            t = max(ss, 0.0 if mto else target_at(st.targets, day))
+            if lp.mrp_type is MrpType.REORDER_POINT and lp.reorder_point is not None:
+                t = max(t, lp.reorder_point)
+            return t
+
+        # periodic review (R, s, Q) or (R, s, S) (Silver, Pyke & Thomas §7.2; ≈ S/4 MRP type R1 with a planning
+        # cycle): a product on a reorder point with a review period orders on review days only
+        periodic = (not mto and lp.mrp_type is MrpType.REORDER_POINT and lp.reorder_point is not None
+                    and lp.safety_stock.review_period_days >= 0.5)
         for d in dates:
             if fresh is not None:
                 for last, q, what in fresh.expire(d):
@@ -489,11 +503,7 @@ class _Planner:
             avail += rec_on.get(d, 0.0) - req_on.get(d, 0.0)
             if d not in checks:
                 continue
-            bi = self.b.index_of(d)
-            ss = 0.0 if mto else (st.ss_by_bucket[bi] if 0 <= bi < len(self.b) else 0.0)
-            threshold = max(ss, 0.0 if mto else target_at(st.targets, d))
-            if lp.mrp_type is MrpType.REORDER_POINT and lp.reorder_point is not None:
-                threshold = max(threshold, lp.reorder_point)
+            threshold = threshold_on(d)
             thresholds[d] = threshold
             if disc is not None and d >= disc:
                 threshold = 0.0           # discontinued: no buffer, no new supply; the follow-up takes over
@@ -519,11 +529,34 @@ class _Planner:
                 held.append((d, threshold - avail))
                 continue
             shortage = threshold - avail
-            qty, gap = self._lot(lp, mto, shortage, d, avail, req_on, rec_on, eoq_qty, shelf)
             # safety time (S/4 §8.1): the receipt is planned this many WORKING days early on the location's calendar,
             # so a Monday requirement with two days of safety time is due on Thursday, never on a closed Saturday
             need = (max(self.start, location_calendar(self.ds, node[0]).add_workdays(d, -lp.safety_time_days))
                     if lp.safety_time_days else d)
+            if periodic and (slot := self._review(node, lp, need, shortage)) is not None:
+                # periodic review: the order is placed on the last review day it can still arrive from, and covers
+                # what falls short until the next review's order can be there
+                review, arrive, upto = slot
+                run = avail
+                for dd in dates[bisect.bisect_right(dates, d):]:
+                    if dd >= upto:
+                        break
+                    run += rec_on.get(dd, 0.0) - req_on.get(dd, 0.0)
+                    if dd in checks:
+                        shortage = max(shortage, threshold_on(dd) - run)
+                if arrive > need:
+                    self._exc("REVIEW_LATE", "warning",
+                              f"{shortage:,.1f} needed {need.isoformat()}; the first review that can order it is "
+                              f"{review.isoformat()} and its order arrives {arrive.isoformat()}: order now, outside "
+                              "the review, or set a shorter review period", node=node, when=need, qty=shortage)
+                need = arrive
+                # order up to (R, s, S): the order fills to the maximum on the day it arrives, not on the day short
+                lo, hi, sign = (arrive, d, 1.0) if arrive <= d else (d, arrive, -1.0)
+                there = avail + sign * sum(req_on.get(dd, 0.0) - rec_on.get(dd, 0.0)
+                                           for dd in dates[bisect.bisect_right(dates, lo):bisect.bisect_right(dates, hi)])
+            else:
+                there = avail
+            qty, gap = self._lot(lp, mto, shortage, d, there, req_on, rec_on, eoq_qty, shelf)
             ceiling = gap if lp.lot_sizing.policy is LotSizePolicy.MIN_MAX and not mto else None
             # what the order is for: requirements below zero first, then the buffer up to the threshold
             first = len(self.orders)
@@ -838,6 +871,34 @@ class _Planner:
                          - sum(qq for dd, qq in rec_on.items() if d < dd < keeps))
             q = max(shortage, min(q, shortage + usable))
         return q, gap
+
+    def _review(self, node: Node, lp: LocationProduct, need: date, qty: float) -> tuple[date, date, date] | None:
+        """The review an order needed on ``need`` is placed at: the last review day whose order still arrives by
+        ``need`` (else the first one, which is late), when that order arrives, and when the next review's would."""
+        opt = self._choose(node, need, qty)
+        if opt is None:
+            return None
+        first, every = review_days(lp.safety_stock.review_from, lp.safety_stock.review_period_days, self.start)
+
+        def arrives(k: int) -> date | None:
+            try:
+                return schedule(self.ds, opt, qty, start=first + timedelta(days=k * every)).available_date
+            except NoWorkingTime:
+                return None
+        a0 = arrives(0)
+        if a0 is None:
+            return None
+        k = max(0, ((need - first).days - (a0 - first).days) // every)
+        a = arrives(k)
+        while k > 0 and (a is None or a > need):
+            k -= 1
+            a = arrives(k)
+        while (b := arrives(k + 1)) is not None and b <= need:
+            k, a = k + 1, b
+        if a is None:
+            return None
+        b = arrives(k + 1)
+        return first + timedelta(days=k * every), a, b if b is not None else a + timedelta(days=every)
 
     def _dynamic_window(self, lp: LocationProduct, d: date, shortage: float, req_on: dict[date, float],
                         rec_on: dict[date, float], keeps: date | None) -> float:

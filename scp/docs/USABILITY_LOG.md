@@ -1311,7 +1311,29 @@ browser, and at 5,000 products × 20 places.
 | N332 | The reorder point was typed by hand with nothing to say what it should be. | Minor | **Fixed.** s = d̄·(L + R) + SS beside it, a note when it is more than 10 % away, and a step that sets it. |
 | N333 | A fill-rate target would have been compared with a class's cycle service level, and a target given to a product whose safety stock is in days of cover would have changed nothing silently. | Minor | **Fixed.** The two kinds of target are shown and counted apart; products whose safety stock is not set by a target are left and named. |
 | N334 | At 5,000 × 20 the message named every product left alone and the table drew 11,635 rows. | Minor | **Fixed.** Five named and the rest counted; 500 rows with a search. |
-| N335 | Periodic review is only in the safety-stock formula: orders are not placed on a review calendar. Safety stock for slow, lumpy demand uses the normal approximation. There is no cost of a shortage to choose a target by cost, and no single-period (season) buy. | Minor | Open: CONFORMANCE I7, I18 (next in 8.2's list); I23 and I24 in IDEAS.md. |
+| N335 | Periodic review is only in the safety-stock formula: orders are not placed on a review calendar. Safety stock for slow, lumpy demand uses the normal approximation. There is no cost of a shortage to choose a target by cost, and no single-period (season) buy. | Minor | Periodic review **fixed** (N336); lumpy demand next (I18); I23 and I24 in IDEAS.md. |
+
+**Periodic review, used the same way.**
+
+* *Input:* Kaveri's class CX: the Delhi 1.5 L kettle and, at Pune, the mixer body and both cartons. All four are
+  planned by time-phased MRP, so they are ordered on whatever day they run short. Before, the mixer body had 40 orders
+  over the 26 weeks, on any weekday.
+* *Processing:* class CX chosen; *Ordered by* a reorder point, *Review every* 7 days; *Apply to 4 products*.
+* *Output:*
+  * Each now reads *Periodic review, reorder point, fixed quantity (R, s, Q)*, reviewed every 7 days, next on Monday
+    28 September. Each has a reorder point from its demand, lead time, review and safety stock (the mixer body's is
+    3,291).
+  * The plan orders all four on Mondays only: the mixer body 22 times instead of 40. The Monday of Diwali (9 and 10
+    November are holidays) is reviewed on Wednesday the 11th.
+  * Each order covers what falls short until the next review's order can arrive. An order-up-to (R, s, S) fills to
+    the maximum on the day it arrives.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N336 | A review period widened the safety stock, but the product was still ordered on whatever day it ran short: (R, s, Q) and (R, s, S) were not there. | Serious | **Fixed.** On a reorder point with a review period, orders are placed only on review days: every R days from Monday, or from a day given (`review_from`). Each order covers until the next review's order can arrive; order-up-to fills to the maximum on its arrival day; a first review too late for a shortage is reported (REVIEW_LATE). The policy page names the rule (R, s, Q) or (R, s, S) and the next review. A review period on time-phased MRP is noted as only widening the safety stock. |
+| N337 | A class could not be moved between time-phased MRP and a reorder point; that was a field on *Products at places*, one product at a time, with the reorder point typed in. | Minor | **Fixed.** *Give a policy → Ordered by*: a reorder point (s set to the suggestion with it) or time-phased MRP. A product with no demand to set s from stays as it was and is named. |
+| N338 | A suggested reorder point set together with a new target or review period was worked out from the old ones. | Minor | **Fixed.** The reorder point is suggested from the policy as it is after the other changes. |
+| N339 | Giving a cycle service level or fill rate to a product with no demand variability (CV) of its own would have saved data that the data check rejects. | Serious | **Fixed.** The CV measured from the demand the product feeds is taken, and the message says so; with none, the product is left as it was and named. |
 
 ## Found in the second reality check (after Phase E)
 

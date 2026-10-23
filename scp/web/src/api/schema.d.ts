@@ -11736,6 +11736,10 @@ export interface components {
             qty?: number | null;
             /** Review Period Days */
             review_period_days?: number | null;
+            /** Review From */
+            review_from?: string | null;
+            /** Rule */
+            rule?: ("mrp" | "reorder_point") | null;
             /** Reorder Point */
             reorder_point?: "suggested" | null;
         };
@@ -11796,6 +11800,8 @@ export interface components {
             order_up_to: number | null;
             /** Review Days */
             review_days: number;
+            /** Next Review */
+            next_review: string | null;
             /** Method */
             method: string;
             /** Target */
@@ -13837,10 +13843,15 @@ export interface components {
             demand_cv?: number | null;
             /**
              * Review Period Days
-             * @description Periodic review interval R
+             * @description Periodic review interval R. On a reorder point it is also the ordering calendar: orders are placed on review days only
              * @default 0
              */
             review_period_days: number;
+            /**
+             * Review From
+             * @description A review day; the others fall every R days before and after it (default: Mondays, counted from 1 January 2024)
+             */
+            review_from?: string | null;
         };
         /** SalesActionRequest */
         SalesActionRequest: {
