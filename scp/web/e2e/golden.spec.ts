@@ -392,9 +392,14 @@ test("shop floor methods: compare every method → pick a profile → drag a ste
   const cmp = page.locator("section.panel", { hasText: "Compare the methods" });
   const row = (name: string) => cmp.locator("tr", { has: page.getByText(name, { exact: true }) });
   await expect(row("Optimiser (constraint solver)")).toBeVisible({ timeout: 60_000 });
-  await expect(cmp.locator("tbody tr .badge", { hasText: "best" })).toHaveCount(1);
+  // every method with the lowest score is marked best: a time-limited optimiser may only match the local search
+  await expect(cmp.locator("tbody tr .badge", { hasText: "best" }).first()).toBeVisible();
   const score = async (name: string) => Number(await row(name).locator("td").nth(5).innerText());
   expect(await score("Optimiser (constraint solver)")).toBeLessThanOrEqual(await score("Local search"));
+  const rows = await cmp.locator("tbody tr").evaluateAll((rs) => rs.map((r) => ({
+    score: Number(r.querySelectorAll("td")[5]?.textContent), best: /\bbest\b/.test(r.querySelector("td")?.textContent ?? "") })));
+  const low = Math.min(...rows.map((r) => r.score));
+  expect(rows.filter((r) => r.best).every((r) => r.score === low)).toBe(true);   // only the lowest scores are best
 
   // a profile is one click; the board says how the schedule was found; Undo puts the settings back
   await page.getByRole("button", { name: /Best possible \(optimiser\)/ }).click();
