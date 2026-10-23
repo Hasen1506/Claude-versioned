@@ -124,7 +124,12 @@ the landed cost by incoterm, multi-stop routes, carrier performance, billed frei
 tracking to IDEAS.md.
 Then money (§8: 16 of 20 at the audit): the cash the plan needs, week by week (N349), 17 of 20; overhead rates,
 write-downs and currency revaluation to IDEAS.md. 8.3 is done: every section has its audit, its fixes and the rest
-in IDEAS.md. Next: 8.4, walking each persona's week through the app end to end, then 8.5.
+in IDEAS.md.
+
+Done: 8.4 (N350–N357), one working day at Kaveri walked by a planner, a buyer, a storekeeper, an accountant and the
+owner from the screens only (`e2e/persona-day.spec.ts`): firming moved to *Supply → Firm orders*, the S&OP cycle to
+its own rail item, *Work waiting, by job* on Home and *To collect and pay* on Money, *Goods in & out* by place and day
+for the storekeeper; firming and opening Home calculate everything again. Next: 8.5, a practitioner's review.
 
 | # | What | How |
 |---|---|---|

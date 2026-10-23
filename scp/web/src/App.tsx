@@ -32,6 +32,7 @@ const Promising = lazy(() => import("./pages/Promising").then((m) => ({ default:
 const Proof = lazy(() => import("./pages/Proof").then((m) => ({ default: m.Proof })));
 const Schedule = lazy(() => import("./pages/Schedule").then((m) => ({ default: m.Schedule })));
 const Sop = lazy(() => import("./pages/Sop").then((m) => ({ default: m.Sop })));
+const SopCycle = lazy(() => import("./pages/SopCycle").then((m) => ({ default: m.SopCyclePage })));
 const MasterData = lazy(() => import("./pages/MasterData").then((m) => ({ default: m.MasterData })));
 const Network = lazy(() => import("./pages/Network").then((m) => ({ default: m.Network })));
 const Plan = lazy(() => import("./pages/Plan").then((m) => ({ default: m.Plan })));
@@ -73,7 +74,8 @@ export function App() {
   }, []);
 
   setPlanYear(ds?.settings.planning_start);   // idempotent: dates print their year only outside the planning year
-  const page = route[0] || "home";
+  // the S&OP cycle moved out of the capacity plan's tabs (N351): its old link opens it where it is now
+  const page = route[0] === "sop" && route[1] === "cycle" ? "cycle" : route[0] || "home";
   useEffect(() => { if (ds) markVisited(page); }, [page, ds]);
   const item = ds ? navItemFor(page) : undefined;
   const [navOpen, setNavOpen] = useState(false);   // phones: the rail opens over the page from the Menu button
@@ -112,6 +114,7 @@ export function App() {
           : page === "demand" ? <Demand route={route} />
           : page === "inventory" ? <Inventory route={route} />
           : page === "sop" ? <Sop route={route} />
+          : page === "cycle" ? <SopCycle />
           : page === "plan" ? <Plan route={route} />
           : page === "schedule" ? <Schedule route={route} />
           : page === "promise" ? <Promising route={route} />

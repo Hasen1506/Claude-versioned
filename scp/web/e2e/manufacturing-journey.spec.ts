@@ -34,13 +34,15 @@ async function exported(page:Page) {
 }
 
 async function firm(page:Page,count:number) {
-  await page.goto('/#/execution/orders');
+  await page.goto('/#/plan/firm');
   const calculate=page.getByRole('button',{name:/^(Recalculate the supply plan|Calculate the supply plan)$/});
   // pages load on demand: wait for the firm zone to be drawn before asking whether the plan needs calculating
   await expect(page.getByRole('heading',{name:/^Firm zone:/})).toBeVisible({timeout:45000});
   if(await calculate.count()) await calculate.click();
   await page.getByRole('button',{name:`Make ${count} order${count===1?'':'s'} firm`,exact:true}).click();
   await expect(page.getByText(new RegExp(`${count} planned order${count===1?'':'s'} firmed`))).toBeVisible();
+  // firming lives with the supply plan (N350); the firm orders are received on Stock & actuals → Goods in & out
+  await page.goto('/#/execution/orders');
 }
 
 test('manufacturing: forecast → finite plan → promise → purchases → partial production → roll → shipment reconciles',async ({page})=>{

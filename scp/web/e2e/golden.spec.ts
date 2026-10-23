@@ -34,6 +34,18 @@ const acceptInvite = async (p: Page, link: string) => {
   await p.reload();
 };
 
+
+/** Supply → Firm orders, with the plan calculated: a plan out of date offers its recalculation first. */
+async function openFirmZone(page: Page) {
+  await page.goto("/#/plan/firm");
+  await expect(page.getByRole("heading", { name: /^Firm zone:/ })).toBeVisible({ timeout: 45_000 });
+  const calc = page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ });
+  const firm = page.getByRole("button", { name: /^Make \d+ orders? firm$/ });
+  await expect(calc.or(firm).first()).toBeVisible({ timeout: 45_000 });
+  if (await calc.isVisible()) await calc.click();
+  await expect(firm).toBeVisible({ timeout: 45_000 });
+}
+
 test("golden path: example opens planned → home → network → data check → plan → drill-down → edit → out of date → re-plan", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
 
@@ -526,10 +538,10 @@ test("execution: journal → stock in sync → ship → roll forward → accurac
   await expect(page.locator(".tile", { hasText: "Forecast accuracy" }).locator(".value")).toContainText("%");
 
   // firm the planned orders inside the firm zone
-  await page.goto("/#/execution/orders");
-  await page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ }).click();
+  await openFirmZone(page);
   await page.getByRole("button", { name: /^Make \d+ orders? firm$/ }).click();
   await expect(page.getByText(/planned orders firmed/)).toBeVisible();
+  await page.goto("/#/execution/orders");
   await expect(page.locator("td b", { hasText: /^PRD-\d{5}$/ }).first()).toBeVisible();
   await expect(page.getByText(/^was MO-\d{4}-\d{2}$/).first()).toBeVisible();     // the planned number it came from (Q22)
 });
@@ -547,13 +559,13 @@ test("posting: count stock → firm → ship and receive a transfer → confirm 
   await expect(page.locator(".banner", { hasText: "Saved" })).toContainText(/1 count as of/);
 
   // firm one production order and one transfer
-  await page.goto("/#/execution/orders");
-  await page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ }).click();
+  await openFirmZone(page);
   await page.getByRole("button", { name: "Select none" }).click();
   await page.locator("tr.clickable", { hasText: "production order" }).first().locator("input").check();
   await page.locator("tr.clickable", { hasText: "stock transfer" }).first().locator("input").check();
   await page.getByRole("button", { name: "Make 2 orders firm" }).click();
   await expect(page.getByText(/2 planned orders firmed/)).toBeVisible();
+  await page.goto("/#/execution/orders");
 
   // the transfer ships (in transit), then arrives
   const sto = (await page.locator("td b", { hasText: /^STO-\d{5}$/ }).first().innerText()).trim();
@@ -594,10 +606,10 @@ test("stock you can trace: a short receipt names the order it leaves short → s
   await expect(page.locator(".banner", { hasText: "Saved" })).toContainText("1 count difference");
 
   // firm the zone, then the heater delivery comes in short, in the supplier's batch, and closes the line
-  await page.goto("/#/execution/orders");
-  await page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ }).click();
+  await openFirmZone(page);
   await page.getByRole("button", { name: /Make \d+ orders? firm/ }).click();
   await expect(page.getByText(/planned orders? firmed/)).toBeVisible();
+  await page.goto("/#/execution/orders");
   const line = page.locator("tr", { hasText: "Concealed heating element" }).filter({ hasText: "purchase" }).first();
   const po = (await line.locator("td").first().innerText()).trim().split(/\s+/)[0];
   await page.getByRole("button", { name: `Post part of ${po}` }).click();

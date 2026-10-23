@@ -10,6 +10,7 @@ import { useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { Books } from "./Books";
+import { WorkList } from "../components/WorkWaiting";
 import { isStale, store, useFreshResult, useStore } from "../state/store";
 
 type View = "overview" | "cash" | "serve" | "inventory" | "books" | "capacity";
@@ -140,6 +141,9 @@ function Overview({ res, cur, ds }: { res: FinanceResult; cur: string; ds: Datas
   const reasons = Object.entries(rec.unabsorbed_reasons).sort((a, b) => b[1] - a[1]);
   return (
     <div className="stack">
+      <Panel title="To collect and pay" actions={<a className="btn sm ghost" href={href("accounts", "parties")}>Who owes what</a>}>
+        <WorkList ds={ds} only={["accounts"]} />
+      </Panel>
       <div className="grid-auto">
         <StatTile label="Plan cost" value={money(rec.total_plan, cur)} sub={`${ds.settings.horizon_days} days`} tone="ink" />
         <StatTile label="Serves demand" value={money(rec.total_served, cur)} sub={`${pct(rec.total_plan ? rec.total_served / rec.total_plan : 0, 1)} of plan cost`} />

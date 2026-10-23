@@ -10,11 +10,12 @@ import { bucketWords, day, money, ORDER_LABEL, pct, plural, qty } from "../lib/f
 import { Loc, Msg, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { isStale, store, usePlanTrace, useStore } from "../state/store";
+import { firmCandidates, Firming } from "./Firming";
 
 /** Part of a late order is still on time: its inputs are only partly late (the part in stock ships as planned). */
 const partOnTime = (o: PlannedOrder) => (o.projected_on_time_qty ?? 0) > 1e-9 && (o.projected_on_time_qty ?? 0) < o.qty - 1e-9;
 
-type View = "overview" | "node" | "capacity" | "orders";
+type View = "overview" | "node" | "capacity" | "firm" | "orders";
 
 /** How the plan was made when it was planned from the previous plan's work (S/4 net change planning). */
 export function againWords(planned: number, nodes: number): string {
@@ -63,11 +64,13 @@ export function Plan({ route }: { route: string[] }) {
       { id: "overview", label: "Overview" },
       { id: "node", label: "Stock & requirements", count: plan.nodes.length },
       { id: "capacity", label: "Capacity", count: plan.resources.length },
+      { id: "firm", label: "Firm orders", count: ds ? firmCandidates(ds, plan.orders).length || undefined : undefined },
       { id: "orders", label: "Orders", count: plan.orders.length },
     ]} />
     {view === "overview" && <Overview plan={plan} ds={ds!} />}
     {view === "node" && <NodeView plan={plan} loc={route[2]} prod={route[3]} />}
     {view === "capacity" && <CapacityView plan={plan} res={route[2]} />}
+    {view === "firm" && ds && <Firming ds={ds} />}
     {view === "orders" && <OrdersView plan={plan} sel={route[2]} />}
   </>);
 }

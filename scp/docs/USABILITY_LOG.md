@@ -1529,6 +1529,42 @@ finance; 16 there, 3 partial, 1 missing. What the plan costs and earns was there
 |---|---|---|---|
 | N349 | The plan said what it costs and earns but not when the money moves: nothing showed that Kaveri pays four weeks of production and transfers before the first customer pays, ₹20.9 lakh at the lowest. | Serious | **Fixed.** *Money → Cash by week*: customers' invoices, what is to bill, open orders and forecast on the customers' terms; supplier invoices, open purchase orders, planned buying on the suppliers' terms; production and transfers when they start; freight on the carriers' terms; overdue and later amounts; the lowest running total. An order line shipped and not booked is to bill, not counted again as an open order. Open: overhead rates, write-downs, currency revaluation and the bank balance with fixed costs are in IDEAS.md. |
 
+### 8.4: One working day, five jobs
+
+The walk: Kaveri on Mon 28 Sep, five people in turn, each starting from Home and moving only by what the screens offer
+(the rail, the section tabs, the links on a page), never by a typed address. Each hands work to the next. The day is
+`e2e/persona-day.spec.ts`. Before it, every screen, tab and button was listed (9 rail items, 25 sections, about 70
+tabs) and each job's textbook tasks were looked for by name.
+
+| Job | The day | Where it was done | Before 8.4 |
+|---|---|---|---|
+| Planner | Firm the week's orders; read the follow-up list | Home → *Work waiting* → Supply → **Firm orders**; Performance → Problems | Firming sat on *Stock & actuals → Open orders & firming* |
+| Buyer | Release and send the order firming made; record the open order's confirmation | Home → *Work waiting* → Buying → Purchase orders | Found from the rail; Home said nothing about buying |
+| Storekeeper | Confirm Thursday's production run at Pune and ship its transfer; put away Delhi's goods | Home → *Work waiting* → Stock & actuals → **Goods in & out** (Pune, due by Thu 1 Oct); Warehouse → Put away | No list by place and day; receipts and shipments mixed with the planner's firming |
+| Accountant | Invoice what was shipped; see what is left to collect and pay; the books | Home → *Work waiting* → Customer orders → Selling → Invoices; Money → **To collect and pay**; Money → Accounts | Invoicing and payables were only under Selling and Buying; Money had no way to them |
+| Owner | Open the month's S&OP cycle and sign its first step; the measures | Rail → **S&OP cycle**; Performance | The cycle was the sixth tab of *Supply → Capacity plan*, an optional page |
+
+* *Input:* Kaveri as it opens, planned.
+* *Processing:* the five jobs above, in order.
+* *Output:*
+  * 11 planned orders firmed; the jar-set purchase (₹17.63 lakh, above the ₹10 lakh a buyer orders alone) released and
+    sent to Rajkot; Shenzhen's order confirmed for the date asked.
+  * 1,650 750 W grinders confirmed at Pune on Thu 1 Oct with their 5 parts issued; 1,067 of them shipped to Bhiwandi;
+    11 put-away tasks at Delhi for the opening stock in goods in.
+  * ₹33.24 lakh shipped and not invoiced, invoiced; Accounts now shows sales to date.
+  * September's S&OP cycle started and its data step signed.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N350 | Firming the week's orders, the planner's daily job, sat under *Stock & actuals → Open orders & firming*, mixed with the storekeeper's receipts. | Serious | **Fixed.** *Supply → Firm orders*, beside the plan's orders; Stock & actuals links to it. |
+| N351 | The monthly S&OP cycle, the owner's sign-off, was the sixth tab of *Supply → Capacity plan*, a page marked optional. | Serious | **Fixed.** Its own rail item, *Plan → S&OP cycle*; the old link opens it there. |
+| N352 | Home answered the planner's questions only: a buyer, a storekeeper or an accountant opening the app saw nothing of their own work. | Serious | **Fixed.** *Work waiting, by job* leads Home: for planning (orders to firm, problems), buying (to order, to release, to send, confirmations to chase, late lines), stores (goods to put away, open warehouse tasks, receipts due and lines to ship this week) and accounts (shipped not invoiced, overdue invoices, reminders due, what is owed to suppliers within 7 days, blocked supplier invoices), each item a link to where it is done. Money opens with the accounts part, *To collect and pay*. |
+| N353 | Firming recalculated only the plan and the stock: Home still told the buyer to order the purchase firming had already put on a purchase order. | Serious | **Fixed.** Firming calculates everything again. |
+| N354 | After someone's change on another page, Home showed out-of-date answers until *Plan everything again* was pressed, so the next person read yesterday's work. | Medium | **Fixed.** Home calculates again on opening when anything is out of date, as each page already does for its own result. |
+| N355 | The storekeeper had no list of what comes in and goes out at their place on a day. | Serious | **Fixed.** *Stock & actuals → Goods in & out*: the place, *only what is due by* the posting date, counts to receive, to ship and past due; a transfer still to leave is due on its shipping day, not its arrival. |
+| N356 | A production confirmation says "1,650 made at Pune plant" without the product. | Minor | Open. |
+| N357 | *Selling → Invoices* and *Buying → Supplier invoices* count what is still to invoice in the tab's number, so "Invoices 2" shows with no invoice yet. | Minor | Open: the number is the tab's work, as on the other tabs; the tab could say so. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

@@ -220,6 +220,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .guide li.done .k { background: var(--ink); color: var(--surface); }
 .guide li.now { background: color-mix(in srgb, var(--hl) 22%, var(--surface)); }
 .hgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.hgrid .hcard.wide { grid-column: 1 / -1; }
 .hcard { background: var(--surface); border: 1px solid var(--border); padding: 16px 18px 14px; display: flex; flex-direction: column; gap: 9px; min-width: 0; }
 .hcard.attn { border: var(--rule) solid var(--ink); box-shadow: inset 5px 0 0 var(--hl); padding-left: 21px; }
 .hcard .q { font: 600 13px var(--font); color: var(--text-3); }
@@ -242,6 +243,12 @@ ul.meters .sq { width: 9px; height: 9px; }
 dl.kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; margin: 0; font-size: 13.5px; }
 dl.kv dt { color: var(--text-2); }
 dl.kv dd { margin: 0; text-align: right; font-family: var(--mono); font-weight: 700; font-variant-numeric: tabular-nums; }
+/* Work waiting, by job (Home, Money): the job on the left, its items as links on the right */
+dl.work { display: grid; gap: 10px; margin: 0; font-size: 13.5px; }
+.work-job { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 4px 12px; align-items: baseline; }
+.work-job dt { color: var(--text-2); font-weight: 600; }
+.work-job dd { margin: 0; }
+.work-job ul.plain { margin: 0; }
 .skeleton { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 8px; }
 .skeleton span { height: 12px; background: var(--surface-3); animation: shimmer 1.2s ease-in-out infinite alternate; }
 .skeleton span:first-child { height: 20px; width: 70%; }

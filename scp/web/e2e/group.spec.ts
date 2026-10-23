@@ -30,12 +30,13 @@ test("an inter-company transfer: firmed, shipped, received, billed at the transf
   await expect(page.getByText(/STO-2201 came from another company with no shipment in the journal/)).toBeVisible();
 
   // processing: firm a planned transfer to Delhi, ship it and receive it
-  await page.goto("/#/execution/orders");
+  await page.goto("/#/plan/firm");
   await expect(page.getByRole("heading", { name: /^Firm zone:/ })).toBeVisible({ timeout: 45_000 });
   await page.getByRole("button", { name: "Select none" }).click();
   await page.locator("tr.clickable", { hasText: "stock transfer" }).filter({ hasText: "Delhi" }).first().locator("input").check();
   await page.getByRole("button", { name: "Make 1 order firm" }).click();
   await expect(page.getByText(/1 planned order firmed/)).toBeVisible();
+  await page.goto("/#/execution/orders");
   const sto = (await page.locator("td b", { hasText: /^STO-\d{5}$/ }).first().innerText()).trim();
 
   await page.goto("/#/group/orders");

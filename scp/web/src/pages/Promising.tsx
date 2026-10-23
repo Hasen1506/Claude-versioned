@@ -200,7 +200,7 @@ function Orders({ res, sel, ds, onDone }: { res: PromiseResult; sel?: string; ds
           </table>
         </div>
       </Panel>
-      {sel && !cur && <Panel><Empty title={`${sel} is not open`}>It was delivered or cancelled: see <a href={href("execution", "orders")}>Stock & actuals → Open orders & firming</a>.</Empty></Panel>}
+      {sel && !cur && <Panel><Empty title={`${sel} is not open`}>It was delivered or cancelled: see <a href={href("execution", "orders")}>Stock & actuals → Goods in & out</a>.</Empty></Panel>}
       {cur && <OrderCard o={cur} currency={res.currency} actions={<OrderActions o={cur} ds={ds} currency={res.currency} onDone={onDone} />} />}
       <Reading formula="ATP(d) = min over later days e of [Σ receipts(≤ e) − Σ outflows(≤ e)] — the look-ahead keeps a new promise from taking stock an earlier promise needs later. Beyond the replenishment lead time everything is confirmable."
         soWhat="Commit promises to persist the schedule lines; after that, every check (and MRP's supply changes) is measured against them, and backorder processing decides who gives way in a shortage." />

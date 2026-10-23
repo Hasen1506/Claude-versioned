@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { api } from "../api/client";
 import type { Cycle, CycleFigures, CycleStep, Dataset } from "../api/types";
-import { Badge, Edits, Empty, Panel } from "../components/ui";
+import { Badge, Edits, Empty, Panel, StageHeader } from "../components/ui";
 import { money, pct, qty } from "../lib/format";
 import { useLatest } from "../lib/latest";
 import { href } from "../lib/router";
@@ -244,4 +244,16 @@ function Journey({ c }: { c: Cycle }) {
           <td className="num">{supply ? pct(f.fill_rate!) : "—"}</td><td className="mono small">{s.version_id}</td></tr>;
       })}</tbody></table></div>
   </Panel>;
+}
+
+/** The monthly S&OP cycle as a page of its own (Enterprise 8.4, N351): the owner signs off the month here, not under
+ *  the capacity plan's tabs. */
+export function SopCyclePage() {
+  const ds = useStore((s) => s.dataset)!;
+  return (
+    <div>
+      <StageHeader title="S&OP cycle" kicker="Agreeing the month's plan, one signed-off step at a time, from the first demand number to the executive meeting." />
+      <div className="content"><CycleView ds={ds} /></div>
+    </div>
+  );
 }

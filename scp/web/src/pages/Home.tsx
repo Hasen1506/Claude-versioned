@@ -11,6 +11,7 @@ import { earliestArrival } from "../lib/situations";
 import { earnings } from "../lib/earnings";
 import { guideDone } from "../lib/guide";
 import { Checklist, setupTodo } from "../components/Checklist";
+import { WorkList } from "../components/WorkWaiting";
 import { freshness, PLAN_STEPS, planFreshness, store, useStore, type RunKey } from "../state/store";
 
 // ---- first-run guide: remembers which pages this browser has visited --------------------------------
@@ -87,11 +88,11 @@ function Guide({ planned }: { planned: boolean }) {
 
 // ---- small building blocks ---------------------------------------------------------------------------
 
-function Card({ q, attn, loading, children, links }: {
-  q: string; attn?: boolean; loading?: boolean; children?: ReactNode; links?: { to: string; label: string }[];
+function Card({ q, attn, loading, children, links, wide }: {
+  q: string; attn?: boolean; loading?: boolean; children?: ReactNode; links?: { to: string; label: string }[]; wide?: boolean;
 }) {
   return (
-    <section className={`hcard ${attn ? "attn" : ""}`} aria-label={q}>
+    <section className={`hcard ${attn ? "attn" : ""} ${wide ? "wide" : ""}`} aria-label={q}>
       <h2 className="q">{q}</h2>
       {loading ? <div className="skeleton" aria-label="Not calculated yet"><span /><span /><span /></div> : children}
       {!loading && links && links.length > 0 && (
@@ -148,6 +149,12 @@ function realAccuracy(ds: Dataset): { accuracy: number; bias: number; weeks: num
 
 export function Home({ ds }: { ds: Dataset }) {
   const s = useStore((x) => x);
+  // Home is where each job starts (N354): what someone else changed since is calculated again on opening it, so the
+  // work waiting is never yesterday's. A page opened elsewhere recalculates its own result the same way.
+  useEffect(() => {
+    const st = store.get();
+    if (!st.planning && planFreshness(st) === "stale" && !st.validation?.blocking && !st.schemaErrors.length) void store.planAll();
+  }, []);
   const planned = planFreshness(s);
   const loading = (key: RunKey) => !s.runs[key].data;
   const cur = ds.settings.currency;
@@ -347,6 +354,9 @@ export function Home({ ds }: { ds: Dataset }) {
         </div>
       ) : (
         <div className="hgrid">
+          <Card q="Work waiting, by job" wide loading={loading("purchasing") || loading("sales") || loading("actuals")}>
+            {staleNote(["plan", "purchasing", "sales", "actuals"])}<WorkList ds={ds} />
+          </Card>
           <Card q="Will customers get what they need?" attn={serveAttn} loading={loading("plan")}
             links={[{ to: href("plan"), label: serveAttn ? "See which, and why" : "Open the supply plan" }]}>
             {staleNote(["plan"])}{serve}

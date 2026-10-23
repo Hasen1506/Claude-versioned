@@ -42,6 +42,7 @@ export const NAV: NavGroup[] = [
       { id: "capacity", label: "Levelling", question: "Which machines are asked for too much day by day, and what would levelling move?", run: "plan", optional: true },
       { id: "schedule", label: "Shop floor", question: "In what order should each machine run its jobs?", run: "schedule", optional: true },
     ] },
+    { id: "cycle", label: "S&OP cycle", question: "Is this month's plan agreed: the data, the demand review, the supply review, pre-S&OP and the executive meeting, each signed off by its owner?" },
   ] },
   { label: "Run the business", items: [
     { ...promise, label: "Customer orders", tabs: [
