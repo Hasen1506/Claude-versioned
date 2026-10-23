@@ -124,3 +124,39 @@ planning", and Vollmann et al. *Manufacturing Planning and Control*. Audited 23 
 S/4 guide and backtested), and it shows: 20 of 25 there, 2 partial, 3 missing. The gap that changes numbers is M6: the
 next days are planned from forecast the customers have not ordered. **Next in 8.3:** M6; M21 and M22 to IDEAS.md;
 M23 and M24 noted. **After M6:** 21 of 25 there.
+
+## 4. Buying (procurement)
+
+Read against CPIM "purchasing and supplier management", the S/4 materials management flow (requisition → order →
+confirmation → receipt → invoice), and Monczka et al. *Purchasing and Supply Chain Management*. Audited 23 October 2026.
+
+| # | Concept | Engine | Page and name | Oracle | Status |
+|---|---|---|---|---|---|
+| B1 | Requisitions from the plan, grouped into orders per supplier | `purchasing` (E3) | Buying → To order | test_purchasing | there |
+| B2 | Source list and info records: price, price scales, MOQ, rounding, lead time, fixed and blocked sources | `PurchasingSource`, vendors | Set up → buy; Buying → suppliers | test_purchasing, test_mrp | there |
+| B3 | Contracts and scheduling agreements (call-offs against a quantity or value) | N2 | Buying → contracts | test_procure_to_pay | there |
+| B4 | Approval (release strategy) by value, several levels; four eyes | N3, L2 | Buying → orders | test_procure_to_pay | there |
+| B5 | Order confirmations, several lines; late and short confirmations into planning | E1–E2, N2 | Buying → orders; Supply plan | test_purchasing, test_mrp | there |
+| B6 | Goods receipt with over- and under-delivery tolerance; quality and blocked stock | O1, tolerances | Stock & actuals | test_actuals, test_procure_to_pay | there |
+| B7 | Supplier invoice, three-way match with tolerances, delivery costs, cash discount, payables | N1 | Buying → invoices; Money | test_procure_to_pay | there |
+| B8 | Returns to supplier | N3 | Buying | test_procure_to_pay | there |
+| B9 | Landed cost: price × exchange rate × (1 + duty) + freight + handling | `plan/costing.landed_unit_cost` | Products at places → cost | test_valuation, test_s4_guide_part_c | there |
+| B10 | Supplier scorecard: on time, in full, days late, confirmed late | `purchasing` vendor rows | Buying → suppliers | test_purchasing | there |
+| B11 | Supplier lead time measured from receipts, offered to planning | EP 4.4 | Buying → suppliers | test_demand_spread | there |
+| B12 | Expediting: overdue and late-confirmed orders named, reschedule in | E2, EP 2.1 | Home inbox; Buying | test_purchasing, test_s4_guide_part_c | there |
+| B13 | Subcontracting (job work) with parts at the supplier | EP 7.1 | Job work & drop-ship | test_outside | there |
+| B14 | Supplier portal (confirm, change, dispatch) and electronic messages | EP 7.2 | Supplier portal | test_portal, test_portal_api | there |
+| B15 | Price differences on receipt and invoice into valuation | EP 6.2 | Money | test_valuation | there |
+| B16 | Supplier capacity in planning | P5 | Supply plan | test_planning_depth | there |
+| B17 | Requests for quotation: ask several suppliers, compare their offers (price, lead time, terms) and award | — | — | — | **missing**: a new source is typed in, not chosen from offers |
+| B18 | Spend analysis: spend by supplier, product group and month; ABC of spend; concentration on one supplier | `purchasing/spend`: spent (closed orders of the last year), on order and planned, per supplier and bought product, ABC by share, the biggest supplier's share | Buying → *Spend & sourcing* | test_spend (hand-worked: 1,650 and 120 of 1,770, A and B, price scale, closed-short lines); e2e spend | there (8.3): per supplier and product, not yet by month or product group |
+| B19 | Weighted supplier evaluation (delivery, quality, price, service into one score, a rating) | delivery measures only | Buying → suppliers | — | partial: no quality (rejects, returns) or price measure in the score |
+| B20 | Consignment stock (the supplier's stock on our premises, paid when used) | — | — | — | missing |
+| B21 | Single-source risk: products with one supplier, their spend and lead time | `purchasing/spend`: usable sources per product at a place (not blocked, valid), single-sourced first with spend, lead time and the supplier's on-time | Buying → *Spend & sourcing* → Sourcing | test_spend; e2e spend | there (8.3) |
+| B22 | Incoterms and who pays the freight | `incoterm` on orders | Buying → order | — | partial: carried on the document, not in the landed cost |
+
+**What this section says** (audit): the transactional flow is complete (requisition to payment, with contracts,
+approvals, portal and tolerances); what a buyer does to choose and manage suppliers is thin: 16 of 22 there, 2
+partial, 4 missing. The ones that change decisions are B18 and B21 (where the money goes and where one supplier failing
+would stop the plant), then B19 (a score that counts quality and price). **Next in 8.3:** B18 with B21 (one view: spend
+and concentration), then B19; B17 and B20 to IDEAS.md. **After B18 and B21:** 18 of 22 there, 2 partial, 2 missing.

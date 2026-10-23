@@ -189,3 +189,13 @@ on 9 Oct 2026. Not built yet:
 * **Range of coverage (M23).** Safety stock and a maximum as days of demand (a target range), not only a quantity.
 * **A planning calendar on time-phased MRP (M24).** Orders placed on given days, each covering to the next; the review
   calendar now does this on a reorder point.
+
+## Buying (CONFORMANCE §4)
+
+* **Requests for quotation (B17).** Ask several suppliers for a part, compare their offers (price, scales, lead time,
+  terms, landed cost) side by side and award one, which becomes the source.
+* **A weighted supplier score (B19).** Delivery (on time, in full), quality (rejects and returns), price (against the
+  plan's and the market's) and service in one rating per supplier.
+* **Consignment stock (B20).** The supplier's stock on our premises, paid for when it is taken.
+* **Incoterms in the landed cost (B22).** Who pays the freight and the duty decided by the order's incoterm.
+* **Spend by month and product group.** The spend view per period and family, to see where it is growing.

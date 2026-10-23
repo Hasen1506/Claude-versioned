@@ -12395,6 +12395,31 @@ export interface components {
              */
             customer_wait_days?: number | null;
         };
+        /** ProductSourcing */
+        ProductSourcing: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Sources */
+            sources: number;
+            /** Suppliers */
+            suppliers: string[];
+            /** Spent */
+            spent: number;
+            /** Committed */
+            committed: number;
+            /** Planned */
+            planned: number;
+            /** Total */
+            total: number;
+            /** Single */
+            single: boolean;
+            /** Lead Time Days */
+            lead_time_days: number | null;
+            /** On Time */
+            on_time: number | null;
+        };
         /**
          * ProductType
          * @enum {string}
@@ -13099,6 +13124,7 @@ export interface components {
             /** Vendors */
             vendors: components["schemas"]["VendorRow"][];
             payables: components["schemas"]["PayablesView"] | null;
+            spend: components["schemas"]["SpendView"] | null;
         };
         /**
          * Putaway
@@ -15959,6 +15985,61 @@ export interface components {
             /** Contract */
             contract: string | null;
         };
+        /** SpendView */
+        SpendView: {
+            /** Currency */
+            currency: string;
+            /** Since */
+            since: string;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Spent
+             * @default 0
+             */
+            spent: number;
+            /**
+             * Committed
+             * @default 0
+             */
+            committed: number;
+            /**
+             * Planned
+             * @default 0
+             */
+            planned: number;
+            /** Top Supplier */
+            top_supplier: string | null;
+            /**
+             * Top Share
+             * @default 0
+             */
+            top_share: number;
+            /**
+             * Single Products
+             * @default 0
+             */
+            single_products: number;
+            /**
+             * Products
+             * @default 0
+             */
+            products: number;
+            /**
+             * Single Share
+             * @default 0
+             */
+            single_share: number;
+            /** Suppliers */
+            suppliers: components["schemas"]["SupplierSpend"][];
+            /** Sourcing */
+            sourcing: components["schemas"]["ProductSourcing"][];
+            /** Notes */
+            notes: string[];
+        };
         /** SsoLink */
         SsoLink: {
             /** Url */
@@ -16675,6 +16756,29 @@ export interface components {
             status: "to credit" | "credited" | "replacement due" | "replaced";
             /** Credit Memo */
             credit_memo: string | null;
+        };
+        /** SupplierSpend */
+        SupplierSpend: {
+            /** Supplier */
+            supplier: string;
+            /** Spent */
+            spent: number;
+            /** Committed */
+            committed: number;
+            /** Planned */
+            planned: number;
+            /** Total */
+            total: number;
+            /** Share */
+            share: number;
+            /** Abc */
+            abc: string;
+            /** Products */
+            products: number;
+            /** Sole For */
+            sole_for: number;
+            /** On Time */
+            on_time: number | null;
         };
         /** SupplierView */
         SupplierView: {

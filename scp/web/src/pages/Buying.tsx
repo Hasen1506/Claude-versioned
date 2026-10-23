@@ -17,7 +17,7 @@ import { LotFields, lotExtra, NO_LOT, ShortOrders, type LotInput } from "./Execu
 import { Contracts, Invoices, Owed, Returns, usePoAction } from "./BuyingPay";
 import { PortalTab } from "./BuyingPortal";
 
-type View = "order" | "orders" | "invoices" | "owed" | "returns" | "contracts" | "suppliers" | "portal";
+type View = "order" | "orders" | "invoices" | "owed" | "returns" | "contracts" | "suppliers" | "spend" | "portal";
 type Sev = "error" | "warning" | "info" | "ok";
 
 const STATUS_SEV: Record<string, Sev> = {
@@ -74,6 +74,7 @@ export function Buying({ route }: { route: string[] }) {
       { id: "returns", label: "Returns", count: res.payables?.returns.length ?? 0 },
       { id: "contracts", label: "Contracts", count: res.payables?.contracts.length ?? 0 },
       { id: "suppliers", label: "Suppliers", count: res.vendors.length },
+      { id: "spend", label: "Spend & sourcing", count: res.spend?.single_products || undefined },
       { id: "portal", label: "Supplier portal", count: (ds.shipping_notices ?? []).filter((n) => !n.received_on && !n.cancelled).length || undefined },
     ]} />
     {view === "order" && <ToOrder res={res} ds={ds} />}
@@ -84,6 +85,7 @@ export function Buying({ route }: { route: string[] }) {
     {view === "returns" && res.payables && <Returns res={res} ds={ds} />}
     {view === "contracts" && res.payables && <Contracts res={res} ds={ds} />}
     {view === "suppliers" && <Suppliers res={res} ds={ds} />}
+    {view === "spend" && <Spend res={res} ds={ds} />}
     {view === "portal" && <PortalTab ds={ds} />}
   </>);
 }
@@ -512,6 +514,47 @@ function PoDocButtons({ po, ds, onSent }: { po: PoView; ds: Dataset; onSent?: ()
     <a className="btn sm ghost" href={mailto} title={mail.to ? `An e-mail to ${mail.to} with the order in its text` : "An e-mail with the order in its text (no e-mail address on the supplier's purchasing data)"}>E-mail</a>
     <ServerSend kind={po.kind === "scheduling_agreement" ? "delivery_schedule" : "purchase_order"} docRef={po.id} to={mail.to} subject={mail.subject} text={mail.body} html={() => poDocument(po, ds)} onSent={onSent} />
   </span>;
+}
+
+/** Where the buying money goes, and which bought products would stop a place if their one supplier failed. */
+function Spend({ res, ds }: { res: PurchasingView; ds: Dataset }) {
+  const v = res.spend;
+  const nm = namesOf(ds);
+  if (!v || !v.suppliers.length) return <Panel><Empty title="No spend yet">Nothing bought, open or planned to buy.</Empty></Panel>;
+  const cur = v.currency;
+  return (
+    <div className="stack">
+      <div className="grid-auto">
+        <StatTile label="Spend" value={money(v.total, cur)} sub={`${money(v.spent, cur)} spent since ${day(v.since)}, ${money(v.committed, cur)} on order, ${money(v.planned, cur)} planned`} />
+        <StatTile label="Biggest supplier" value={pct(v.top_share, 0)} sub={v.top_supplier ? nm.loc(v.top_supplier) : ""} />
+        <StatTile label="Bought from one source" value={`${v.single_products} of ${v.products}`} tone={v.single_products ? "hl" : undefined}
+          sub={`${pct(v.single_share, 0)} of the spend`} />
+      </div>
+      <Panel flush title="By supplier" actions={<span className="small faint">spent in the last year, on order and planned, at the supplier's price</span>}>
+        <div className="table-wrap"><table className="t" aria-label="Spend by supplier">
+          <thead><tr><th>Supplier</th><th>Class</th><th className="num">Spent</th><th className="num">On order</th><th className="num">Planned</th>
+            <th className="num">Share</th><th className="num">Only source for</th><th className="num">On time</th></tr></thead>
+          <tbody>{v.suppliers.map((s) => <tr key={s.supplier}>
+            <td>{nm.loc(s.supplier)}</td><td><b>{s.abc}</b></td><td className="num">{money(s.spent, cur)}</td><td className="num">{money(s.committed, cur)}</td>
+            <td className="num">{money(s.planned, cur)}</td><td className="num">{pct(s.share, 1)}</td>
+            <td className="num">{s.sole_for ? `${s.sole_for} of ${s.products}` : <span className="faint">none</span>}</td>
+            <td className="num">{s.on_time != null ? pct(s.on_time, 0) : <span className="faint">—</span>}</td></tr>)}</tbody>
+        </table></div>
+      </Panel>
+      <Panel flush title="Sourcing" actions={<span className="small faint">the products with one usable source first</span>}>
+        <div className="table-wrap"><table className="t" aria-label="Sourcing">
+          <thead><tr><th>Product at a place</th><th>Sources</th><th className="num">Spend</th><th className="num">Lead time</th><th className="num">Its supplier on time</th></tr></thead>
+          <tbody>{v.sourcing.map((s) => <tr key={`${s.location}|${s.product}`}>
+            <td><Prod id={s.product} /> <span className="faint small"><Loc id={s.location} /></span></td>
+            <td>{s.sources === 0 ? <Badge sev="error">no usable source</Badge> : s.single ? <><Badge sev="warning">one</Badge> {nm.loc(s.suppliers[0])}</>
+              : `${s.sources}: ${s.suppliers.map((x) => nm.loc(x)).join(", ")}`}</td>
+            <td className="num">{money(s.total, cur)}</td><td className="num">{s.lead_time_days != null ? `${qty(s.lead_time_days)} d` : "—"}</td>
+            <td className="num">{s.on_time != null ? pct(s.on_time, 0) : <span className="faint">—</span>}</td></tr>)}</tbody>
+        </table></div>
+        {v.notes.map((n) => <p key={n} className="small faint" style={{ margin: "8px 14px" }}>{n}</p>)}
+      </Panel>
+    </div>
+  );
 }
 
 function Suppliers({ res, ds }: { res: PurchasingView; ds: Dataset }) {

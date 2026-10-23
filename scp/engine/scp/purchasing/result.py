@@ -7,6 +7,7 @@ from typing import Literal
 from ..model import Approval, Payment, PriceScale, ConfirmedDelivery
 from ..model.common import Out
 from .spread import LeadTimeSpread
+from .spend import SpendView
 
 
 class SourceChoice(Out):
@@ -169,6 +170,7 @@ class PurchasingView(Out):
     orders: list[PoView]
     vendors: list[VendorRow]
     payables: PayablesView | None = None
+    spend: SpendView | None = None     # where the money goes, and which bought products have one source
 
 
 class CreatedPo(Out):

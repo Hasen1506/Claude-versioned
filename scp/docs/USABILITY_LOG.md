@@ -1428,6 +1428,27 @@ partial, 3 missing. The one that changes numbers was the demand time fence.
 |---|---|---|---|
 | N344 | There was no demand time fence: the next days were planned from forecast no customer had ordered, so the plan kept buying and moving for demand that was never coming that close in. | Serious | **Fixed.** `demand_time_fence_days` on a product at a place or its MRP group; a customer channel follows the place whose strategy it uses. Inside the fence the forecast left after consumption is not planned, and under make to stock the orders inside it are. Counted in working days when fences are, and named in the plan's messages. |
 
+### 8.3: Buying
+
+CONFORMANCE §4: 22 concepts against CPIM purchasing, the S/4 materials-management flow and Monczka et al.; 16 there, 2
+partial, 4 missing. The flow from requisition to payment is complete. Choosing and managing suppliers was thin.
+
+**Spend and sourcing (B18, B21), on Kaveri.**
+
+* *Input:* the 18 purchase orders closed in the last year, the open orders and the plan's requisitions over 26
+  weeks, each priced at its source's price.
+* *Processing:* *Buying → Spend & sourcing*.
+* *Output:*
+  * ₹6.05 Cr in all: ₹75 lakh spent, ₹11 lakh on order, ₹5.19 Cr planned.
+  * Hindalco copper takes 31.7 % and Rajkot jars 29.5 %.
+  * **All nine bought parts have a single usable source: 100 % of the spend is single-sourced.**
+  * The most exposed is Shenzhen electro-components. It is the only source of the concealed heater and the rotary
+    switch, 14 days away, and on time on three orders in four.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N345 | Nothing showed where the buying money went or which parts had one supplier: on Kaveri every bought part is single-sourced, and the one with the worst delivery record and the longest lead time supplies two parts of every appliance. | Serious | **Fixed.** *Buying → Spend & sourcing*: spent, on order and planned per supplier (ABC by share), the biggest supplier's share, and every bought product at a place with its usable sources, single-sourced first with their spend, lead time and the supplier's on-time. Open: spend by month and product group; requests for quotation, consignment and a weighted supplier score are in IDEAS.md. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution
