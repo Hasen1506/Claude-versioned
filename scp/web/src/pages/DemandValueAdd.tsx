@@ -78,6 +78,30 @@ export function ValueAddView({ ds }: { ds: Dataset }) {
       {va.notes.map((n) => <p key={n} className="small faint">{n}</p>)}
     </Panel>
 
+    {va.tracking.length > 0 && <Panel title="Forecasts that keep missing one way"
+      actions={<span className="small faint">tracking signal over the last {qty(Math.max(...va.tracking.map((x) => x.periods)))} {unit}s</span>}>
+      <p className="small" style={{ maxWidth: "75ch" }}>
+        The running sum of each series' misses (forecast − sales) over their average size. Misses that cancel keep it near 0; a
+        forecast that is high, or low, every {unit} walks it toward the number of {unit}s. At ±{qty(va.tracking_limit)} or beyond it is
+        biased: look at the series before the next release.{" "}
+        <b>{va.biased ? `${va.biased} of ${va.tracking.length} series ${va.biased === 1 ? "is" : "are"} biased.` : `None of ${va.tracking.length} series is biased.`}</b>
+      </p>
+      <div className="table-wrap"><table className="t" aria-label="Tracking signal">
+        <thead><tr><th>Product</th><th className="num">{unit === "week" ? "Weeks" : "Months"}</th><th className="num">Sold</th><th className="num">Forecast</th>
+          <th className="num">Average miss</th><th className="num">Tracking signal</th></tr></thead>
+        <tbody>
+          {va.tracking.slice(0, 25).map((x) => <tr key={`${x.location}|${x.product}`}>
+            <td><a href={href("demand", "series", `${x.location}|${x.product}`)}>{nm.prod(x.product)}</a> <span className="faint small">{nm.loc(x.location)}</span></td>
+            <td className="num">{x.periods}</td><td className="num">{qty(Math.round(x.actual))}</td><td className="num">{qty(Math.round(x.forecast))}</td>
+            <td className="num">{qty(Math.round(x.mad))}</td>
+            <td className={`num ${x.biased ? "bad" : ""}`}>{x.signal > 0 ? "+" : x.signal < 0 ? "−" : ""}{Math.abs(x.signal).toFixed(1)}
+              {x.biased && <div className="small">{x.direction === "over" ? "forecast too high" : "forecast too low"}</div>}</td>
+          </tr>)}
+        </tbody>
+      </table></div>
+      {va.tracking.length > 25 && <p className="small faint">The 25 furthest from 0 of {va.tracking.length}.</p>}
+    </Panel>}
+
     <Panel title="By planner" actions={<span className="small faint">on the {unit}s each planner overrode</span>}>
       {va.planners.length ? <div className="table-wrap"><table className="t" aria-label="By planner">
         <thead><tr><th>Planner</th><th className="num">Overrides</th><th className="num">Closer to the sales</th><th className="num">Missed before</th>

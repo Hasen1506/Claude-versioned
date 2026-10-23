@@ -344,7 +344,7 @@ export function readRows(grid: Grid, cols: Col[], ds: Dataset, ckey: CollectionK
     }
     let key: string | null = null, action: RowResult["action"] = "add";
     if (!problems.length && kind === "records") {
-      key = ["demand", "history", "overrides", "confirmations", "changeovers", "movements", "accuracy", "rolled_weeks"].includes(ckey) && !rec.id
+      key = ["demand", "history", "overrides", "family_overrides", "confirmations", "changeovers", "movements", "accuracy", "rolled_weeks"].includes(ckey) && !rec.id
         ? null : def.keyOf(rec, -1);
       if (key && key.startsWith("#")) key = null;
       if (key && seen.has(key)) problems.push(`the same ${def.singular} appears twice in the file`);

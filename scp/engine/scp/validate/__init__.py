@@ -74,6 +74,7 @@ RULES: dict[str, tuple[Severity, str]] = {
     "NPI_DUPLICATE": ("warning", "More than one NPI rule for the same location-product"),
     "OVERRIDE_OUTSIDE_HORIZON": ("warning", "Consensus override outside the forecast horizon is ignored"),
     "OVERRIDE_WITHOUT_FORECAST": ("warning", "Consensus override for a series with no history or NPI rule"),
+    "FAMILY_OVERRIDE_NO_FAMILY": ("warning", "Family override for a family no product belongs to"),
     "CONFIRMATION_ORPHAN": ("warning", "Persisted confirmation for an order that no longer exists"),
     "STOCK_NOT_SYNCED": ("warning", "On-hand differs from the goods-movement journal"),
     "NEGATIVE_STOCK": ("warning", "The movement journal takes stock below zero"),
@@ -810,6 +811,16 @@ def _forecasting(ds: Dataset, c: _Collector) -> None:
             c.add("OVERRIDE_WITHOUT_FORECAST", "override", oid,
                   f"No history or NPI rule for {o.product} at {o.location}, so there is no forecast to adjust",
                   "Add history, add an NPI rule, or enter the demand as a forecast record")
+    families = {p.family for p in ds.products if p.family}
+    for f in ds.family_overrides:
+        oid = f"{f.family}{'/' + f.location if f.location else ''}@{f.date.isoformat()}"
+        if not s.planning_start <= f.date < end:
+            c.add("OVERRIDE_OUTSIDE_HORIZON", "family_override", oid, "The override date is outside the plan's dates",
+                  "Move it inside the plan or delete it", "date")
+        elif f.family not in families:
+            c.add("FAMILY_OVERRIDE_NO_FAMILY", "family_override", oid,
+                  f"No product is in the family {f.family}, so the override has nothing to spread over",
+                  "Name a family the products use, or set it on the products", "family")
 
 
 def _graph(ds: Dataset, c: _Collector) -> None:

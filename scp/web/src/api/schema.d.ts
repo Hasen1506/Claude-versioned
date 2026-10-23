@@ -5476,6 +5476,8 @@ export interface components {
             npi?: components["schemas"]["NpiRule"][];
             /** Overrides */
             overrides?: components["schemas"]["ForecastOverride"][];
+            /** Family Overrides */
+            family_overrides?: components["schemas"]["FamilyOverride"][];
             /** Forecast Snapshots */
             forecast_snapshots?: components["schemas"]["ForecastSnapshot"][];
             inventory?: components["schemas"]["InventorySettings"];
@@ -6390,6 +6392,85 @@ export interface components {
             /** Supply Revenue */
             supply_revenue: number | null;
         };
+        /**
+         * FamilyOverride
+         * @description A consensus adjustment for a product family's total in one period (top-down): a quantity spread over the
+         *     family's series in proportion to their own forecast, or a relative change to each. A series with an override of
+         *     its own keeps it, and the rest of the total is spread over the others.
+         */
+        FamilyOverride: {
+            /**
+             * Family
+             * @description The product family, as products name it
+             */
+            family: string;
+            /**
+             * Location
+             * @description Only its series at this place (empty = all)
+             */
+            location?: string | null;
+            /**
+             * Date
+             * Format: date
+             * @description Any date inside the forecast period to adjust
+             */
+            date: string;
+            /**
+             * Qty
+             * @description The family's total for the period
+             */
+            qty?: number | null;
+            /**
+             * Change
+             * @description Relative change to each series' forecast, e.g. +10 %
+             */
+            change?: number | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Author
+             * @default
+             */
+            author: string;
+        };
+        /** FamilyPeriod */
+        FamilyPeriod: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Label */
+            label: string;
+            /** Statistical */
+            statistical: number;
+            /** Final */
+            final: number;
+            /**
+             * Overridden
+             * @default false
+             */
+            overridden: boolean;
+            /** Override */
+            override: number | null;
+        };
+        /** FamilyPlan */
+        FamilyPlan: {
+            /** Family */
+            family: string;
+            /** Series */
+            series: number;
+            /** Periods */
+            periods: components["schemas"]["FamilyPeriod"][];
+        };
         /** FieldChange */
         FieldChange: {
             /** Path */
@@ -6904,6 +6985,8 @@ export interface components {
             series: components["schemas"]["Series"][];
             summary: components["schemas"]["Summary"];
             foundation: components["schemas"]["FoundationStatus"];
+            /** Families */
+            families: components["schemas"]["FamilyPlan"][] | null;
         };
         /**
          * ForecastSettings
@@ -17134,6 +17217,37 @@ export interface components {
             /** Product */
             product?: string | null;
         };
+        /**
+         * Tracking
+         * @description One series' tracking signal over its last measured periods: the running sum of the errors (forecast − sales)
+         *     over their mean absolute size. Errors that cancel keep it near 0; a forecast that misses the same way every
+         *     period walks it to ± the number of periods.
+         */
+        Tracking: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Periods */
+            periods: number;
+            /** Forecast */
+            forecast: number;
+            /** Actual */
+            actual: number;
+            /** Rsfe */
+            rsfe: number;
+            /** Mad */
+            mad: number;
+            /** Signal */
+            signal: number;
+            /** Biased */
+            biased: boolean;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "over" | "under" | "";
+        };
         /** TransferPrice */
         TransferPrice: {
             /** Id */
@@ -17617,6 +17731,21 @@ export interface components {
              * @default []
              */
             costly: components["schemas"]["CostlyOverride"][];
+            /**
+             * Tracking
+             * @default []
+             */
+            tracking: components["schemas"]["Tracking"][];
+            /**
+             * Tracking Limit
+             * @default 4
+             */
+            tracking_limit: number;
+            /**
+             * Biased
+             * @default 0
+             */
+            biased: number;
             /**
              * Notes
              * @default []

@@ -452,10 +452,43 @@ function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
     });
     void store.run("forecast");
   };
+  const setFamily = (family: string, p: ForecastPoint, raw: string) => {
+    const v = raw.trim() === "" ? null : Number(raw);
+    if (v !== null && (!Number.isFinite(v) || v < 0)) return;
+    store.update((d) => {
+      d.family_overrides = (d.family_overrides ?? []).filter((o) => !(o.family === family && !o.location && o.date >= p.start && o.date < p.end));
+      if (v !== null) d.family_overrides.push({ family, location: null, date: p.start, qty: v, change: null, reason: "Consensus grid", author: me });
+    });
+    void store.run("forecast");
+  };
+  const families = fc.families ?? [];
   return (
     <div className="stack">
       <div className="banner info">Type a quantity into a cell to set a consensus override for that period; clear it to fall back to the
         statistical forecast. The forecast re-runs after each edit. {ds.overrides?.length ?? 0} overrides in the dataset.</div>
+      {families.length > 0 && <Panel flush title="By product family" actions={<span className="small faint">all places together</span>}><Edits>
+        <p className="small" style={{ margin: "10px 14px", maxWidth: "75ch" }}>Type a family's total for a period: it is spread over the family's
+          series in proportion to their own forecast; a series with an override of its own keeps it, and the rest of the total goes to the others.</p>
+        <div className="table-wrap">
+          <table className="t nowrap" aria-label="By product family">
+            <thead><tr><th className="stub">Family</th>{periods.map((p) => <th key={p.start} className="num">{p.label.replace(/^W\d+ /, "")}</th>)}</tr></thead>
+            <tbody>{families.map((f) => (
+              <tr key={f.family}>
+                <td className="stub">{f.family}<div className="faint small">{plural(f.series, "series", "series")}</div></td>
+                {f.periods.map((fp, i) => (
+                  <td key={fp.start} className={`num ${fp.override !== null && fp.override !== undefined ? "edit" : ""}`}
+                    title={`Statistical ${qty(fp.statistical)}${fp.overridden ? " · overridden" : ""}`}>
+                    <input className="cell" defaultValue={fp.override !== null && fp.override !== undefined ? String(Math.round(fp.override)) : ""}
+                      placeholder={qty(fp.final)} aria-label={`${f.family}, ${day(fp.start)}`} key={`${fp.start}-${fp.override}-${fp.final}`}
+                      onBlur={(e) => { const was = fp.override !== null && fp.override !== undefined ? String(Math.round(fp.override)) : ""; if (e.target.value !== was) setFamily(f.family, periods[i], e.target.value); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+                  </td>
+                ))}
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </Edits></Panel>}
       <Panel flush title={fc.series.length > GRID_ROWS ? <input className="input" placeholder="Find a product or place…" value={q}
         onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 260 }} aria-label="Find series" /> : undefined}><Edits>
         <div className="table-wrap" style={{ maxHeight: "calc(100vh - 290px)" }}>

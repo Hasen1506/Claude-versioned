@@ -168,7 +168,7 @@ LABELS = {
     "cancelled_purchase_orders": "purchase order cancellations",
     "sales": "sales settings",
     "demand": "orders and forecasts", "receipts": "open orders", "history": "sales history", "events": "events",
-    "npi": "new products", "overrides": "forecast overrides", "forecast_snapshots": "kept forecasts", "stock_targets": "stock targets", "budgets": "budgets",
+    "npi": "new products", "overrides": "forecast overrides", "family_overrides": "family overrides", "forecast_snapshots": "kept forecasts", "stock_targets": "stock targets", "budgets": "budgets",
     "changeovers": "changeovers", "allocations": "allocations", "confirmations": "promises", "movements": "goods movements",
     "batches": "batches", "inventory_docs": "physical inventory documents", "storage_types": "storage types",
     "bins": "storage bins", "putaway_rules": "put-away rules", "warehouse_tasks": "warehouse tasks", "waves": "waves",

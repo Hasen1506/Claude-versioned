@@ -31,8 +31,8 @@ from .periods import (
     Period, default_season, future_periods, history_periods, label, mean_days, next_start, period_start,
 )
 from .result import (
-    BacktestPoint, CvSuggestion, DroppedSeries, ForecastPoint, ForecastResult, FoundationStatus, HistoryPoint,
-    ModelScore, ReleaseResult, Segment, Series, Summary,
+    BacktestPoint, CvSuggestion, DroppedSeries, FamilyPeriod, FamilyPlan, ForecastPoint, ForecastResult, FoundationStatus,
+    HistoryPoint, ModelScore, ReleaseResult, Segment, Series, Summary,
 )
 
 ADI_CUT = 1.32   # Syntetos, Boylan & Croston (2005) demand-pattern boundaries
@@ -366,7 +366,8 @@ def run_forecast(ds: Dataset) -> ForecastResult:
 
     out = sorted(series.values(), key=lambda s: (s.location, s.product))
     return ForecastResult(ok=True, period=period.value, season_length=m, periods=[p.label for p in fut], issues=issues,
-                          series=out, summary=_summary(out, ds), foundation=foundation_status)
+                          series=out, summary=_summary(out, ds), foundation=foundation_status,
+                          families=_families(ds, out) or None)
 
 
 PARALLEL_MIN_SERIES = 24
@@ -557,25 +558,88 @@ def _npi_series(ctx: _Ctx, rule: NpiRule, series: dict[tuple[str, str], Series],
                   forecast=_points(ctx, stat, spread, factors, ev_ids), notes=notes)
 
 
-def _apply_overrides(ds: Dataset, series: dict[tuple[str, str], Series], fut: list[Period]) -> None:
+def _set(pt: ForecastPoint, qty: float, reason: str, author: str) -> None:
+    pt.override = qty
+    pt.override_reason = reason
+    pt.override_author = author
+    if pt.final > 0:  # keep the interval's relative width around the new value
+        ratio = pt.override / pt.final
+        pt.lower, pt.upper = pt.lower * ratio, pt.upper * ratio
+    else:
+        pt.lower = pt.upper = pt.override
+    pt.final = pt.override
+    pt.released_qty = pt.final * pt.share
+
+
+def _base(pt: ForecastPoint) -> float:
+    return pt.statistical * pt.event_factor - pt.cannibalised
+
+
+def _apply_overrides(ds: Dataset, series: dict[tuple[str, str], Series], fut: list[Period]) -> set[tuple[str, date]]:
+    """The planners' overrides, series by series; then each family override spreads the family's total over its
+    series without one of their own. Returns the (series, period) cells a series override set."""
+    locked: set[tuple[str, date]] = set()
     for ov in ds.overrides:
         s = series.get((ov.location, ov.product))
         if s is None:
             continue  # reported by the readiness gate (OVERRIDE_NO_SERIES)
         for pt in s.forecast:
             if pt.start <= ov.date < pt.end:
-                base = pt.statistical * pt.event_factor - pt.cannibalised
-                pt.override = ov.qty if ov.qty is not None else max(0.0, base * (1 + (ov.change or 0.0)))
-                pt.override_reason = ov.reason
-                pt.override_author = ov.author
-                if pt.final > 0:  # keep the interval's relative width around the new value
-                    ratio = pt.override / pt.final
-                    pt.lower, pt.upper = pt.lower * ratio, pt.upper * ratio
-                else:
-                    pt.lower = pt.upper = pt.override
-                pt.final = pt.override
-                pt.released_qty = pt.final * pt.share
+                _set(pt, ov.qty if ov.qty is not None else max(0.0, _base(pt) * (1 + (ov.change or 0.0))),
+                     ov.reason, ov.author)
+                locked.add((s.key, pt.start))
                 break
+    fam = {p.id: p.family for p in ds.products}
+    for fo in ds.family_overrides:
+        members = [s for (loc, prod), s in sorted(series.items())
+                   if fam.get(prod) == fo.family and (fo.location is None or loc == fo.location)]
+        cells = [(s, pt) for s in members for pt in s.forecast if pt.start <= fo.date < pt.end]
+        free = [(s, pt) for s, pt in cells if (s.key, pt.start) not in locked]
+        if not free:
+            continue
+        why = f"{fo.family} family" + (f": {fo.reason}" if fo.reason else "")
+        if fo.change is not None:
+            for _, pt in free:
+                _set(pt, max(0.0, _base(pt) * (1 + fo.change)), why, fo.author)
+            continue
+        # top-down: what the series with their own overrides hold stays; the rest of the total is spread over the
+        # others in proportion to their own forecast (evenly when none has one)
+        rest = max(0.0, (fo.qty or 0.0) - sum(pt.final for s, pt in cells if (s.key, pt.start) in locked))
+        weights = [max(0.0, _base(pt)) for _, pt in free]
+        total = sum(weights)
+        shares = [rest * (w / total if total > 1e-9 else 1.0 / len(free)) for w in weights]
+        if all(ds.whole(s.product) for s, _ in free) and abs(rest - round(rest)) < 1e-9:
+            # products counted in each: whole units that still add up to the total (largest remainder)
+            whole = [math.floor(x + 1e-9) for x in shares]
+            for i in sorted(range(len(shares)), key=lambda i: (whole[i] - shares[i], i))[:round(rest) - sum(whole)]:
+                whole[i] += 1
+            shares = [float(x) for x in whole]
+        for (_, pt), q in zip(free, shares, strict=True):
+            _set(pt, q, why, fo.author)
+    return locked
+
+
+def _families(ds: Dataset, series: list[Series]) -> list[FamilyPlan]:
+    """Each product family's forecast per period, all its places together: the statistical forecast (after events
+    and new products) and the consensus."""
+    fam = {p.id: p.family for p in ds.products}
+    out: dict[str, FamilyPlan] = {}
+    for s in series:
+        f = fam.get(s.product)
+        if not f:
+            continue
+        plan = out.setdefault(f, FamilyPlan(family=f, series=0, periods=[
+            FamilyPeriod(start=p.start, end=p.end, label=p.label, statistical=0.0, final=0.0) for p in s.forecast]))
+        plan.series += 1
+        for fp, pt in zip(plan.periods, s.forecast, strict=True):
+            fp.statistical += max(0.0, _base(pt))
+            fp.final += pt.final
+            fp.overridden = fp.overridden or pt.override is not None
+    for f in out.values():
+        for fp in f.periods:
+            fp.override = next((fo.qty for fo in ds.family_overrides if fo.family == f.family and fo.location is None
+                                and fo.qty is not None and fp.start <= fo.date < fp.end), None)
+    return sorted(out.values(), key=lambda f: f.family)
 
 
 def _whole(s: Series) -> None:

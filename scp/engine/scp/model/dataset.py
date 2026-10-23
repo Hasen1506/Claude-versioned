@@ -21,7 +21,7 @@ from .transport import Carrier, FreightOrder, TransportSettings
 from .intercompany import IntercompanyInvoice, LegalEntity, TransferPrice
 from .outside import JobWorkChallan, JobWorkSettings, ThirdPartyOrder
 from .portal import ShippingNotice
-from .demand import DemandEvent, ForecastOverride, ForecastSettings, ForecastSnapshot, NpiRule
+from .demand import DemandEvent, FamilyOverride, ForecastOverride, ForecastSettings, ForecastSnapshot, NpiRule
 from .inventory import InventorySettings
 from .purchasing import (
     PurchaseContract, PurchaseOrder, PurchasingSettings, SupplierInvoice, SupplierReturn, Vendor,
@@ -73,6 +73,7 @@ class Dataset(Model):
     events: list[DemandEvent] = Field(default_factory=list)
     npi: list[NpiRule] = Field(default_factory=list)
     overrides: list[ForecastOverride] = Field(default_factory=list)
+    family_overrides: list[FamilyOverride] = Field(default_factory=list)
     forecast_snapshots: list[ForecastSnapshot] = Field(default_factory=list)
     inventory: InventorySettings = Field(default_factory=InventorySettings)
     sop: SopSettings = Field(default_factory=SopSettings)
@@ -110,11 +111,13 @@ class Dataset(Model):
 
     def forecast_inputs(self) -> str:
         """A fingerprint of what a forecast is made from besides sales history: demand events, new-product rules,
-        consensus overrides and the forecast settings. A release records it; a change after that is not in the plan."""
+        consensus overrides (a family's too) and the forecast settings. A release records it; a change after that is not in the plan."""
         parts = {"events": [e.model_dump(mode="json") for e in self.events],
                  "npi": [n.model_dump(mode="json") for n in self.npi],
                  "overrides": [o.model_dump(mode="json") for o in self.overrides],
                  "settings": self.forecasting.model_dump(mode="json", exclude={"released_inputs", "fva_lag"})}
+        if self.family_overrides:   # only when there are some: a fingerprint kept before they existed stays valid
+            parts["family_overrides"] = [f.model_dump(mode="json") for f in self.family_overrides]
         return hashlib.sha1(json.dumps(parts, sort_keys=True).encode(), usedforsecurity=False).hexdigest()[:16]
 
     def model_copy(self, *, update: dict | None = None, deep: bool = False) -> Dataset:

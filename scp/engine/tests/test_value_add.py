@@ -182,3 +182,38 @@ def test_value_add_over_http():
     body = r.json()
     assert body["measured"] == 4 and [p["label"] for p in body["planners"]] == ["ana", "ben", "Not named"]
     assert body["costly"][0]["cost"] == 15
+
+
+def test_a_forecast_that_keeps_missing_one_way_is_flagged_by_its_tracking_signal():
+    # the pump: 100 a week forecast against 80, 90, 85, 95, 70 sold. Errors 20, 10, 15, 5, 30: RSFE 80, MAD 16, a
+    # tracking signal of 5, past the ±4 limit: over-forecast. The seal: 50 against 60, 40, 55, 45, errors that cancel
+    # (−10, 10, −5, 5): 0. A third series, C, over 15 weeks: two misses of −100, then 13 of +1. Only the last 13 count:
+    # RSFE 13, MAD 1, a signal of 13 (all 15 would read −187 / 14.2)
+    weeks = [(dt.date(2026, 7, 6) + dt.timedelta(weeks=i)).isoformat() for i in range(15)]
+    hist, snaps = [], []
+    for w, sold in zip(weeks[-5:], [80, 90, 85, 95, 70], strict=True):
+        hist.append({"location": "CU", "product": "A", "date": w, "qty": sold})
+        snaps.append(snap("A", w, 100, 100, 100, 100))
+    for w, sold in zip(weeks[-4:], [60, 40, 55, 45], strict=True):
+        hist.append({"location": "CU", "product": "B", "date": w, "qty": sold})
+        snaps.append(snap("B", w, 50, 50, 50, 50))
+    for w, sold in zip(weeks[-5:], [60, 70, 55, 65, 80], strict=True):    # D under-forecast: −10, −20, −5, −15, −30: −80 / 16 = −5
+        hist.append({"location": "CU", "product": "D", "date": w, "qty": sold})
+        snaps.append(snap("D", w, 50, 50, 50, 50))
+    for i, w in enumerate(weeks):
+        hist.append({"location": "CU", "product": "C", "date": w, "qty": 200 if i < 2 else 99})
+        snaps.append(snap("C", w, 100, 100, 100, 100))
+    d = shop(history=hist, forecast_snapshots=snaps)
+    d["products"] += [{"id": "C", "name": "Valve", "type": "FG", "price": 1}, {"id": "D", "name": "Hose", "type": "FG"}]
+    va = value_add(Dataset.model_validate(d))
+    t = {x.product: x for x in va.tracking}
+    assert (t["A"].periods, t["A"].rsfe, t["A"].mad, t["A"].signal) == (5, 80, 16, 5)
+    assert t["A"].biased and t["A"].direction == "over"
+    assert (t["B"].rsfe, t["B"].signal, t["B"].biased, t["B"].direction) == (0, 0, False, "")
+    assert (t["C"].periods, t["C"].rsfe, t["C"].mad, t["C"].signal) == (13, 13, 1, 13)
+    assert (t["D"].signal, t["D"].biased, t["D"].direction) == (-5, True, "under")
+    # the furthest from 0 first, either way
+    assert [x.product for x in va.tracking] == ["C", "A", "D", "B"] and va.biased == 3 and va.tracking_limit == 4
+    # three periods are too few to judge
+    few = shop(history=hist[:3], forecast_snapshots=snaps[:3])
+    assert value_add(Dataset.model_validate(few)).tracking == []

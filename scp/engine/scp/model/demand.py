@@ -178,6 +178,27 @@ class ForecastOverride(Model):
         return self
 
 
+class FamilyOverride(Model):
+    """A consensus adjustment for a product family's total in one period (top-down): a quantity spread over the
+    family's series in proportion to their own forecast, or a relative change to each. A series with an override of
+    its own keeps it, and the rest of the total is spread over the others."""
+
+    family: str = Field(min_length=1, max_length=64, description="The product family, as products name it")
+    location: str | None = Ref("location", default=None, description="Only its series at this place (empty = all)")
+    date: dt.date = Field(description="Any date inside the forecast period to adjust")
+    qty: float | None = Unit("qty", ge=0, default=None, description="The family's total for the period")
+    change: float | None = Unit("fraction", ge=-1, le=20, default=None,
+                                description="Relative change to each series' forecast, e.g. +10 %")
+    reason: str = Field("", max_length=200)
+    author: str = Field("", max_length=80)
+
+    @model_validator(mode="after")
+    def _one(self) -> FamilyOverride:
+        if (self.qty is None) == (self.change is None):
+            raise ValueError("set exactly one of qty or change")
+        return self
+
+
 class ForecastSnapshot(Model):
     """What each layer of the forecast said for one period, kept by a release so the forecast can be judged against
     the sales once the period has sold (forecast value add). A later release replaces a period's row until the period

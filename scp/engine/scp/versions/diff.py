@@ -16,6 +16,7 @@ KEYS: dict[str, tuple[str, ...]] = {
     "events": ("id",), "allocations": ("id",), "movements": ("id",), "batches": ("product", "id"), "inventory_docs": ("id",),
     "location_products": ("location", "product"), "npi": ("location", "product"),
     "history": ("location", "product", "date"), "overrides": ("location", "product", "date"),
+    "family_overrides": ("family", "location", "date"),
     "forecast_snapshots": ("location", "product", "start"),
     "demand": ("id", "location", "product", "date", "kind"), "confirmations": ("order", "ship_from", "ship_date"),
     "changeovers": ("resource", "from_group", "to_group"), "closed_orders": ("kind", "id"),

@@ -117,6 +117,22 @@ class Summary(Out):
     total_high: float = 0.0            # what a release writes as the high end (P90 at the default 80 % interval)
 
 
+class FamilyPeriod(Out):
+    start: dt.date
+    end: dt.date
+    label: str
+    statistical: float                 # Σ the series' forecasts after events and new products
+    final: float                       # Σ the consensus
+    overridden: bool = False           # a series or the family was overridden in it
+    override: float | None = None      # the family total a planner set for it (all places)
+
+
+class FamilyPlan(Out):
+    family: str
+    series: int
+    periods: list[FamilyPeriod]
+
+
 class ForecastResult(Out):
     ok: bool
     period: Literal["week", "month"]
@@ -126,6 +142,7 @@ class ForecastResult(Out):
     series: list[Series]
     summary: Summary
     foundation: FoundationStatus
+    families: list[FamilyPlan] | None = None   # each product family's total per period, all places (None: no families)
 
 
 class CvSuggestion(Out):

@@ -26,6 +26,8 @@ def main() -> None:
         plan = run_mrp(ds).model_dump(mode="json")
         issues = sorted(json.dumps(i.model_dump(mode="json"), sort_keys=True) for i in validate(ds))
         fc = run_forecast(ds).model_dump(mode="json") if ds.history else None
+        if fc is not None and fc.get("families") is None:   # added since the baseline; empty unless products have families
+            fc.pop("families", None)
         out.append({"plan": plan, "issues": issues, "forecast": fc})
     json.dump({"engine": os.path.dirname(scp.__file__), "results": out}, sys.stdout, sort_keys=True)
 

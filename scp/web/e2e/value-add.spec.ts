@@ -88,3 +88,26 @@ test("a small shop judged by hand, then a release keeps the next weeks to judge"
   await page.getByRole("tab", { name: "Value add" }).click();
   await expect(page.getByText("11 kept forecasts are for weeks that have not sold yet.")).toBeVisible({ timeout: 30_000 });
 });
+
+// Enterprise 8.3, demand planning D18 (CONFORMANCE §2): a tracking signal per series. Input: Kaveri's kept releases
+// against eleven weeks of sales. Processing: each series' running sum of misses over their average size. Output: five of
+// nine series past ±4; the West trade 750 W mixer grinder forecast too high in all eleven weeks (+10.4: 3,791 forecast
+// against 3,336 sold), the series Sales West's overrides lifted; North trade's 500 W too low (−4.8). Its link opens it.
+test("a forecast that keeps missing one way is named by its tracking signal", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Kaveri Kitchenware").click();
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  await page.goto("/#/demand/value");
+  await expect(page.getByText("5 of 9 series are biased.")).toBeVisible({ timeout: 30_000 });
+  const first = page.getByRole("table", { name: "Tracking signal" }).getByRole("row").nth(1);
+  await expect(first).toContainText("Mixer grinder 750 W");
+  await expect(first).toContainText("West trade distributors");
+  await expect(first).toContainText("+10.4");
+  await expect(first).toContainText("forecast too high");
+  await expect(first).toContainText("3,336");
+  await expect(row(page, "Tracking signal", /North trade/).filter({ hasText: "Mixer grinder 500 W" })).toContainText("−4.8");
+  await expect(row(page, "Tracking signal", /North trade/).filter({ hasText: "Mixer grinder 500 W" })).toContainText("forecast too low");
+  await first.getByRole("link", { name: "Mixer grinder 750 W" }).click();
+  await expect(page).toHaveURL(/#\/demand\/series\/CUS-WEST-TRADE%7CMG-750/);
+  await expect(page.getByText("Model leaderboard")).toBeVisible({ timeout: 30_000 });
+});

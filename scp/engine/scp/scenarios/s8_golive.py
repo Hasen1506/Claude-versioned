@@ -108,6 +108,7 @@ def build() -> dict:
         "forecasting": {"released_inputs": "before-the-overrides"},   # the overrides came after the release
         "overrides": [{"location": "CUST", "product": "JAM", "date": "2026-09-01", "qty": 120},
                       {"location": "DC", "product": "JAM", "date": "2026-07-15", "qty": 30}],
+        "family_overrides": [{"family": "Chutneys", "date": "2026-07-15", "qty": 50}],   # no product is a chutney
         "confirmations": [{"order": "SO-GONE", "ship_from": "DC", "ship_date": "2026-07-07", "date": "2026-07-08",
                            "qty": 5}],
         "receipts": [{"id": "PO-77", "kind": "purchase", "location": "CUST", "product": "JAM", "qty": 10,
@@ -170,6 +171,7 @@ WARNINGS = {
     ("NPI_DUPLICATE", "npi", "CUST/GIFT"), ("NPI_LIKE_WITHOUT_HISTORY", "npi", "CUST/GIFT"),
     ("OVERRIDE_OUTSIDE_HORIZON", "override", "CUST/JAM@2026-09-01"),
     ("OVERRIDE_WITHOUT_FORECAST", "override", "DC/JAM@2026-07-15"),
+    ("FAMILY_OVERRIDE_NO_FAMILY", "family_override", "Chutneys@2026-07-15"),
     ("PHANTOM_NOT_MADE", "location_product", "PLANT/SUGAR"),
     ("PRODUCTION_NO_LEAD_TIME", "production_source", "PV-LABEL"),
     ("PRODUCTION_NO_OPERATIONS", "production_source", "PV-LABEL"),

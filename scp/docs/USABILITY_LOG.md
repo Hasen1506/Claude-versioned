@@ -1373,6 +1373,40 @@ there, 3 partial, 5 missing. Taken in the order they change what the plan buys.
 |---|---|---|---|
 | N341 | The forecast learned from what was sold, not what was asked for: a week out of stock read as a week of low demand, so a shortage lowered the next forecast and made the next shortage likelier. | Serious | **Fixed.** Sales history takes the demand turned away (*Lost*) and *Out of stock*; the forecast adds the lost demand back and reads a stock-out period that sold less than its neighbours at their level; each week's roll marks journal history where a sale left the shipping place empty; the upload reads *Lost sales* and *Out of stock* columns. Open: a short delivery closed on an order is not yet written as lost demand on its own. |
 
+**A tracking signal per series (D18), on Kaveri.**
+
+* *Input:* Kaveri's twelve kept weekly releases, judged against the eleven weeks that have sold (99 product-weeks).
+* *Processing:* each series' running sum of misses (consensus − sales) over their average size, over its last 13 weeks.
+* *Output:*
+  * 5 of the 9 series are past ±4.
+  * The West trade 750 W mixer grinder was forecast too high in all eleven weeks (+10.4: 3,791 forecast against 3,336
+    sold), and the West trade 500 W too (+8.8). These are the series that Sales West's overrides lifted (the same page
+    shows those overrides running 22.6 % high). The West trade series are also supplied from Bhiwandi, the place that
+    ran short, so part of the gap may be stock-outs (N341 now lets the planner say so).
+  * North trade's 500 W is too low (−4.8).
+  * Each row links to its series.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N342 | Nothing flagged a forecast that kept missing the same way: value add judged the totals per family and planner, and a series could be high every week for a quarter without a word. | Serious | **Fixed.** *Value add → Forecasts that keep missing one way*: each series' tracking signal over its last 13 periods, the ±4 limit, which way it misses, and a link to the series. |
+
+**A family's forecast as one number (D13), on Kaveri.**
+
+* *Input:* the mixer grinder family: six series (500 W and 750 W to e-commerce, North and West trade). 2,080
+  forecast for the week of 28 September.
+* *Processing:* the planners expect a trade scheme to lift the family to 2,500 that week. They type it once in
+  *Demand → Consensus grid → By product family*.
+* *Output:*
+  * The 2,500 is spread over the six series by their own forecasts, about 1.2 times each: West trade's 500 W goes from
+    605 to 727, and e-commerce's 750 W from 244 to 294.
+  * The six figures are whole units that add up to exactly 2,500; rounding each series on its own had lost one.
+  * Each series' cell says it came from the family, and the kettles are untouched.
+  * A series a planner had already overridden keeps its figure, and the rest of the total is spread over the others.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N343 | Planners and the S&OP meeting talk in families and months, but the forecast could only be read and changed series by series: a scheme for a whole family meant six edits that had to add up by hand. | Serious | **Fixed.** Family overrides (a total or a change, for all places or one) spread over the family's series by their own forecast. A series override is kept and the rest goes around it, in whole units that add up. The consensus grid has *By product family*, master data has *Family overrides*, the data check names a family no product has, and a release counts them among the forecast's inputs. Other aggregates (a region, every customer of a product) are not offered. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

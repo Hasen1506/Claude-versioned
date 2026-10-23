@@ -6,7 +6,7 @@ type Obj = Record<string, unknown>;
 
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
-  | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
+  | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides" | "family_overrides"
   | "movements" | "closed_orders" | "accuracy" | "forecast_snapshots" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
   | "customers" | "payment_terms" | "sales_orders" | "quotations" | "deliveries" | "invoices" | "returns"
   | "contracts" | "supplier_invoices" | "supplier_returns" | "budgets"
@@ -372,6 +372,17 @@ export const COLLECTIONS: CollectionDef[] = [
     ],
   },
   {
+    key: "family_overrides", label: "Family overrides", singular: "family override", defName: "FamilyOverride", issueType: "family_override",
+    group: "Demand inputs", keyOf: (_o, i) => `#${i}`,
+    blurb: "A product family's total for one forecast period (or a percentage change), spread over its series by their own forecast. A series with its own override keeps it.",
+    columns: [
+      { label: "Family", get: (o) => s(o.family) }, { label: "Location", get: (o) => s(o.location) || "all" },
+      { label: "Period of", get: (o) => s(o.date) },
+      { label: "Change", get: (o) => (o.qty !== null && o.qty !== undefined ? `= ${o.qty}` : `${Math.round(((o.change as number) ?? 0) * 100)}%`) },
+      { label: "Reason", get: (o) => s(o.reason) },
+    ],
+  },
+  {
     key: "movements", label: "Goods movements", singular: "goods movement", defName: "GoodsMovement", issueType: "movement",
     group: "Execution", keyOf: (o) => s(o.id),
     blurb: "The stock journal: openings, goods receipts, component issues, sales, transfer issues, scrap and count adjustments. On-hand is the sum of these.",
@@ -563,7 +574,7 @@ export function issueRoute(objectType: string, objectId: string): string[] | nul
   if (objectType === "network") return ["network"];
   const c = byIssueType[objectType];
   if (!c || objectId === "*") return c ? ["data", c.key] : null;
-  if (c.key === "overrides") return ["data", c.key];
+  if (c.key === "overrides" || c.key === "family_overrides") return ["data", c.key];
   const id = c.key === "location_products" || c.key === "npi" ? objectId.replace("/", "|") : objectId;
   return ["data", c.key, id];
 }

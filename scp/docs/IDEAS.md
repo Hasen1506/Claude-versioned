@@ -166,3 +166,17 @@ on 9 Oct 2026. Not built yet:
   the next point of service costs more in stock than it saves in shortages, instead of from the ABC-XYZ table.
 - **A single-period buy.** For a season's or an event's stock bought once (newsvendor): the quantity where the chance
   of selling the last unit equals underage ÷ (underage + overage) cost.
+
+## Demand planning (CONFORMANCE §2)
+
+* **Accuracy by lag (D19).** A waterfall of each period's forecast as it stood 1, 2, 3 … periods before, from the kept
+  releases, instead of one lag at a time.
+* **Working-day and festival effects (D20).** A month with fewer selling days, or a Diwali closure, read from the
+  calendar into the forecast instead of through an event.
+* **Price as a driver (D21).** The price kept on each sales-history row used as a regressor (elasticity), so a price
+  change moves the forecast without an event.
+* **Customer forecasts (D22).** A key customer's own forecast taken in, compared with ours and blended where it has
+  been the better one.
+* **Demand sensing (D23).** The next two or three weeks nudged by open orders and the latest days' sales.
+* **A short delivery closed on an order as lost demand.** The roll marks stock-outs from the journal; a closed short
+  order could write its shortfall as `lost_qty` too.

@@ -190,6 +190,10 @@ def _override_no_fc(d):
     d["overrides"] = [{"location": "P", "product": "A", "date": "2026-01-12", "change": 0.1}]
 
 
+def _family_override_no_family(d):
+    d["family_overrides"] = [{"family": "Nobody's", "date": "2026-01-12", "qty": 5}]
+
+
 def _confirmation_orphan(d):
     d["confirmations"] = [{"order": "SO-GONE", "ship_from": "P", "ship_date": "2026-01-12", "date": "2026-01-12",
                            "qty": 5}]
@@ -316,6 +320,7 @@ MUTATORS = {
     "LOCATION_PRODUCT_DEFAULTED": _defaulted, "SHELF_LIFE_VS_LEAD_TIME": _shelf,
     "HISTORY_AFTER_START": _history_late, "NPI_LIKE_WITHOUT_HISTORY": _npi_like, "NPI_DUPLICATE": _npi_dup,
     "OVERRIDE_OUTSIDE_HORIZON": _override_outside, "OVERRIDE_WITHOUT_FORECAST": _override_no_fc,
+    "FAMILY_OVERRIDE_NO_FAMILY": _family_override_no_family,
     "CONFIRMATION_ORPHAN": _confirmation_orphan, "STOCK_NOT_SYNCED": _stock_not_synced,
     "NEGATIVE_STOCK": _negative_stock, "MOVEMENT_REF_UNKNOWN": _movement_ref,
     "PHANTOM_NOT_MADE": _phantom_not_made, "PO_LINE_MISMATCH": _po_line_mismatch,

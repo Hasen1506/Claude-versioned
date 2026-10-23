@@ -25,6 +25,9 @@ LAYERS: tuple[tuple[str, str], ...] = (
     ("final", "Planners' overrides (consensus)"),
 )
 NO_FAMILY = "No family"
+TS_WINDOW = 13     # periods the tracking signal reads: a quarter of weeks, a year of months
+TS_LIMIT = 4.0     # |RSFE / MAD| at or past which a forecast is biased (the APICS ±4 limit)
+TS_MIN = 4         # periods needed before a series is judged
 NOT_NAMED = "Not named"
 WORST = 8
 
@@ -68,6 +71,22 @@ class CostlyOverride(Out):
     cost: float                         # |final − sales| − |adjusted − sales|: units of error the override added
 
 
+class Tracking(Out):
+    """One series' tracking signal over its last measured periods: the running sum of the errors (forecast − sales)
+    over their mean absolute size. Errors that cancel keep it near 0; a forecast that misses the same way every
+    period walks it to ± the number of periods."""
+    location: str
+    product: str
+    periods: int
+    forecast: float
+    actual: float
+    rsfe: float                         # Σ (final − sales): + over-forecast
+    mad: float                          # mean |final − sales|
+    signal: float                       # RSFE / MAD
+    biased: bool                        # |signal| ≥ TS_LIMIT
+    direction: Literal["over", "under", ""]
+
+
 class ValueAdd(Out):
     period: Literal["week", "month"]
     lag: int
@@ -79,6 +98,9 @@ class ValueAdd(Out):
     planners: list[ValueAddGroup] = []  # each on the periods that planner overrode
     periods: list[ValueAddPeriod] = []
     costly: list[CostlyOverride] = []   # the overrides that moved the forecast furthest from the sales
+    tracking: list[Tracking] = []       # per series, the most biased first
+    tracking_limit: float = TS_LIMIT
+    biased: int = 0                     # series whose tracking signal is past the limit
     notes: list[str] = []
 
 
@@ -187,6 +209,28 @@ def value_add(ds: Dataset) -> ValueAdd:
                                     adjusted=r.k.adjusted, final=r.k.final,
                                     cost=round(abs(r.k.final - r.actual) - abs(r.k.adjusted - r.actual), 4))
                      for r in rows if r.over), key=lambda c: (-c.cost, c.start, c.location, c.product))
+    tracking = _tracking(rows)
     return ValueAdd(period=period.value, lag=fs.fva_lag, measured_to=to, measured=len(rows), waiting=waiting,
                     total=_group("*", "All products", rows), families=families, planners=planners, periods=trend,
-                    costly=[c for c in costly if c.cost > 1e-9][:WORST], notes=notes)
+                    costly=[c for c in costly if c.cost > 1e-9][:WORST], tracking=tracking,
+                    biased=sum(t.biased for t in tracking), notes=notes)
+
+
+def _tracking(rows: list[_Row]) -> list[Tracking]:
+    by: dict[tuple[str, str], list[_Row]] = defaultdict(list)
+    for r in rows:
+        by[(r.k.location, r.k.product)].append(r)
+    out: list[Tracking] = []
+    for (loc, prod), rs in by.items():
+        last = sorted(rs, key=lambda r: r.k.start)[-TS_WINDOW:]
+        if len(last) < TS_MIN:
+            continue
+        errs = [r.k.final - r.actual for r in last]
+        rsfe = sum(errs)
+        mad = sum(abs(e) for e in errs) / len(errs)
+        sig = rsfe / mad if mad > 1e-9 else 0.0
+        out.append(Tracking(location=loc, product=prod, periods=len(last), forecast=round(sum(r.k.final for r in last), 4),
+                            actual=round(sum(r.actual for r in last), 4), rsfe=round(rsfe, 4), mad=round(mad, 4),
+                            signal=round(sig, 4), biased=abs(sig) >= TS_LIMIT - 1e-9,
+                            direction="over" if sig > 1e-9 else "under" if sig < -1e-9 else ""))
+    return sorted(out, key=lambda t: (-abs(t.signal), t.location, t.product))
