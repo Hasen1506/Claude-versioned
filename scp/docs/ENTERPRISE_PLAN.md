@@ -105,6 +105,8 @@ safety-stock methods, multi-echelon, DDMRP, reorder point, min-max, ABC-XYZ serv
 (an optional tab) and "Products at places", with no page that says *inventory policy*. Phase 8 checks every section
 against outside references, then fixes what the check finds.
 
+In progress: 8.1 (docs/CONFORMANCE.md; section 1, inventory policy, written: 25 concepts: 12 there (two of them on a page nobody would look for), 4 buried, 2 partial, 7 missing).
+
 | # | What | How |
 |---|---|---|
 | 8.1 | A conformance matrix (docs/CONFORMANCE.md) | Every concept from the references (S/4 guide sections; ASCM CPIM body of knowledge; Silver, Pyke & Thomas for inventory; Graves–Willems; the DDMRP standard; IBP S&OP), each with where it lives in the engine, which page shows it under which name, the test and its outside oracle; status *there*, *buried*, *partial*, *missing* |
