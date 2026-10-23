@@ -54,6 +54,16 @@ class SafeView(Out):
     lines: list[ScheduleLine] = Field(default_factory=list)
 
 
+class SubstituteOffer(Out):
+    """What a substitute product could ship on time for the part of an order that is not (product substitution)."""
+    product: str
+    qty: float                       # free on the requested date at the places that ship it to the customer
+    ship_from: list[str] = Field(default_factory=list)
+    price: float | None = None       # what the customer would pay a unit: the ordered line's net price
+    own_price: float | None = None   # the substitute's own price for the customer
+    note: str = ""                   # the substitution's own note
+
+
 class OrderPromise(Out):
     order: str
     location: str
@@ -80,6 +90,7 @@ class OrderPromise(Out):
     value: float | None = None       # qty × price (empty without a price)
     why: list[WhyStep] = Field(default_factory=list)   # what sets the latest confirmed date
     safe: SafeView | None = None     # an order check only, when its product's forecast has a high end
+    substitutes: list[SubstituteOffer] = Field(default_factory=list)   # for the part not on time, in substitution order
     shipped: float = 0.0             # delivered in the journal and not yet booked by starting a new week: the plan
                                      # still counts it as open until then, the Selling page already as delivered
 

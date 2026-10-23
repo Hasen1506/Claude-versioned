@@ -34,6 +34,9 @@ class DemandRecord(Model):
     discount: float = Unit("fraction", lt=1, default=0.0,
                            description="Sales order: the discount its net price already has in it (customer and price "
                                        "discounts together), shown on its documents")
+    substitute_for: str | None = Field(None, max_length=64,
+                                       description="Sales order: the order line this one ships in place of (a substitute "
+                                                   "product taken for the part that line could not have on time)")
     fulfilled_confirmations: list[Confirmation] = Field(default_factory=list,
         description="Schedule lines removed by deliveries; retained for quantity-based confirmation metrics")
     period_days: int | None = Field(

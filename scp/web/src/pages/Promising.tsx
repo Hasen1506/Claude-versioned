@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { AtpNode, CtpStep, Dataset, DemandRecord, OrderPromise, PromiseResult, ScheduleLine, WhyStep } from "../api/types";
+import type { AtpNode, CtpStep, Dataset, DemandRecord, OrderPromise, PromiseResult, ScheduleLine, SubstituteOffer, WhyStep } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
   Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term, type Severity, useTooltip,
@@ -185,6 +185,9 @@ function Orders({ res, sel, ds, onDone }: { res: PromiseResult; sel?: string; ds
                     <td>{day(o.requested)}</td>
                     <td><Badge sev={sev}>{label}</Badge> {o.at_risk && <Badge sev="error">at risk</Badge>}
                       {CHANGE[o.change] && o.change !== "new" && <> <Badge sev={CHANGE[o.change]}>{o.change}</Badge></>}
+                      {o.substitutes.length > 0 && <div className="small" title="A substitute product is free on the date asked: open the order to ship it instead">
+                        substitute: {o.substitutes.map((x) => `${qty(x.qty)} ${n.prod(x.product)}`).join(", ")}</div>}
+                      {subFor(ds, o.order) && <div className="faint small">in place of {subFor(ds, o.order)}</div>}
                       {o.shipped > 1e-6 && <div className="faint small" title="Recorded as shipped (Selling shows it delivered). The plan still counts it as open until you start a new week, which books it.">
                         {o.shipped >= o.qty - 1e-6 ? "shipped" : `${qty(o.shipped)} shipped`} · booked at the next week start</div>}</td>
                     <td><div className="chips">{o.lines.map((l, i) => <LineChip key={i} l={l} />)}
@@ -220,6 +223,8 @@ function OrderCard({ o, currency, actions }: { o: OrderPromise; currency: string
       </div>
       {o.reason && <div className="banner warning"><Badge sev="warning">Why not</Badge>{o.reason}</div>}
       {o.at_risk && <div className="banner error"><Badge sev="error">At risk</Badge>Supply no longer covers this confirmation: run backorder processing to re-promise it.</div>}
+      {!actions && o.substitutes.map((x) => <div key={x.product} className="banner info" role="note" aria-label="Substitute">
+        <Badge sev="info">Substitute</Badge><Offer o={o} x={x} currency={currency} /> Take the order, then ship it as the substitute from the order.</div>)}
       <table className="t nowrap">
         <thead><tr><th>Ships from</th>{o.lines.some((l) => l.goods_issue) ? <><th>There to pick</th><th>Leaves</th></> : <th>Ship date</th>}<th>Delivery</th><th className="num">Qty</th><th>Method</th><th>On time</th></tr></thead>
         <tbody>
@@ -235,6 +240,15 @@ function OrderCard({ o, currency, actions }: { o: OrderPromise; currency: string
       {o.ctp.length > 0 && <><SectionBand step="CTP" title="How the new supply gets there" /><CtpTimeline steps={o.ctp} /></>}
     </Panel>
   );
+}
+
+/** A substitute's offer in words: how many of it are free on the date asked, and at what price. */
+function Offer({ o, x, currency }: { o: OrderPromise; x: SubstituteOffer; currency: string }) {
+  const n = useNames();
+  const short = o.qty - o.on_time;
+  return <>{n.prod(x.product)} can ship {qty(x.qty)} of the {qty(short)} not on time, on the date asked, from {x.ship_from.map((l) => n.loc(l)).join(" and ")}
+    {x.price !== null && x.price !== undefined && <>, at the ordered {unitMoney(x.price, currency)} a unit{x.own_price !== null && x.own_price !== undefined && x.own_price !== x.price && <> (its own price is {unitMoney(x.own_price, currency)})</>}</>}.
+    {x.note && <span className="faint"> {x.note}.</span>}</>;
 }
 
 /** "Why this date": the chain behind the latest confirmed date, earliest first. */
@@ -381,6 +395,10 @@ function shipPlaces(ds: Dataset) {
   return (ds.locations ?? []).filter((l) => ["plant", "dc", "warehouse", "store"].includes(l.type));
 }
 
+function subFor(ds: Dataset, order: string): string | null {
+  return ds.demand?.find((d) => d.id === order && d.kind === "sales_order")?.substitute_for ?? null;
+}
+
 function listPrice(ds: Dataset, location: string, product: string): number | null {
   const cp = (ds.customer_prices ?? []).find((c) => c.customer === location && c.product === product);
   if (cp) return cp.price;
@@ -421,6 +439,10 @@ function OrderActions({ o, ds, currency, onDone }: { o: OrderPromise; ds: Datase
     <Edits><button className={`btn sm ${mode === m ? "primary" : ""}`} aria-pressed={mode === m} onClick={() => { setErr(null); setMode(mode === m ? null : m); }}>{label}</button></Edits>);
   return (
     <div className="stack" style={{ marginBottom: 12 }}>
+      {o.substitutes.map((x) => <div key={x.product} className="banner info" role="group" aria-label={`Substitute ${n.prod(x.product)}`}>
+        <Badge sev="info">Substitute</Badge><span><Offer o={o} x={x} currency={currency} /></span>
+        <Edits><button className="btn sm accent" disabled={busy} onClick={() => act(() => api.salesOrder(ds, "substitute", { id: o.order, product: x.product, qty: x.qty }))}>
+          Ship {qty(x.qty)} as {n.prod(x.product)}</button></Edits></div>)}
       <div className="row wrap">
         {tab("deliver", "Deliver")}{tab("change", "Change")}{tab("cancel", "Cancel")}
         <span className="faint small">{done > 0 ? `${qty(done)} of ${qty(ordered)} delivered · ` : ""}{rec.customer_ref ? `customer's number ${rec.customer_ref}` : ""}</span>

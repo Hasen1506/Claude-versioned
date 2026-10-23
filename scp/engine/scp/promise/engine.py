@@ -37,7 +37,7 @@ from ..plan.leadtime import (
 )
 from ..time.capacity import day_capacity
 from .atp import EPS, AtpSeries
-from .result import AtpNode, CtpStep, OrderPromise, ScheduleLine, WhyStep
+from .result import AtpNode, CtpStep, OrderPromise, ScheduleLine, SubstituteOffer, WhyStep
 
 _MAX_DEPTH = 6
 
@@ -456,6 +456,47 @@ class Promiser:
         res = self._check(d, key, qty)
         res.why = self.explain(d, res)
         return res
+
+    def substitutes(self, d: DemandRecord, res: OrderPromise) -> list[SubstituteOffer]:
+        """What substitutes could ship on time for the part of ``d`` that is not on time (S/4 aATP product
+        substitution): each substitution that applies to the customer and the requested date, in its order, offered
+        the free ATP on the requested date at the places that ship it to the customer, within its allocations and never
+        beyond its replenishment lead time. What one offer counts is held against the next, so two offers never count
+        the same stock; the caller restores the snapshot it took, since nothing is promised until an offer is taken. A
+        complete-delivery order is offered a substitute only for the whole of its short part."""
+        left = d.qty - res.on_time
+        out: list[SubstituteOffer] = []
+        if left <= EPS:
+            return out
+        for sub in self.ds.substitutions:
+            if sub.product != d.product or not sub.applies(d.location, d.date) or left <= EPS:
+                continue
+            rec = d.model_copy(update={"product": sub.substitute, "qty": left})
+            allocs = self.allocations(rec)
+            takes: list[tuple[Ship, int, float]] = []
+            want = left
+            for sh in self.ships(rec):
+                s = self.series_for(sh.node)
+                i = self.ship_day(sh, sub.substitute, d.date)
+                if s.unconditional(i):
+                    continue
+                a = min(s.available(i), self.alloc_cap(allocs, i), want)
+                if a > EPS:
+                    takes.append((sh, i, a))
+                    s.add_out(i, a)
+                    self._use_alloc(allocs, i, a)
+                    want -= a
+            got = left - want
+            if got <= EPS or (d.complete_delivery and want > EPS):
+                for sh, i, a in takes:             # not offered: what it counted goes back to the next substitute
+                    self.series_for(sh.node).add_out(i, -a)
+                    self._use_alloc(allocs, i, -a)
+                continue
+            out.append(SubstituteOffer(product=sub.substitute, qty=round(got, 6),
+                                       ship_from=list(dict.fromkeys(sh.node[0] for sh, _, _ in takes)), price=res.price,
+                                       own_price=self.ds.selling_price(d.location, sub.substitute, None), note=sub.note))
+            left = want
+        return out
 
     def explain(self, d: DemandRecord, res: OrderPromise) -> list[WhyStep]:
         """Why the order gets the date it gets: the supply its latest schedule line ships from (stock, a firm receipt,

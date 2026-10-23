@@ -341,11 +341,14 @@ export const api = {
       supplier_batch: extra.supplier_batch ?? null, serials: extra.serials ?? null, stock_type: extra.stock_type ?? null,
       to_type: extra.to_type ?? null, location: extra.location ?? null, product: extra.product ?? null, movement: extra.movement ?? null,
       doc: extra.doc ?? null, nodes: extra.nodes ?? null, block: extra.block ?? true, uncounted_zero: extra.uncounted_zero ?? false }),
-  /** Take a checked customer order (with its promise), change one (promised again), or cancel what is still open. */
-  salesOrder: (dataset: Dataset, action: "accept" | "change" | "cancel",
-    extra: { order?: DemandRecord; id?: string; changes?: Partial<SalesOrderChange>; date?: string; reason?: string }) =>
+  /** Take a checked customer order (with its promise), change one (promised again), cancel what is still open, or ship
+   *  part of one as a substitute product. */
+  salesOrder: (dataset: Dataset, action: "accept" | "change" | "cancel" | "substitute",
+    extra: { order?: DemandRecord; id?: string; changes?: Partial<SalesOrderChange>; date?: string; reason?: string;
+      product?: string; qty?: number }) =>
     write<SalesOrderResponse>("/api/orders/sales", dataset, { action, order: extra.order ?? null, id: extra.id ?? null,
-      changes: extra.changes ?? null, date: extra.date ?? null, reason: extra.reason ?? "" }),
+      changes: extra.changes ?? null, date: extra.date ?? null, reason: extra.reason ?? "",
+      product: extra.product ?? null, qty: extra.qty ?? null }),
   /** Every sales order, quotation, delivery, invoice and return; what is due to deliver and bill; customers' credit. */
   sales: (ds: Dataset) => planPost<SalesView>("/api/sales", ds),
   /** One order-to-cash step: take an order, quote, deliver, invoice, record a payment, take a return back. */

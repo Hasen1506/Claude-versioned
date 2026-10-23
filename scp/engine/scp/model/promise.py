@@ -78,6 +78,34 @@ class Allocation(Model):
         return self
 
 
+class Substitution(Model):
+    """A product that may ship in another's place when that one is short (≈ aATP product substitution, a CPIM
+    substitute item). An order short of ``product`` on its date is offered what ``substitute`` can confirm on time;
+    taking the offer moves the short part to a line of the substitute at the ordered line's price. Several
+    substitutions of one product are offered in the order they are listed."""
+
+    product: str = Ref("product", description="The product that may be short")
+    substitute: str = Ref("product", description="What may ship in its place")
+    customers: list[str] = Field(default_factory=list,
+                                 description="Customers who accept it (empty = every customer)")
+    valid_from: dt.date | None = Field(None, description="First requested date it applies to (empty = always)")
+    valid_to: dt.date | None = Field(None, description="Last requested date it applies to (empty = always)")
+    note: str = Field("", max_length=200, description="Why it is acceptable, e.g. same motor, larger jar")
+
+    @model_validator(mode="after")
+    def _differs(self) -> Substitution:
+        if self.product == self.substitute:
+            raise ValueError("a product cannot be its own substitute")
+        if self.valid_from and self.valid_to and self.valid_to < self.valid_from:
+            raise ValueError("a substitution ends after it starts")
+        return self
+
+    def applies(self, customer: str, day: dt.date) -> bool:
+        return ((not self.customers or customer in self.customers)
+                and (self.valid_from is None or day >= self.valid_from)
+                and (self.valid_to is None or day <= self.valid_to))
+
+
 class Confirmation(Model):
     """A persisted schedule line: what was promised to a sales order, from where and when."""
 

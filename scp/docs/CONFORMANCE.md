@@ -160,3 +160,45 @@ approvals, portal and tolerances); what a buyer does to choose and manage suppli
 partial, 4 missing. The ones that change decisions are B18 and B21 (where the money goes and where one supplier failing
 would stop the plant), then B19 (a score that counts quality and price). **Next in 8.3:** B18 with B21 (one view: spend
 and concentration), then B19; B17 and B20 to IDEAS.md. **After B18 and B21:** 18 of 22 there, 2 partial, 2 missing.
+
+## 5. Selling (order to cash and order promising)
+
+Read against CPIM "demand management and customer order management", the S/4 sales flow (quotation → order →
+availability check → delivery → billing → payment) and the S/4 planning guide §6–7 (order capture, advanced ATP).
+Audited 23 October 2026.
+
+| # | Concept | Engine | Page and name | Oracle | Status |
+|---|---|---|---|---|---|
+| S1 | Sales order header with several lines, the customer's number, order confirmation | M1, M2 | Selling → orders; Customer orders | test_order_to_cash | there |
+| S2 | Pricing: customer price, quantity scales, customer and product discounts, an order's own price | `CustomerPrice`, `sales.price` | Set up → customer prices; Selling | test_order_to_cash | there |
+| S3 | Quotations with validity, won (at the quoted prices) or lost (with a reason) | M2 | Selling → quotations | test_order_to_cash | there |
+| S4 | Credit limit and credit check, blocked for delivery until released; sales block | M1 | Selling → customers | test_order_to_cash | there |
+| S5 | Availability check: stock, firm and planned receipts, the look-ahead that protects earlier promises, inspection stock left out | `promise` | Customer orders → Check availability | test_promise, test_s4_guide_part_c | there |
+| S6 | Delivery scheduling backward from the requested date: transit, loading, picking and packing, material availability | EP 2.2 | Customer orders → *Why this date* | test_s4_backtest_b | there |
+| S7 | Capable-to-promise through transfer, production (capacity by day) and purchase | P6, N24 | Customer orders | test_promise | there |
+| S8 | Product allocation by product and family, per customer, with carry-forward and fallback | EP 2.7 | Customer orders → allocations | test_promise, test_s4_backtest_b | there |
+| S9 | Backorder processing: segments and confirmation strategies (win, gain, redistribute, fill, lose) | P6 | Customer orders → backorder processing | test_promise | there |
+| S10 | Alternative shipping places when the first is short | `alternative_locations` | Customer orders | test_promise | there |
+| S11 | Product substitution: another product offered for what is short, the offer taken onto the order | `Substitution`; `Promiser.substitutes`; `orders.substitute` | Customer orders → an order → *Substitute*; Set up → Substitutions | test_substitution (hand-worked: 10 of A2 and 20 of A3 for 30 short, held against the next order, given back when not offered, within allocations, not beyond lead time); e2e promise-substitute | there (8.3): offered and taken by one click, not taken automatically in backorder processing |
+| S12 | Complete delivery of a line; one delivery for a whole order (kits) | EP 2.7 | Customer orders | test_promise, test_s4_backtest_b | there |
+| S13 | Orders consume the forecast by planning strategy (make-to-stock, 40, make-to-order, assemble-to-order) | `plan/consumption` | Supply plan; Demand | test_planning_strategies | there |
+| S14 | Order changes and cancellations, promised again, with a reason; nothing cancelled counts against OTIF | G1 | Customer orders → an order | test_orders | there |
+| S15 | Deliveries: picked, packed, shipped, signed for; delivery availability check; price frozen at goods issue | M3, EP 2.6 | Selling → deliveries | test_order_to_cash | there |
+| S16 | Invoices and credit notes with tax (GST as CGST and SGST or IGST) | M3, N123 | Selling → invoices | test_order_to_cash | there |
+| S17 | Payments with cash discount; payment reminders by level (dunning) | M3, N124 | Selling → invoices, customers | test_order_to_cash | there |
+| S18 | Customer returns into quality inspection, with a credit note | M3 | Selling → returns | test_order_to_cash | there |
+| S19 | Receivables: what each customer owes, overdue, ageing, DSO | `tower/capital` | Selling → customers; Performance → working capital | test_kpi_working_capital | there |
+| S20 | Customer service measures: OTIF against requested and confirmed dates, confirmation rate, perfect order | `tower/kpis` | Performance | test_tower | partial: perfect order has no documentation or damage measure (the KPI says so) |
+| S21 | Cost to serve and margin per customer and product | `finance` serve rows | Money → cost to serve | test_finance | there |
+| S22 | Customer segmentation: customers classed by revenue, with service targets and promising priority by class | priorities and BOP segments by hand | Customer orders → settings | — | partial: no customer ABC, segments chosen by hand |
+| S23 | Quotation conversion and the order book: win rate, lost reasons, open orders by age and value | quotation status and lost reason | Selling → quotations, orders | — | partial: kept on each quotation, not counted |
+| S24 | Rebates and volume agreements accrued against revenue | — | — | — | missing |
+| S25 | Freight and surcharges on customer orders; minimum order value | — | — | — | missing |
+| S26 | Stock at the customer: consignment and vendor-managed inventory | — | — | — | missing |
+
+**What this section says** (audit): the order-to-cash flow and order promising are deep (S/4 aATP's availability
+check, allocation, backorder processing and capable-to-promise are all there and tested against the guide); what a
+seller does with customers as a whole is thinner. At the audit: 20 of 26 there, 3 partial, 3 missing (S11 among the
+missing). The one that changes what customers get is S11: when the ordered product is short, a product the company
+accepts in its place may be free on the date asked. **After S11:** 21 of 26 there, 3 partial (S20, S22, S23), 3 missing
+(S24 to S26), all in IDEAS.md.

@@ -27,7 +27,7 @@ from .purchasing import (
     PurchaseContract, PurchaseOrder, PurchasingSettings, SupplierInvoice, SupplierReturn, Vendor,
 )
 from .sales import Customer, Delivery, Invoice, PaymentTerms, Quotation, ReturnOrder, SalesOrder, SalesSettings
-from .promise import Allocation, Confirmation, PromiseSettings
+from .promise import Allocation, Confirmation, PromiseSettings, Substitution
 from .schedule import Changeover, ScheduleSettings
 from .sop import Budget, SopSettings, StockTarget
 from .master import (
@@ -82,6 +82,7 @@ class Dataset(Model):
     changeovers: list[Changeover] = Field(default_factory=list)
     scheduling: ScheduleSettings = Field(default_factory=ScheduleSettings)
     allocations: list[Allocation] = Field(default_factory=list)
+    substitutions: list[Substitution] = Field(default_factory=list)
     confirmations: list[Confirmation] = Field(default_factory=list)
     promising: PromiseSettings = Field(default_factory=PromiseSettings)
     movements: list[GoodsMovement] = Field(default_factory=list)

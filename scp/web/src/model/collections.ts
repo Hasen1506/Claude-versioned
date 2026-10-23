@@ -6,7 +6,7 @@ type Obj = Record<string, unknown>;
 
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
-  | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides" | "family_overrides"
+  | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "substitutions" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides" | "family_overrides"
   | "movements" | "closed_orders" | "accuracy" | "forecast_snapshots" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
   | "customers" | "payment_terms" | "sales_orders" | "quotations" | "deliveries" | "invoices" | "returns"
   | "contracts" | "supplier_invoices" | "supplier_returns" | "budgets"
@@ -304,6 +304,17 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Customers", get: (o) => ((o.customers as string[]) ?? []).join(", ") || "all" },
       { label: "From", get: (o) => s(o.start) }, { label: "To", get: (o) => s(o.end) },
       { label: "Qty", get: (o) => o.qty as number, num: true },
+    ],
+  },
+  {
+    key: "substitutions", label: "Substitutions", singular: "substitution", defName: "Substitution", issueType: "substitution",
+    group: "Planning data", keyOf: (o) => `${s(o.product)}/${s(o.substitute)}`,
+    blurb: "A product that may ship in another's place when that one is short. Promising offers it for the part of an order that cannot be on time; taking the offer moves that part to a line of the substitute at the ordered price.",
+    columns: [
+      { label: "Product", get: (o) => s(o.product) }, { label: "Substitute", get: (o) => s(o.substitute) },
+      { label: "Customers", get: (o) => ((o.customers as string[]) ?? []).join(", ") || "all" },
+      { label: "From", get: (o) => s(o.valid_from ?? "") }, { label: "To", get: (o) => s(o.valid_to ?? "") },
+      { label: "Note", get: (o) => s(o.note ?? "") },
     ],
   },
   {

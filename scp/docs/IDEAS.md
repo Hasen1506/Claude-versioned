@@ -199,3 +199,18 @@ on 9 Oct 2026. Not built yet:
 * **Consignment stock (B20).** The supplier's stock on our premises, paid for when it is taken.
 * **Incoterms in the landed cost (B22).** Who pays the freight and the duty decided by the order's incoterm.
 * **Spend by month and product group.** The spend view per period and family, to see where it is growing.
+
+## Selling (CONFORMANCE §5)
+
+* **Substitution in backorder processing (S11).** Substitutes are offered and taken by hand; backorder processing could
+  take them itself, by a rule per customer segment.
+* **Customer segments by revenue (S22).** Customers classed A, B, C by revenue or margin, each class with its service
+  target and its promising priority, instead of choosing segments by hand.
+* **Quotation conversion and the order book (S23).** Win rate by customer and product, lost reasons counted, and the
+  open orders by age and value.
+* **Rebates and volume agreements (S24).** A customer earns money back above a volume in a period, accrued against
+  revenue as they buy.
+* **Freight, surcharges and a minimum order value on customer orders (S25).**
+* **Consignment at the customer and vendor-managed inventory (S26).** Our stock at the customer, billed when used, and
+  replenishment we plan from their stock and sales.
+

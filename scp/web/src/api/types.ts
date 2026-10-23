@@ -107,6 +107,7 @@ export type PromiseResult = S["PromiseResult"];
 export type OrderPromise = S["OrderPromise"];
 export type AtpNode = S["AtpNode"];
 export type ScheduleLine = S["ScheduleLine"];
+export type SubstituteOffer = S["SubstituteOffer"];
 export type CtpStep = S["CtpStep"];
 export type WhyStep = S["WhyStep"];
 export type BopRow = S["BopRow"];

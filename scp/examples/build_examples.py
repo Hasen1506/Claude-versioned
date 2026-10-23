@@ -399,6 +399,12 @@ def kitchenware() -> dict:
             {"id": "AL-ECOM-KT-NOV", "product": "KT-15", "customers": ["CUS-ECOM"], "start": "2026-11-01",
              "end": "2026-12-01", "qty": 1800, "fallback": "next_period"},
         ],
+        # the 750 W grinder may ship for a 500 W order to the trade and online (product substitution), at the
+        # 500 W price: same base and jars, a stronger motor
+        "substitutions": [
+            {"product": "MG-500", "substitute": "MG-750", "customers": ["CUS-WEST-TRADE", "CUS-ECOM"],
+             "note": "same base and jars, a stronger motor, at the 500 W price"},
+        ],
         # the year's sales budget by product family, which the monthly S&OP cycle sets the plan against
         "budgets": [
             {"month": f"{y}-{m:02d}-01", "family": fam, "qty": qty, "revenue": rev}

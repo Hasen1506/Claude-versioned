@@ -8409,6 +8409,17 @@
    "fallback": "next_period"
   }
  ],
+ "substitutions": [
+  {
+   "product": "MG-500",
+   "substitute": "MG-750",
+   "customers": [
+    "CUS-WEST-TRADE",
+    "CUS-ECOM"
+   ],
+   "note": "same base and jars, a stronger motor, at the 500 W price"
+  }
+ ],
  "budgets": [
   {
    "month": "2026-10-01",

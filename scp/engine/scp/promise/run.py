@@ -224,8 +224,21 @@ def _same(a: list[ScheduleLine], b: list[ScheduleLine]) -> bool:
     return sorted(map(key, a)) == sorted(map(key, b))
 
 
+def _offer(P: Promiser, pairs: list[tuple[DemandRecord, OrderPromise]]) -> None:
+    """Substitutes for the orders not on time, in sequence on what is left free after every promise, each offer held
+    against the next; the supply picture is put back afterwards, since an offer promises nothing until it is taken."""
+    if not P.ds.substitutions:
+        return
+    snap = P.snapshot()
+    for d, r in pairs:
+        r.substitutes = P.substitutes(d, r)
+    P.restore(snap)
+
+
 def _finish(ds: Dataset, P: Promiser, res: PromiseResult, orders: list[OrderPromise]) -> PromiseResult:
     res.orders = orders
+    if res.mode != "check":                # an order check offers substitutes for the order being checked only
+        _offer(P, [(_rec(o), o) for o in orders])
     for o in orders:
         if not o.why and o.lines:          # kept or combined promises: the chain behind their latest date too
             o.why = P.explain(_rec(o), o)
@@ -261,7 +274,7 @@ def _finish(ds: Dataset, P: Promiser, res: PromiseResult, orders: list[OrderProm
 
 def _rec(o: OrderPromise) -> DemandRecord:
     return DemandRecord(location=o.location, product=o.product, date=o.requested, qty=o.qty,
-                        kind=DemandKind.SALES_ORDER, priority=o.priority)
+                        kind=DemandKind.SALES_ORDER, priority=o.priority, complete_delivery=o.complete_delivery)
 
 
 def run_promise(ds: Dataset) -> PromiseResult:
@@ -347,6 +360,7 @@ def check_order(ds: Dataset, order: DemandRecord) -> PromiseResult:
     rec = order.model_copy(update={"kind": DemandKind.SALES_ORDER})
     checked = P.check(rec, rec.id or "SIMULATION")
     _value(ds, rec, checked)
+    _offer(P, [(rec, checked)])
     res = _finish(ds, P, res, orders)
     checked.safe = _safe(ds, P, [rec], [rec.id or "SIMULATION"])[0]
     res.checked = checked
@@ -369,6 +383,7 @@ def check_lines(ds: Dataset, lines: list[DemandRecord]) -> PromiseResult:
         out.append(c)
         recs.append(rec)
         keys.append(rec.id or f"LINE {10 * (i + 1)}")
+    _offer(P, list(zip(recs, out, strict=True)))
     res = _finish(ds, P, res, orders)
     for c, safe in zip(out, _safe(ds, P, recs, keys), strict=True):
         c.safe = safe

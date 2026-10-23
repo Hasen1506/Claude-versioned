@@ -68,6 +68,7 @@ from ..sales.result import SalesReport, SalesView
 from ..promise import PromiseResult, check_lines, check_order, commit, run_bop, run_promise
 from ..promise.orders import (
     OrderError, SalesOrderReport, accept as accept_order, cancel as cancel_order, change as change_order,
+    substitute as substitute_order,
 )
 from ..scenarios import BY_ID as SCENARIOS, EngineClient, ScenarioInfo, ScenarioReport
 from ..schedule import (
@@ -621,12 +622,14 @@ class SalesOrderChange(Out):
 
 class SalesOrderRequest(Out):
     dataset: PlanData
-    action: Literal["accept", "change", "cancel"]
+    action: Literal["accept", "change", "cancel", "substitute"]
     order: DemandRecord | None = None               # accept: the checked order (no number: the next one)
-    id: str | None = None                           # change / cancel: the order
+    id: str | None = None                           # change / cancel / substitute: the order
     changes: SalesOrderChange | None = None
     date: dt.date | None = None                     # cancel: the day (default: the planning start)
     reason: str = ""
+    product: str | None = None                      # substitute: the product to ship in its place
+    qty: float | None = None                        # substitute: how many (default: all that is open)
 
 
 class SalesOrderResponse(Out):
@@ -637,7 +640,8 @@ class SalesOrderResponse(Out):
 
 @app.post("/api/orders/sales", response_model=SalesOrderResponse)
 def post_sales_order(req: SalesOrderRequest) -> SalesOrderResponse:
-    """Take a checked customer order, change one (it is promised again), or cancel what is still open."""
+    """Take a checked customer order, change one (it is promised again), cancel what is still open, or ship part of it
+    as a substitute product."""
     try:
         if req.action == "accept":
             if req.order is None:
@@ -649,6 +653,10 @@ def post_sales_order(req: SalesOrderRequest) -> SalesOrderResponse:
             ch = req.changes or SalesOrderChange()
             given = {k: getattr(ch, k) for k in ch.model_fields_set if getattr(ch, k) is not None or k == "price"}
             new, rep = change_order(req.dataset, req.id, given)
+        elif req.action == "substitute":
+            if not req.product:
+                raise OrderError("say which product ships in its place")
+            new, rep = substitute_order(req.dataset, req.id, req.product, req.qty)
         else:
             new, rep = cancel_order(req.dataset, req.id, req.date, req.reason)
     except (OrderError, ValueError) as e:

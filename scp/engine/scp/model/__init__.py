@@ -15,7 +15,7 @@ from .finance import CapacityOption, FinanceSettings
 from .inventory import InventorySettings
 from .tower import OwnerRule, TowerSettings
 from .promise import (
-    Allocation, BopSegment, Confirmation, ConfirmationStrategy, PromiseSettings,
+    Allocation, BopSegment, Confirmation, ConfirmationStrategy, PromiseSettings, Substitution,
 )
 from .purchasing import (
     Approval, ContractLine, PriceScale, PurchaseContract, PurchaseOrder, PurchasingSettings, ReleaseLevel, SupplierInvoice,
@@ -51,7 +51,7 @@ __all__ = [
     "Approval", "ContractLine", "PriceScale", "PurchaseContract", "PurchaseOrder", "PurchasingSettings", "ReleaseLevel",
     "ConfirmedDelivery", "SupplierInvoice", "SupplierInvoiceLine", "SupplierReturn", "Vendor",
     "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "CycleCounting", "PriceControl", "GoodsMovement", "MovementType", "RolledWeek", "Batch", "CountItem", "InventoryDoc", "NegativeStock", "StockType", "Reservation",
-    "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "DemandEvent", "EventKind", "FamilyOverride", "ForecastModelId", "ForecastOverride", "ForecastPeriod", "ForecastSnapshot",
+    "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "Substitution", "DemandEvent", "EventKind", "FamilyOverride", "ForecastModelId", "ForecastOverride", "ForecastPeriod", "ForecastSnapshot",
     "ForecastSettings", "InventorySettings", "NpiRule", "OutlierMethod", "SelectionMetric",
     "BomAlternative", "BomItem", "BucketSize", "MrpGroup", "Calendar", "CapacityChange", "CoProduct", "CustomerPrice", "ProcurementType", "Subcontract", "Changeover", "Dataset", "DemandKind", "DemandRecord", "LaneMode",
     "Location", "LocationProduct", "LocationType", "LotSizePolicy", "LotSizing", "MrpType",

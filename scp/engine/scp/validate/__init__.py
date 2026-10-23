@@ -347,6 +347,12 @@ def _references(ds: Dataset, c: _Collector) -> None:
         _ref(ds, c, "family", a.family, "allocation", a.id, "family")
         for cu in a.customers:
             _ref(ds, c, "location", cu, "allocation", a.id, "customers")
+    for sb in ds.substitutions:
+        sid = f"{sb.product}/{sb.substitute}"
+        _ref(ds, c, "product", sb.product, "substitution", sid, "product")
+        _ref(ds, c, "product", sb.substitute, "substitution", sid, "substitute")
+        for cu in sb.customers:
+            _ref(ds, c, "location", cu, "substitution", sid, "customers")
     for b in ds.budgets:
         bid = f"{b.month:%Y-%m}/{b.product or b.family or '*'}"
         _ref(ds, c, "product", b.product, "budget", bid, "product")

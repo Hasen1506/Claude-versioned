@@ -1987,7 +1987,8 @@ export interface paths {
         put?: never;
         /**
          * Post Sales Order
-         * @description Take a checked customer order, change one (it is promised again), or cancel what is still open.
+         * @description Take a checked customer order, change one (it is promised again), cancel what is still open, or ship part of it
+         *     as a substitute product.
          */
         post: operations["post_sales_order_api_orders_sales_post"];
         delete?: never;
@@ -5491,6 +5492,8 @@ export interface components {
             scheduling?: components["schemas"]["ScheduleSettings"];
             /** Allocations */
             allocations?: components["schemas"]["Allocation"][];
+            /** Substitutions */
+            substitutions?: components["schemas"]["Substitution"][];
             /** Confirmations */
             confirmations?: components["schemas"]["Confirmation"][];
             promising?: components["schemas"]["PromiseSettings"];
@@ -5983,6 +5986,11 @@ export interface components {
              * @default 0
              */
             discount: number;
+            /**
+             * Substitute For
+             * @description Sales order: the order line this one ships in place of (a substitute product taken for the part that line could not have on time)
+             */
+            substitute_for?: string | null;
             /**
              * Fulfilled Confirmations
              * @description Schedule lines removed by deliveries; retained for quantity-based confirmation metrics
@@ -10692,6 +10700,8 @@ export interface components {
             /** Why */
             why: components["schemas"]["WhyStep"][];
             safe: components["schemas"]["SafeView"] | null;
+            /** Substitutes */
+            substitutes: components["schemas"]["SubstituteOffer"][];
             /**
              * Shipped
              * @default 0
@@ -14242,7 +14252,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "accept" | "change" | "cancel";
+            action: "accept" | "change" | "cancel" | "substitute";
             order?: components["schemas"]["DemandRecord"] | null;
             /** Id */
             id?: string | null;
@@ -14254,6 +14264,10 @@ export interface components {
              * @default
              */
             reason: string;
+            /** Product */
+            product?: string | null;
+            /** Qty */
+            qty?: number | null;
         };
         /** SalesOrderResponse */
         SalesOrderResponse: {
@@ -16361,6 +16375,67 @@ export interface components {
              * @default 0
              */
             cost_per_unit: number;
+        };
+        /**
+         * SubstituteOffer
+         * @description What a substitute product could ship on time for the part of an order that is not (product substitution).
+         */
+        SubstituteOffer: {
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /** Ship From */
+            ship_from: string[];
+            /** Price */
+            price: number | null;
+            /** Own Price */
+            own_price: number | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
+         * Substitution
+         * @description A product that may ship in another's place when that one is short (≈ aATP product substitution, a CPIM
+         *     substitute item). An order short of ``product`` on its date is offered what ``substitute`` can confirm on time;
+         *     taking the offer moves the short part to a line of the substitute at the ordered line's price. Several
+         *     substitutions of one product are offered in the order they are listed.
+         */
+        Substitution: {
+            /**
+             * Product
+             * @description The product that may be short
+             */
+            product: string;
+            /**
+             * Substitute
+             * @description What may ship in its place
+             */
+            substitute: string;
+            /**
+             * Customers
+             * @description Customers who accept it (empty = every customer)
+             */
+            customers?: string[];
+            /**
+             * Valid From
+             * @description First requested date it applies to (empty = always)
+             */
+            valid_from?: string | null;
+            /**
+             * Valid To
+             * @description Last requested date it applies to (empty = always)
+             */
+            valid_to?: string | null;
+            /**
+             * Note
+             * @description Why it is acceptable, e.g. same motor, larger jar
+             * @default
+             */
+            note: string;
         };
         /** Summary */
         Summary: {

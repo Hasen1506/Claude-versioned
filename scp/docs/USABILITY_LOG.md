@@ -1449,6 +1449,27 @@ partial, 4 missing. The flow from requisition to payment is complete. Choosing a
 |---|---|---|---|
 | N345 | Nothing showed where the buying money went or which parts had one supplier: on Kaveri every bought part is single-sourced, and the one with the worst delivery record and the longest lead time supplies two parts of every appliance. | Serious | **Fixed.** *Buying → Spend & sourcing*: spent, on order and planned per supplier (ABC by share), the biggest supplier's share, and every bought product at a place with its usable sources, single-sourced first with their spend, lead time and the supplier's on-time. Open: spend by month and product group; requests for quotation, consignment and a weighted supplier score are in IDEAS.md. |
 
+### 8.3: Selling
+
+CONFORMANCE §5: 26 concepts against CPIM customer order management, the S/4 sales flow and the S/4 guide §6–7; 20
+there, 3 partial, 3 missing. Order to cash and order promising are deep. What a seller does with customers as a whole
+is thinner.
+
+**Product substitution (S11), on Kaveri.**
+
+* *Input:* an e-commerce order for 3,000 of the 500 W grinder, wanted Thu 1 Oct. The company accepts the 750 W grinder
+  in its place for the trade and online, at the 500 W price (same base and jars, a stronger motor).
+* *Processing:* *Customer orders → New order → Check availability*, then the order's *Substitute* offer.
+* *Output:*
+  * 2,098 from Bhiwandi on time; the other 902 on new supply on 11 Oct.
+  * The 750 W grinder has 567 free at Bhiwandi on the day, after every other promise. They are offered at the
+    ordered ₹2,890 a unit (its own price is ₹3,990).
+  * One click: SO-88223 ships the 567 on the date asked, in place of the 500 W grinder. SO-88222 keeps 2,433.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N346 | An order short of one product could only wait or be split by hand: nothing said that a product the company accepts in its place was free on the date asked, so on Kaveri an online order waited ten days for 902 grinders while 567 of the stronger model sat at the same warehouse. | Serious | **Fixed.** *Substitutions* (product, substitute, customers, valid dates, a note); promising offers each one's free stock on the date asked for the part not on time, held against the next order and within allocations; *Ship N as …* moves that part to a line of the substitute at the ordered price, which names the line it stands in for. Open: backorder processing does not take substitutes itself; customer segments by revenue, quotation conversion, rebates, freight on customer orders and customer consignment are in IDEAS.md. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution
