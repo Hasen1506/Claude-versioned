@@ -72,3 +72,27 @@ test("a class put on a weekly reorder point in one step", async ({ page }) => {
   await expect(carton).toContainText("reviewed every 7 days, next on Mon 28 Sep");
   await expect(carton.locator("td").nth(6)).not.toContainText("—");
 });
+
+// Enterprise 8.2, safety stock for demand that varies widely (CONFORMANCE I18), on the Chennai pump case. Input: the
+// 5 HP pump at Sriperumbudur, 15.6 a day over a 1.2-day lead time with a weekly CV of 0.25: over the lead time a mean
+// of 18.2 and σ 11.1, a CV of 0.61. Processing: the page says a normal spread fits poorly and what a gamma one would
+// hold; the planner gives it a gamma spread. Output: its 95 % target now holds 21.3 instead of 18.3.
+test("demand that varies widely is named and sized by a gamma spread", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto("/");
+  await page.getByRole("button", { name: /Example case: Coromandel Pumps, Chennai \(fictional\)/ }).click();
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  await page.goto("/#/policy");
+  const table = page.getByRole("table", { name: "Inventory policy" });
+  const pump = table.getByRole("row", { name: /Farm monoblock pump 5 HP.*Sriperumbudur/ }).first();
+  await expect(pump).toContainText("varies widely (CV 0.61), which a normal spread fits poorly: spread as a gamma, the target needs 21 instead of 18");
+  await expect(pump.locator("td").nth(4)).toContainText("18");
+
+  await pump.getByRole("checkbox").check();
+  await page.getByRole("combobox", { name: "Demand spread" }).selectOption("gamma");
+  await page.getByRole("button", { name: "Apply to 1 product" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Set 1 demand spread on 1 product at a place." })).toBeVisible({ timeout: 30_000 });
+  await expect(pump.locator("td").nth(4)).toContainText("gamma spread");
+  expect(first(await pump.locator("td").nth(4).innerText())).toBeCloseTo(21.3, 0);
+  await expect(pump).not.toContainText("varies widely");
+});

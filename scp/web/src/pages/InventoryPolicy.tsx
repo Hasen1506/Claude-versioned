@@ -12,6 +12,7 @@ import { namesOf, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { store, useStore } from "../state/store";
 
+const SPREAD: Record<string, string> = { gamma: "gamma spread", poisson: "Poisson spread" };
 const METHOD: Record<string, string> = { none: "none", fixed: "a fixed quantity", days_of_supply: "days of cover",
   service_level: "for a cycle service level", fill_rate: "for a fill rate" };
 const key = (r: { location: string; product: string }) => `${r.location}|${r.product}`;
@@ -52,7 +53,9 @@ export function InventoryPolicy({ route }: { route: string[] }) {
       else Z). Each ABC-XYZ class suggests a cycle service level (Set up → Master data → forecasting settings changes
       the table). For a service target the safety stock is <b>SS = z · √((L + R)·σ²_d + d̄²·σ²_L)</b>, with L the lead
       time, R the review period, σ_d the spread of daily demand and σ_L of the lead time; for a fill rate, the k whose
-      expected shortage per cycle is (1 − β) of the order. The reorder point that keeps it is <b>s = d̄ · (L + R) + SS</b>.
+      expected shortage per cycle is (1 − β) of the order. That reads demand over L + R as normal; where it varies
+      widely (a CV over 0.5) a gamma spread with the same mean and σ fits better, and a slow mover sold a few at a
+      time is Poisson. The reorder point that keeps it is <b>s = d̄ · (L + R) + SS</b>.
       A product on a reorder point with a review period is ordered on review days only (every R days, Mondays unless
       another day is given): each order covers what falls short until the next review's order can arrive.
       What is achieved is the share of the customer orders shipped from the place in the last {v?.window_days ?? 91} days
@@ -121,7 +124,7 @@ function Row({ r, cur, chosen, onToggle }: { r: PolicyRow; cur: string; chosen: 
         <div className="faint small">{money(r.usage_value, cur)} a year</div></td>
       <td>{r.rule_label}<div className="faint small">{r.review_days > 0 ? `reviewed every ${qty(r.review_days)} days${r.next_review ? `, next on ${day(r.next_review)}` : ""}` : r.rule === "mrp" ? "each plan" : "continuous review"}
         {r.order_qty != null && r.rule !== "none" ? `; orders about ${qty(r.order_qty)} (${r.lot})` : ""}{r.order_up_to != null ? `; up to ${qty(r.order_up_to)}` : ""}</div></td>
-      <td className="num">{qty(r.safety_stock)}<div className="faint small">{METHOD[r.method] ?? r.method}</div>
+      <td className="num">{qty(r.safety_stock)}<div className="faint small">{METHOD[r.method] ?? r.method}{r.distribution !== "normal" ? `, ${SPREAD[r.distribution] ?? r.distribution}` : ""}</div>
         {r.safety_stock_value > 0 && <div className="faint small">{money(r.safety_stock_value, cur)}</div>}</td>
       <td>{r.target != null ? <>{pct(r.target, 1)} <span className="faint small">{r.target_kind === "fill" ? "fill rate" : "cycle"}{r.target_from === "company" ? ", company default" : ""}</span></> : <span className="faint">none</span>}
         {r.suggested != null && <div className={`small ${low ? "warn-text" : "faint"}`}>class {r.abc}{r.xyz} suggests {pct(r.suggested, 0)}</div>}</td>
@@ -145,6 +148,7 @@ function Apply({ v, ds, keys, cell, shown, onDone }: { v: PolicyView; ds: Datase
   const [reviewFrom, setReviewFrom] = useState("");
   const [rop, setRop] = useState(false);
   const [rule, setRule] = useState("");
+  const [spread, setSpread] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const to = keys.length ? keys : cell ? shown.map(key) : [];
@@ -162,6 +166,7 @@ function Apply({ v, ds, keys, cell, shown, onDone }: { v: PolicyView; ds: Datase
       if (review.trim()) input.review_period_days = Number(review);
       if (reviewFrom) input.review_from = reviewFrom;
       if (rule) input.rule = rule as PolicyApplyInput["rule"];
+      if (spread) input.distribution = spread as PolicyApplyInput["distribution"];
       if (rop) input.reorder_point = "suggested";
       const out = await api.inventoryPolicyApply(ds, input);
       store.replace(out.dataset, ds);
@@ -188,6 +193,9 @@ function Apply({ v, ds, keys, cell, shown, onDone }: { v: PolicyView; ds: Datase
           {statistical && <label className="field-inline">Target % <input className="input sm" inputMode="decimal" aria-label="Service target %" value={target} disabled={suggested}
             onChange={(e) => setTarget(e.target.value)} style={{ width: 70 }} /></label>}
           {statistical && <label className="row small"><input type="checkbox" checked={suggested} onChange={(e) => setSuggested(e.target.checked)} />its class's suggestion</label>}
+          {statistical && <label className="field-inline">Demand spread <select className="input sm" aria-label="Demand spread" value={spread} onChange={(e) => setSpread(e.target.value)}>
+            <option value="">as it is</option><option value="normal">normal</option><option value="gamma">gamma (varies widely)</option>
+            <option value="poisson">Poisson (slow, a few at a time)</option></select></label>}
           <label className="field-inline">Ordered by <select className="input sm" aria-label="Rule" value={rule} onChange={(e) => setRule(e.target.value)}>
             <option value="">the rule it has</option><option value="reorder_point">a reorder point (s, set to the suggestion)</option>
             <option value="mrp">time-phased MRP</option></select></label>

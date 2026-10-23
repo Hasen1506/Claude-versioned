@@ -309,6 +309,10 @@ class SafetyStockPolicy(Model):
                                      "point it is also the ordering calendar: orders are placed on review days only")
     review_from: date | None = Field(None, description="A review day; the others fall every R days before and after "
                                      "it (default: Mondays, counted from 1 January 2024)")
+    distribution: Literal["normal", "gamma", "poisson"] = Field(
+        "normal", description="How demand over the lead time and review is spread when a target sizes the safety "
+        "stock: normal; gamma for lumpy demand (its spread over 0.5 of its mean); Poisson for slow movers sold a "
+        "few at a time")
 
     @model_validator(mode="after")
     def _params(self) -> SafetyStockPolicy:

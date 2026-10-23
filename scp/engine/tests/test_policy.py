@@ -277,3 +277,54 @@ def test_a_class_is_put_on_a_periodic_reorder_point_in_one_step():
     cv_out, msg = apply_policy(ds(d), [("P", "B")], method="service_level")
     assert cv_out.location_product_by_key[("P", "B")].safety_stock.demand_cv == pytest.approx(0.2)
     assert msg.endswith("The demand variability is the one measured from the demand they feed for B at P.")
+
+
+def test_lumpy_and_slow_demand_are_sized_by_their_own_distribution():
+    from scp.model import SafetyStockPolicy
+    from scp.plan.safety import SSInputs, statistical_ss
+
+    def ss(dist: str, method: str, mean: float, cv: float, lead: float, q: float = 0.0) -> float:
+        p = SafetyStockPolicy(method=method, service_level=0.95, demand_cv=cv, distribution=dist)
+        return statistical_ss(p, SSInputs(mean, lead, 0.0, 0.95, q)).qty
+    # 1 a day for 4 days with a weekly CV of 2/√7: σ_d = 2, so demand over the lead time has mean 4 and σ 4 (CV 1). A
+    # gamma with CV 1 is the exponential: its 95 % point is 4·ln 20 = 11.98, so SS = 7.98 where the normal says 1.645 × 4
+    cv = 2 / math.sqrt(7)
+    assert ss("normal", "service_level", 1, cv, 4) == pytest.approx(Z95 * 4, rel=1e-6)
+    assert ss("gamma", "service_level", 1, cv, 4) == pytest.approx(4 * math.log(20) - 4, rel=1e-6)
+    # a 95 % fill rate with lots of 8: the exponential's expected shortage per cycle is 4·e^(−s/4) = 0.05 × 8, so
+    # s = 4·ln 10 = 9.21 and SS = 5.21
+    assert ss("gamma", "fill_rate", 1, cv, 4, q=8) == pytest.approx(4 * math.log(10) - 4, rel=1e-6)
+    # a slow mover, half a unit a day over 4 days: Poisson with mean 2. P(X ≤ 4) = 0.947, P(X ≤ 5) = 0.983: s = 5, SS = 3.
+    # For a 95 % fill rate in lots of 4 the expected shortage must be at most 0.2: 0.218 at s = 3, 0.075 at 4: SS = 2
+    assert ss("poisson", "service_level", 0.5, 0.3, 4) == pytest.approx(3)
+    assert ss("poisson", "fill_rate", 0.5, 0.3, 4, q=4) == pytest.approx(2)
+    # lots of 4.4 allow 0.22: 0.218 at s = 3 is within it, SS = 1
+    assert ss("poisson", "fill_rate", 0.5, 0.3, 4, q=4.4) == pytest.approx(1)
+    # the review period is part of the exposure: 2 days' lead time and a 2-day review are the same mean of 2
+    p = SafetyStockPolicy(method="service_level", service_level=0.95, demand_cv=0.3, distribution="poisson",
+                          review_period_days=2)
+    assert statistical_ss(p, SSInputs(0.5, 2, 0.0, 0.95, 0.0)).qty == pytest.approx(3)
+
+
+def test_the_policy_says_when_demand_is_lumpy_and_a_class_can_be_sized_by_a_gamma():
+    from scipy.stats import gamma
+    d = shop()
+    d["location_products"][0]["safety_stock"]["demand_cv"] = 1.0
+    r = rows(policy_view(ds(d)))["A"]
+    # 10 a day, a weekly CV of 1 (σ_d = 10√7), 2 days: mean 20, σ = 10√14 = 37.4, CV 1.87
+    mu, sd = 20.0, 10 * math.sqrt(14)
+    assert r.exposure_cv == pytest.approx(sd / mu)
+    want = gamma.ppf(0.95, (mu / sd) ** 2, scale=sd ** 2 / mu) - mu
+    assert f"spread as a gamma, the target needs {want:,.0f} instead of {Z95 * sd:,.0f}" in " ".join(r.notes)
+    out, msg = apply_policy(ds(d), [("P", "A"), ("P", "B")], distribution="gamma")
+    assert msg == ("Set 1 demand spread on 2 products at places. Left as they were, safety stock not set by a service "
+                   "target: B at P.")
+    r2 = rows(policy_view(out))["A"]
+    assert r2.distribution == "gamma" and r2.safety_stock == pytest.approx(want, rel=1e-6)
+    assert not any("varies widely" in n for n in r2.notes)
+    # the plan holds the same safety stock
+    from scp.plan import run_mrp
+    node = next(n for n in run_mrp(out).nodes if (n.location, n.product) == ("P", "A"))
+    assert "gamma" in node.safety_stock_note
+    with pytest.raises(PolicyError, match="normal, gamma or Poisson"):
+        apply_policy(out, [("P", "A")], distribution="weibull")

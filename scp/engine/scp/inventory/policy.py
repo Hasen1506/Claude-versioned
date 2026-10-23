@@ -27,12 +27,14 @@ from ..model.master import review_days as first_review
 from ..network import build_graph
 from ..plan import costing
 from ..plan.leadtime import lead_time_std_days, nominal_lead_time_days
+from ..plan.safety import SSInputs, sigma_lt, statistical_ss
 from ..plan.rates import bucket_days, horizon_flows, node_role, policy_safety_stock, typical_lot
 from ..time import Buckets
 from ..tower.kpis import Kpis
 from ..validate import Issue, has_errors, validate
 
 EPS = 1e-9
+LUMPY = 0.5   # CV of demand over the lead time above which a normal spread is a poor fit (Silver, Pyke & Thomas §6.10)
 
 RULES = {
     "sQ": "Reorder point, fixed quantity (s, Q)",
@@ -63,6 +65,8 @@ class PolicyRow(Out):
     review_days: float                    # R; 0: continuous
     next_review: date | None = None       # on a review calendar: the first review day from the plan start
     method: str                           # safety-stock method
+    distribution: str = "normal"          # how a target reads demand over L + R: normal | gamma | poisson
+    exposure_cv: float | None = None      # CV of demand over L + R, the spread the safety stock covers
     target: float | None                  # service target (None: the method sets no target)
     target_kind: str                      # "cycle" (chance of no stock-out in a cycle) | "fill" (share of demand met) | ""
     target_from: str                      # "product" | "company" | ""
@@ -187,6 +191,16 @@ def policy_view(ds: Dataset) -> PolicyView:
                          "put it on a reorder point to order on review days only")
         if m is SafetyStockMethod.NONE and rule != "none" and mean > EPS:
             notes.append("no safety stock: every late delivery or demand above the forecast is a shortage")
+        cv_e = None
+        if statistical and mean > EPS:
+            mu = mean * max(0.0, lt + review)
+            cv_e = sigma_lt(lp.safety_stock, SSInputs(mean, lt, lt_sd, 0.0, 0.0)) / mu if mu > EPS else None
+            dist = lp.safety_stock.distribution
+            if dist == "normal" and cv_e is not None and cv_e > LUMPY:
+                alt = statistical_ss(lp.safety_stock.model_copy(update={"distribution": "gamma"}),
+                                     SSInputs(mean, lt, lt_sd, target or 0.0, q or 0.0)).qty
+                notes.append(f"its demand over the lead time varies widely (CV {cv_e:.2f}), which a normal spread fits "
+                             f"poorly: spread as a gamma, the target needs {alt:,.0f} instead of {pol.qty:,.0f}")
         if flow.cv_source.get(n) == "default" and statistical:
             notes.append("its demand variability is the company default, not measured")
         o, ok = served.get(n, [0, 0])
@@ -197,7 +211,7 @@ def policy_view(ds: Dataset) -> PolicyView:
             cv_from=CV_FROM.get(flow.cv_source.get(n, "none"), ""), usage_value=usage[n], rule=rule,
             rule_label=RULES[rule], lot=lp.lot_sizing.policy.value if lp.lot_sizing.policy else s.default_lot_policy.value,
             order_qty=q, order_up_to=lp.max_stock if lp.lot_sizing.policy is LotSizePolicy.MIN_MAX else None,
-            review_days=review, method=m.value,
+            review_days=review, method=m.value, distribution=lp.safety_stock.distribution, exposure_cv=cv_e,
             next_review=(first_review(lp.safety_stock.review_from, review, s.planning_start)[0]
                          if rule[0] == "R" else None), target=target,
             target_kind="fill" if m is SafetyStockMethod.FILL_RATE else "cycle" if statistical else "",
@@ -245,7 +259,8 @@ def _suggested_s(r: PolicyRow) -> float | None:
 def apply_policy(ds: Dataset, keys: list[tuple[str, str]], *, method: str | None = None,
                  service_level: float | str | None = None, days: float | None = None, qty: float | None = None,
                  review_period_days: float | None = None, review_from: date | None = None,
-                 rule: str | None = None, reorder_point: str | None = None) -> tuple[Dataset, str]:
+                 rule: str | None = None, distribution: str | None = None,
+                 reorder_point: str | None = None) -> tuple[Dataset, str]:
     """Give the products at places ``keys`` one policy (CONFORMANCE I4): a safety-stock method, a service target (a
     number, or "suggested": each its own ABC-XYZ cell's), a review period and a day reviews fall on, the rule
     ("mrp": time-phased; "reorder_point": ordered when the stock reaches s, which is then set to the suggestion), and
@@ -259,6 +274,8 @@ def apply_policy(ds: Dataset, keys: list[tuple[str, str]], *, method: str | None
         raise PolicyError(f"there is no {missing[0]} kept at a place")
     if service_level is not None and service_level != "suggested" and not 0.5 <= float(service_level) < 1:
         raise PolicyError("a service target is from 50 % to below 100 %")
+    if distribution not in (None, "normal", "gamma", "poisson"):
+        raise PolicyError("demand is spread as normal, gamma or Poisson")
     if rule not in (None, "mrp", "reorder_point"):
         raise PolicyError("the rule is time-phased MRP or a reorder point")
     meth = SafetyStockMethod(method) if method else None
@@ -314,6 +331,12 @@ def apply_policy(ds: Dataset, keys: list[tuple[str, str]], *, method: str | None
         elif service_level is not None:
             ss["service_level"] = float(service_level)
             said["target"] += 1
+        if distribution is not None and not no_cv:
+            if SafetyStockMethod(ss["method"]) in (SafetyStockMethod.SERVICE_LEVEL, SafetyStockMethod.FILL_RATE):
+                ss["distribution"] = distribution
+                said["distribution"] += 1
+            elif service_level is None:
+                skipped["safety stock not set by a service target"].append(name)
         if review_period_days is not None:
             ss["review_period_days"] = review_period_days
             said["review"] += 1
@@ -352,7 +375,7 @@ def apply_policy(ds: Dataset, keys: list[tuple[str, str]], *, method: str | None
                           if any(skipped.values()) else "say what to change")
     parts = [f"{v} {w}{'' if v == 1 else 's'}" for w, v in (
         ("safety-stock method", said["method"]), ("service target", said["target"]), ("review period", said["review"]),
-        ("rule", said["rule"]), ("reorder point", said["reorder"])) if v]
+        ("demand spread", said["distribution"]), ("rule", said["rule"]), ("reorder point", said["reorder"])) if v]
     n = len(chosen)
     msg = f"Set {', '.join(parts)} on {n} product{'' if n == 1 else 's'} at {'a place' if n == 1 else 'places'}."
     if took:

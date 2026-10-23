@@ -35,7 +35,7 @@ Read against SPT ch. 4–7 and CPIM "inventory management". Audited 23 October 2
 | I15 | DDMRP buffers | `inventory/analysis._ddmrp`, MRP type `ddmrp` | Buffer placement; Products at places | test_inventory, test_s4_backtest_b | there |
 | I16 | Risk pooling | `inventory/analysis._pooling` | Buffer placement | test_inventory | there |
 | I17 | Intermittent demand: Croston / SBA / TSB forecast | `demand/models` | Demand | test_demand | there |
-| I18 | Safety stock for intermittent or lumpy demand (non-normal: Poisson, gamma, bootstrap) | — | — | — | missing: a normal approximation sizes slow movers too |
+| I18 | Safety stock for intermittent or lumpy demand (non-normal: Poisson, gamma, bootstrap) | `plan/safety` gamma (by mean and σ over L + R) and Poisson, for a cycle level and a fill rate (`safety_stock.distribution`) | Inventory policy: a note where demand over the lead time varies widely (CV over 0.5) with what a gamma spread would hold; *Give a policy* → demand spread | test_policy (hand-worked: the exponential's 4·ln 20 and 4·ln 10, Poisson s = 5 and the shortage sums); e2e inventory-policy (Chennai 5 HP pump, 18.3 → 21.3) | there (8.2): Buffer placement (multi-echelon) still sizes by the normal; no bootstrap from history |
 | I19 | Measured lead-time spread fed to safety stock | EP 4.4 | Buying → suppliers | test_demand_spread | there |
 | I20 | Achieved service against the target, per product at a place | `inventory/policy` from the closed-order log | Inventory policy → achieved, per product and class | test_policy (five orders: on time, late, short; a transfer not counted) | there (8.2): measured as orders in full by the requested date, the record kept; a cycle service level per replenishment cycle is not logged |
 | I21 | Excess, obsolete and slow-moving stock | `tower/kpis` | Performance | test_tower | there |
@@ -45,5 +45,4 @@ Read against SPT ch. 4–7 and CPIM "inventory management". Audited 23 October 2
 | I25 | One place to see each product's policy | `inventory/policy` | **Supply → Inventory policy** | e2e inventory-policy (found from the menu) | there (8.2) |
 
 **What this section says** (audit): the arithmetic was there and checked; the *policy* was not presented as one.
-**After 8.2:** 22 of 25 there. Open: safety stock for lumpy demand (I18), next; the cost of a shortage (I23) and a
-single-period buy (I24) are in IDEAS.md.
+**After 8.2:** 23 of 25 there. Open: the cost of a shortage (I23) and a single-period buy (I24), both in IDEAS.md.

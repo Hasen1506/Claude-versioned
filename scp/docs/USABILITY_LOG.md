@@ -1311,7 +1311,7 @@ browser, and at 5,000 products × 20 places.
 | N332 | The reorder point was typed by hand with nothing to say what it should be. | Minor | **Fixed.** s = d̄·(L + R) + SS beside it, a note when it is more than 10 % away, and a step that sets it. |
 | N333 | A fill-rate target would have been compared with a class's cycle service level, and a target given to a product whose safety stock is in days of cover would have changed nothing silently. | Minor | **Fixed.** The two kinds of target are shown and counted apart; products whose safety stock is not set by a target are left and named. |
 | N334 | At 5,000 × 20 the message named every product left alone and the table drew 11,635 rows. | Minor | **Fixed.** Five named and the rest counted; 500 rows with a search. |
-| N335 | Periodic review is only in the safety-stock formula: orders are not placed on a review calendar. Safety stock for slow, lumpy demand uses the normal approximation. There is no cost of a shortage to choose a target by cost, and no single-period (season) buy. | Minor | Periodic review **fixed** (N336); lumpy demand next (I18); I23 and I24 in IDEAS.md. |
+| N335 | Periodic review is only in the safety-stock formula: orders are not placed on a review calendar. Safety stock for slow, lumpy demand uses the normal approximation. There is no cost of a shortage to choose a target by cost, and no single-period (season) buy. | Minor | Periodic review **fixed** (N336); lumpy demand **fixed** (N340); I23 and I24 in IDEAS.md. |
 
 **Periodic review, used the same way.**
 
@@ -1334,6 +1334,20 @@ browser, and at 5,000 products × 20 places.
 | N337 | A class could not be moved between time-phased MRP and a reorder point; that was a field on *Products at places*, one product at a time, with the reorder point typed in. | Minor | **Fixed.** *Give a policy → Ordered by*: a reorder point (s set to the suggestion with it) or time-phased MRP. A product with no demand to set s from stays as it was and is named. |
 | N338 | A suggested reorder point set together with a new target or review period was worked out from the old ones. | Minor | **Fixed.** The reorder point is suggested from the policy as it is after the other changes. |
 | N339 | Giving a cycle service level or fill rate to a product with no demand variability (CV) of its own would have saved data that the data check rejects. | Serious | **Fixed.** The CV measured from the demand the product feeds is taken, and the message says so; with none, the product is left as it was and named. |
+
+**Demand that varies widely, used the same way.**
+
+* *Input:* none of Kaveri's products varies much over its lead time: all are class X, and the widest has a CV of 0.47.
+  The Chennai pump case has one that does. The 5 HP pump at Sriperumbudur sells 15.6 a day over a 1.2-day lead time,
+  with a weekly CV of 0.25. Over the lead time that is a mean of 18.2 and a σ of 11.1: a CV of 0.61.
+* *Processing:* the policy page notes it: "its demand over the lead time varies widely (CV 0.61), which a normal spread
+  fits poorly: spread as a gamma, the target needs 21 instead of 18". The pump is chosen and given *Demand spread:
+  gamma*.
+* *Output:* its 95 % target holds 21.3 instead of 18.3. The supply plan holds the same, and its note names the gamma.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N340 | Every service target was sized as if demand over the lead time were normal, even where it varies so much that the normal puts weight on negative demand, and for slow movers sold a few at a time. | Minor | **Fixed.** A safety stock set by a target can read that demand as normal, gamma (by its mean and σ) or Poisson, for a cycle level and a fill rate. The policy page notes a CV over 0.5 and what a gamma spread would hold, and *Give a policy* sets the spread for a class. Buffer placement still uses the normal. |
 
 ## Found in the second reality check (after Phase E)
 
