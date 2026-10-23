@@ -7245,6 +7245,11 @@ export interface components {
              */
             transfers?: string[];
             /**
+             * Purchases
+             * @description Purchase order lines collected from the supplier (we pay the carriage)
+             */
+            purchases?: string[];
+            /**
              * Weight Kg
              * @default 0
              */
@@ -17642,7 +17647,7 @@ export interface components {
             window_days: number;
             /**
              * Horizon Days
-             * @description Deliveries and transfers loading this far ahead are planned
+             * @description Deliveries, transfers and collections loading this far ahead are planned
              * @default 7
              */
             horizon_days: number;
@@ -18090,6 +18095,8 @@ export interface components {
             deliveries: string[];
             /** Transfers */
             transfers: string[];
+            /** Purchases */
+            purchases: string[];
             /** Weight Kg */
             weight_kg: number;
             /** Volume M3 */

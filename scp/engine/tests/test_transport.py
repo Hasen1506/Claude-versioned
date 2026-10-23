@@ -246,3 +246,88 @@ def test_a_rejected_load_goes_to_the_next_carrier_even_where_the_lane_is_assumed
     x, _ = tm.reject(x, "FO-00001")                                     # CR-B (900) turns it down
     f = x.freight_orders[0]
     assert (f.carrier, f.planned_cost) == ("CR-A", 1000)               # not the lane's assumed 50: no one carries that
+
+
+# ---- collections: purchases whose carriage the buyer pays (Enterprise 8.3, CONFORMANCE §7, T19) ----------------
+def _collect(terms: str = "FCA Pune", lines: tuple = ((400, 4), (300, 5)), sent: bool = True, **mode) -> dict:
+    """W buys X from S on terms ``terms``; lane LS from S to W takes 2 days in a 1,000 kg truck (500 a vehicle, 1 a
+    kilogram). Each of ``lines`` is a purchase order line of (kg, days after the start it is due)."""
+    d = company([100])
+    d["vendors"] = [{"supplier": "S", "incoterms": terms}]
+    d["lanes"].append({"id": "LS", "origin": "S", "destination": "W", "modes": [
+        {"mode": "truck_ftl", "transit_days": 2, "vehicle_capacity_kg": 1000, "cost_per_shipment": 500,
+         "cost_per_kg": 1, **mode}]})
+    d["purchase_orders"] = [{"id": "PO-1", "supplier": "S", "location": "W", "order_date": D0.isoformat(),
+                             **({"sent_on": D0.isoformat()} if sent else {})}]
+    d["receipts"] = [{"id": f"PO-1-{10 * (i + 1)}", "kind": "purchase", "location": "W", "product": "X", "qty": q,
+                      "due_date": (D0 + timedelta(days=due)).isoformat(), "source": "B-X", "po": "PO-1", "price": 1}
+                     for i, (q, due) in enumerate(lines)]
+    return d
+
+
+def collections(x: Dataset) -> list[tuple[str, list[str], str, float]]:
+    return [(g.lane, v.purchases, v.planned_on.isoformat(), v.cost) for g in tm.plan_loads(x)[0] for v in g.vehicles
+            if v.purchases]
+
+
+def test_a_purchase_the_buyer_collects_is_loaded_at_the_supplier_its_transit_before_it_is_due():
+    d = _collect()
+    d["transport"] = {"window_days": 1}
+    # due on days 4 and 5, 2 days in transit: they load on days 2 and 3, within a day: one truck of 700 kg,
+    # 500 + 700 × 1 = 1,200 (the later one sent a day early)
+    assert collections(ds(d)) == [("LS", ["PO-1-10", "PO-1-20"], "2026-03-04", 1200.0)]
+    assert collections(ds(_collect())) == [("LS", ["PO-1-10"], "2026-03-04", 900.0),
+                                           ("LS", ["PO-1-20"], "2026-03-05", 800.0)]
+
+
+@pytest.mark.parametrize("terms", ["DAP Pune", "CIF Nhava Sheva", "", "fob shenzhen"])
+def test_only_terms_that_leave_the_carriage_to_the_buyer_are_collected(terms):
+    got = collections(ds(_collect(terms)))
+    assert bool(got) == (terms.split()[:1] == ["fob"])          # FOB in any case; DAP and CIF are the seller's
+
+
+def test_an_unsent_order_a_received_line_or_a_carried_one_is_not_planned_and_no_lane_is_named():
+    assert collections(ds(_collect(sent=False))) == []
+    late = collections(ds(_collect(lines=((400, 1),))))       # due tomorrow, 2 days in transit: loads today, late
+    assert late == [("LS", ["PO-1-10"], "2026-03-02", 900.0)]
+    assert [v.late for g in tm.plan_loads(ds(_collect(lines=((400, 1),))))[0] for v in g.vehicles if v.purchases] == [
+        ["PO-1-10"]]
+    assert collections(ds(_collect(lines=((400, 12),)))) == []   # loads on day 10, past the 7-day horizon
+    d = _collect(lines=((400, 4),))
+    d["receipts"][0].update(confirmed_date=(D0 + timedelta(days=6)).isoformat())
+    assert [x[2] for x in collections(ds(d))] == ["2026-03-06"]   # the supplier confirmed day 6: loads on day 4
+    d = _collect(lines=((400, 4),))
+    d["receipts"][0].update(confirmed_qty=150)                # the supplier confirmed 150 of 400: 150 come
+    assert [(v.weight_kg, v.cost) for g in tm.plan_loads(ds(d))[0] for v in g.vehicles if v.purchases] == [(150, 650)]
+    d["receipts"][0].update(confirmed_qty=0.0)                # confirmed none: nothing to collect
+    assert collections(ds(d)) == []
+    x, rep = tm.create(ds(_collect(lines=((400, 4),))))
+    (fo,) = [f for f in x.freight_orders if f.purchases]
+    assert (fo.ship_from, fo.ship_to, fo.purchases, fo.planned_cost) == ("S", "W", ["PO-1-10"], 900)
+    assert collections(x) == []                               # on a freight order now
+    d = _collect()
+    d["lanes"] = [ln for ln in d["lanes"] if ln["id"] != "LS"]
+    _, out = tm.plan_loads(ds(d))
+    assert [(u.kind, u.id) for u in out] == [("purchase", "PO-1-10"), ("purchase", "PO-1-20")]
+    assert "no lane goes from there to" in out[0].why
+
+
+def test_a_collection_ships_without_a_posting_and_its_freight_bill_is_the_buyers():
+    from scp.accounting import journal
+    x, _ = tm.create(ds(_collect(lines=((400, 4),))))
+    fid = next(f.id for f in x.freight_orders if f.purchases)
+    x2, rep = tm.ship(x, fid)
+    assert rep.movements == [] and "PO-1-10 (collected)" in rep.message
+    assert x2.receipts == x.receipts and x2.movements == x.movements     # received later, against the order
+    x3, _ = tm.settle(x2, fid, 950, "LR-77")
+    (row,) = [r for r in tm.view(x3).orders if r.order.id == fid]
+    assert row.difference == 50 and [(ln.kind, ln.id, ln.cost) for ln in row.lines] == [("purchase", "PO-1-10", 950)]
+    d = x3.model_dump(mode="json")                        # W belongs to company E1: the bill is in E1's books
+    d["entities"] = [{"id": "E1", "name": "West"}]
+    next(lo for lo in d["locations"] if lo["id"] == "W")["entity"] = "E1"
+    vs, _ = journal(ds(d), D0 + timedelta(days=30))
+    (v,) = [v for v in vs if v.document == fid]
+    assert v.company == "E1" and v.debit == v.credit == 950
+    from scp.accounting import view as books
+    owed = [c for c in books(ds(d), period_end=D0 + timedelta(days=30)).checks if "suppliers" in c.what.lower()]
+    assert owed and all(c.ok for c in owed)               # what E1 owes includes the carrier's bill

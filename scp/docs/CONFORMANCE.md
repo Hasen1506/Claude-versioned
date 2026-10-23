@@ -238,3 +238,37 @@ waves, scanning, batches, counts); what is thinner is how a warehouse is run and
 cross-docking, its measures and its workload. At the audit: 14 of 21 there, 2 partial, 5 missing. The one that
 changes what the floor does every day is W7: a picking shelf emptied by the morning's picks waits until someone sees
 it. **After W7:** 15 of 21 there, 1 partial (W19), 5 missing (W8, W16, W17, W20, W21), all in IDEAS.md.
+
+## 7. Transport
+
+Read against CPIM "distribution and transportation", the S/4 guide §14 (TM basics: freight units, load building,
+carrier selection, tendering, freight settlement) and Ballou, *Business Logistics/Supply Chain Management*. Audited
+23 October 2026.
+
+| # | Concept | Engine | Page and name | Oracle | Status |
+|---|---|---|---|---|---|
+| T1 | Lanes with modes, transit times, transit spread and costs a shipment, kilogram, cubic metre and unit | master data | Set up → lanes; Network | test_planning_depth | there |
+| T2 | The mode planning uses on a lane, among several | `planning_mode` | Set up → lanes | test_transport | there |
+| T3 | Carriers and their rate tables, never under a minimum, blocked carriers | EP 6.3 | Transport → carriers | test_transport | there |
+| T4 | Load building by weight and volume, loads within a window sharing a vehicle | EP 6.3 | Transport → to load | test_transport | there |
+| T5 | Carrier selection: the cheapest whose vehicle takes the load; the others' costs shown | EP 6.3 | Transport → to load | test_transport | there |
+| T6 | Tendering, a rejection tendered to the next carrier, acceptance | EP 6.3 | Transport → freight orders | test_transport | there |
+| T7 | Shipping posts the goods issue of each delivery and the dispatch of each transfer | EP 6.3 | Transport → freight orders | test_transport | there |
+| T8 | Freight settlement: the bill against plan, shared by weight, owed to the carrier, in the books | EP 6.3, EP 7.4 | Transport → freight orders, carriers; Books | test_transport, test_accounting | there |
+| T9 | Lane capacity in planning | P5 | Supply plan | test_planning_depth | there |
+| T10 | Outbound scheduling: picking, packing, loading and transit in the promised date | EP 2.2 | Customer orders → *Why this date* | test_s4_backtest_b | there |
+| T11 | Inbound transport: purchases the buyer collects (EXW, FCA, FAS, FOB) planned as freight from the supplier | `transport.collected`; `FreightOrder.purchases` | Transport → to load (*collect from the supplier*) | test_transport (hand-worked: 400 and 300 kg due on days 4 and 5 load on days 2 and 3, one truck within a day's window for 1,200; DAP and CIF not collected; confirmations, horizon, lateness; the bill in the receiving company's books); e2e transport-collect | there (8.3); at the audit nothing planned the freight Kaveri pays from Shenzhen |
+| T12 | Incoterms decide who pays the freight | vendor terms read by transport | Transport | test_transport | partial: they decide what is collected, not yet the landed cost (B22) |
+| T13 | Multi-stop routes: several drops on one vehicle | — | — | — | missing |
+| T14 | Carrier performance: tenders accepted, picked up and delivered on time | rejections counted | Transport → carriers | test_transport | partial: no on-time measure |
+| T15 | Freight cost per unit by lane and the billed freight in cost to serve | the lane's planned cost in cost to serve | Money → cost to serve | test_finance | partial: what carriers bill is not shared to customers |
+| T16 | Dock appointments and yard | — | — | — | missing |
+| T17 | Proof of delivery and shipment tracking | proof of delivery (M3) | Selling → deliveries | test_order_to_cash | partial: no tracking events |
+| T18 | Vehicles filled too little named | `low_fill` | Transport → to load | test_transport | there |
+| T19 | Stock in transit seen in stock and planning | O1 | Stock & actuals | test_stock | there |
+
+**What this section says** (audit): outbound transport is as S/4's basic TM has it; inbound transport was missing,
+and the measures of carriers and the freight in cost to serve are thin. At the audit: 12 of 19 there, 4 partial, 3
+missing. The one that changes what is paid and planned is T11: on Kaveri, the Shenzhen parts are bought FOB, so the
+sea freight from Shenzhen is Kaveri's to book, and nothing planned it. **After T11:** 13 of 19 there, 4 partial (T12,
+T14, T15, T17), 2 missing (T13, T16), all in IDEAS.md.

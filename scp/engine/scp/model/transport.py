@@ -54,6 +54,8 @@ class FreightOrder(Model):
     planned_on: dt.date = Field(description="Loading")
     deliveries: list[str] = Field(default_factory=list, max_length=200)
     transfers: list[str] = Field(default_factory=list, max_length=200, description="Stock transfer orders")
+    purchases: list[str] = Field(default_factory=list, max_length=200,
+                                 description="Purchase order lines collected from the supplier (we pay the carriage)")
     weight_kg: float = Unit("kg", default=0.0)
     volume_m3: float = Unit("m3", default=0.0)
     weights: dict[str, float] = Field(default_factory=dict, description="Kilograms of each delivery and transfer")
@@ -73,13 +75,13 @@ class FreightOrder(Model):
 
     @model_validator(mode="after")
     def _carries(self) -> FreightOrder:
-        if not self.deliveries and not self.transfers:
-            raise ValueError("a freight order carries at least one delivery or stock transfer")
+        if not self.deliveries and not self.transfers and not self.purchases:
+            raise ValueError("a freight order carries at least one delivery, stock transfer or purchase")
         return self
 
 
 class TransportSettings(Model):
     window_days: int = Field(0, ge=0, le=14, description="Loads due within this many days of the first share a "
                                                           "vehicle, the later ones sent early")
-    horizon_days: int = Field(7, ge=0, le=60, description="Deliveries and transfers loading this far ahead are planned")
+    horizon_days: int = Field(7, ge=0, le=60, description="Deliveries, transfers and collections loading this far ahead are planned")
     low_fill: float = Unit("fraction", default=0.5, le=1, description="A vehicle filled less than this is named")

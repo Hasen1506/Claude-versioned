@@ -1,10 +1,11 @@
 """Transport (Enterprise 6.3, S/4 guide §14, a small TM): what is to be loaded, vehicles built from it by weight and
 volume, the carrier that carries them cheapest, and freight orders tendered, shipped and settled.
 
-What is to be loaded is every open delivery (not shipped, not on a freight order) and every stock transfer with
-something left to ship, loading from the planning start up to ``transport.horizon_days`` ahead. A delivery loads on
-its planned goods issue, a transfer its lane's transit time before it is due; what should have left already loads on
-the first day, and is named late. Each goes on the lane from where it leaves to where it goes (the lane with the
+What is to be loaded is every open delivery (not shipped, not on a freight order), every stock transfer with
+something left to ship, and every purchase order line still to come from a supplier whose delivery terms leave the
+carriage to the buyer (EXW, FCA, FAS, FOB: a collection), loading from the planning start up to
+``transport.horizon_days`` ahead. A delivery loads on its planned goods issue, a transfer or a collection its lane's
+transit time before it is due; what should have left already loads on the first day, and is named late. Each goes on the lane from where it leaves to where it goes (the lane with the
 highest priority when there are several).
 
 On each lane, what loads within ``transport.window_days`` of the first shares a vehicle (the later ones sent early).
@@ -69,7 +70,7 @@ def _kg(v: float) -> str:
 # ------------------------------------------------------------------------------------------------ what is to load
 @dataclass
 class Item:
-    kind: str                       # delivery or transfer
+    kind: str                       # delivery, transfer or purchase (a collection)
     id: str
     lane: str
     ship_from: str
@@ -108,13 +109,24 @@ def _dims(ds: Dataset, lines: list[tuple[str, float]]) -> tuple[float, float, fl
     return kg, m3, units, unweighed
 
 
+COLLECT = frozenset({"EXW", "FCA", "FAS", "FOB"})   # delivery terms that leave the main carriage to the buyer
+
+
+def collected(ds: Dataset, supplier: str) -> bool:
+    """The buyer books the carriage from this supplier: its delivery terms (their first word) are EXW, FCA, FAS or
+    FOB."""
+    terms = ds.vendor(supplier).incoterms.split()
+    return bool(terms) and terms[0].upper() in COLLECT
+
+
 def _carried(ds: Dataset) -> set[tuple[str, str]]:
     return {(k, x) for f in ds.freight_orders if f.status != "cancelled"
-            for k, xs in (("delivery", f.deliveries), ("transfer", f.transfers)) for x in xs}
+            for k, xs in (("delivery", f.deliveries), ("transfer", f.transfers), ("purchase", f.purchases))
+            for x in xs}
 
 
 def to_load(ds: Dataset, on: date | None = None, days: int | None = None) -> tuple[list[Item], list[Unplanned]]:
-    """Every open delivery and stock transfer not on a freight order, loading by ``on`` + ``days``."""
+    """Every open delivery, stock transfer and collection not on a freight order, loading by ``on`` + ``days``."""
     day = on or ds.settings.planning_start
     last = day + timedelta(days=ds.transport.horizon_days if days is None else days)
     taken = _carried(ds)
@@ -153,6 +165,23 @@ def to_load(ds: Dataset, on: date | None = None, days: int | None = None) -> tup
             continue
         kg, m3, units, unw = _dims(ds, [(rc.product, left)])
         items.append(Item("transfer", rc.id, ln.id, frm, rc.location, max(day, load), kg, m3, units, load < day, unw))
+    heads = {p.id: p for p in ds.purchase_orders}
+    for rc in ds.receipts:
+        po = heads.get(rc.po or "")
+        if rc.kind is not ReceiptKind.PURCHASE or po is None or po.sent_on is None or ("purchase", rc.id) in taken \
+                or rc.expected_qty <= EPS or not collected(ds, po.supplier):
+            continue
+        ln = _lane(ds, po.supplier, rc.location)
+        if ln is None:
+            out.append(Unplanned(kind="purchase", id=rc.id, why=f"collected from {_name(ds, po.supplier)}, but no lane "
+                                 f"goes from there to {_name(ds, rc.location)}"))
+            continue
+        load = (rc.confirmed_date or rc.due_date) - timedelta(days=math.ceil(ln.planning_mode.transit_days))
+        if load > last:
+            continue
+        kg, m3, units, unw = _dims(ds, [(rc.product, rc.expected_qty)])
+        items.append(Item("purchase", rc.id, ln.id, po.supplier, rc.location, max(day, load), kg, m3, units,
+                          load < day, unw))
     return items, out
 
 
@@ -223,6 +252,7 @@ class Vehicle(Out):
     planned_on: date
     deliveries: list[str]
     transfers: list[str]
+    purchases: list[str]
     weight_kg: float
     volume_m3: float
     capacity_kg: float | None
@@ -263,7 +293,8 @@ def _vehicles(ln: TransportLane, o: Option, items: list[Item], on: date) -> list
         fills = [a / c for a, c in ((kg, o.cap_kg), (m3, o.cap_m3)) if c]
         out.append(Vehicle(lane=ln.id, ship_from=ln.origin, ship_to=ln.destination, mode=o.mode, carrier=o.carrier,
                            planned_on=on, deliveries=sorted(x.id for x in v if x.kind == "delivery"),
-                           transfers=sorted(x.id for x in v if x.kind == "transfer"), weight_kg=round(kg, 3),
+                           transfers=sorted(x.id for x in v if x.kind == "transfer"),
+                           purchases=sorted(x.id for x in v if x.kind == "purchase"), weight_kg=round(kg, 3),
                            volume_m3=round(m3, 4), capacity_kg=o.cap_kg, capacity_m3=o.cap_m3,
                            fill=round(max(fills), 4) if fills else None, cost=o.cost(kg, m3, units),
                            over=len(v) == 1 and not o.fits(kg, m3),
@@ -347,7 +378,8 @@ class TransportView(Out):
 
 def _lines(f: FreightOrder) -> list[FreightLine]:
     """The freight order's cost (as billed once settled) shared by weight, by units where nothing has a weight."""
-    ids = [("delivery", x) for x in f.deliveries] + [("transfer", x) for x in f.transfers]
+    ids = ([("delivery", x) for x in f.deliveries] + [("transfer", x) for x in f.transfers]
+           + [("purchase", x) for x in f.purchases])
     kg = {x: f.weights.get(x, 0.0) for _, x in ids}
     un = {x: f.units.get(x, 0.0) for _, x in ids}
     tk, tu = sum(kg.values()), sum(un.values())
@@ -443,7 +475,8 @@ def create(ds: Dataset, on: date | None = None, lanes: list[str] | None = None) 
         for v in g.vehicles:
             made.append(FreightOrder(id=next(ids), lane=v.lane, mode=v.mode, carrier=v.carrier, ship_from=v.ship_from,
                                      ship_to=v.ship_to, planned_on=v.planned_on, deliveries=v.deliveries,
-                                     transfers=v.transfers, weight_kg=v.weight_kg, volume_m3=v.volume_m3,
+                                     transfers=v.transfers, purchases=v.purchases, weight_kg=v.weight_kg,
+                                     volume_m3=v.volume_m3,
                                      weights=v.weights, units=v.units,
                                      capacity_kg=v.capacity_kg, capacity_m3=v.capacity_m3, planned_cost=v.cost,
                                      note="bigger than one vehicle: split it" if v.over else ""))
@@ -510,7 +543,8 @@ def reject(ds: Dataset, fid: str, on: date | None = None) -> tuple[Dataset, Tran
 
 
 def ship(ds: Dataset, fid: str, on: date | None = None) -> tuple[Dataset, TransportReport]:
-    """The vehicle leaves: the goods issue of each delivery on it and the dispatch of each transfer."""
+    """The vehicle leaves: the goods issue of each delivery on it and the dispatch of each transfer. A collection posts
+    nothing here: the goods are the supplier's until they are received against the purchase order."""
     f = _fo(ds, fid)
     if f.status not in ("accepted", "planned") or (f.status == "planned" and f.carrier is not None):
         raise TransportError(f"{fid} is {f.status}: " + ("tender it and have the carrier accept it first"
@@ -534,6 +568,7 @@ def ship(ds: Dataset, fid: str, on: date | None = None) -> tuple[Dataset, Transp
             ds, rep = ship_transfer(ds, rid, None, day)
             moves += rep.movements
             said.append(rid)
+        said += [f"{x} (collected)" for x in f.purchases]
     except (SalesError, PostingError) as e:
         raise TransportError(f"{fid} cannot ship: {e}") from e
     new = _fo(ds, fid).model_copy(update={"status": "shipped", "shipped_on": day})

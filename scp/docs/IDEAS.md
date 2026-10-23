@@ -227,3 +227,13 @@ on 9 Oct 2026. Not built yet:
 * **Workload of a wave (W21).** Hours a wave takes by time standards per line and per unit, against the people on the
   shift.
 
+## Transport (CONFORMANCE §7)
+
+* **Incoterms in the landed cost (T12, B22).** A collected purchase's freight, planned or billed, added to the cost of
+  what it carried, and a delivered one's left out.
+* **Multi-stop routes (T13).** Several drops on one vehicle in a sequence, each stop's time and the route's cost.
+* **Carrier performance (T14).** Tenders accepted, picked up and delivered on time per carrier, weighed in the choice.
+* **Billed freight in cost to serve (T15).** What carriers bill shared to the customers and products it carried.
+* **Dock appointments (T16).** Loading and unloading slots per dock, booked by the freight orders.
+* **Shipment tracking (T17).** Events from the carrier (picked up, in transit, delivered) on the freight order.
+

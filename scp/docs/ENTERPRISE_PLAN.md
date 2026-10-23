@@ -119,7 +119,10 @@ Then selling (§5: 20 of 26 at the audit): product substitution in promising (N3
 quotation conversion, rebates, freight on customer orders and customer consignment to IDEAS.md.
 Then the warehouse (§6: 14 of 21 at the audit): picking bins refilled from the reserve (N347), 15 of 21; slotting,
 handling units, cross-docking, space in the plan, warehouse measures and workload to IDEAS.md.
-Next in 8.3: transport, then money.
+Then transport (§7: 12 of 19 at the audit): collections planned as freight from the supplier (N348), 13 of 19;
+the landed cost by incoterm, multi-stop routes, carrier performance, billed freight in cost to serve, docks and
+tracking to IDEAS.md.
+Next in 8.3: money.
 
 | # | What | How |
 |---|---|---|

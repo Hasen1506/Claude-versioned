@@ -1490,6 +1490,24 @@ CONFORMANCE §6: 21 concepts against CPIM warehouse management, the S/4 guide §
 |---|---|---|---|
 | N347 | A picking shelf emptied by the picks stayed empty until someone noticed and typed a move from the rack: on Kaveri's Delhi DC the week's picks left the 750 W grinder's first shelf empty and the 500 W's at 20. | Serious | **Fixed.** A bin kept for one product can have a refill point; *Warehouse → Refill picking bins* lists the bins at or below it (counting open tasks into and out of them) and the moves from the reserve that fill them to their most, first expiring first, then first in, then nearest; one click makes the tasks. Open: slotting, handling units, cross-docking, the plan's check of a place's volume, warehouse measures and a wave's workload are in IDEAS.md. |
 
+### 8.3: Transport
+
+CONFORMANCE §7: 19 concepts against CPIM distribution and transportation, the S/4 guide §14 and Ballou; 12 there, 4
+partial, 3 missing. Outbound transport matches S/4's basic TM; inbound was missing.
+
+**Collections (T11), on Kaveri.**
+
+* *Input:* the plan's requisition for 14,000 rotary switches from Shenzhen electro-components, bought FOB Shenzhen
+  (the main carriage is Kaveri's), ordered and sent. The sea lane to Pune takes 30 days.
+* *Processing:* *Transport → To load*, looking 60 days ahead (the collection loads a month before it is due).
+* *Output:* the switches load at Shenzhen on Thu 5 Nov for 5 Dec: 1,120 kg and 1.4 m³, at the lane's own cost of
+  ₹54,100 (₹45,000 a shipment and ₹6,500 a cubic metre), since no carrier has a sea rate. Shipped, it posts nothing:
+  the switches are received against the order. Settled, the bill is in the receiving company's books.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N348 | Transport planned only what Kaveri sends out: a purchase it collects (FOB Shenzhen) had no freight order, so the sea freight Kaveri pays was neither planned, booked nor checked against the bill. | Serious | **Fixed.** Sent purchase order lines from a supplier whose terms leave the carriage to the buyer (EXW, FCA, FAS, FOB) load their lane's transit time before they are due (or confirmed), for what is still expected; they share vehicles, carriers and tendering with the rest; shipping posts nothing; the bill goes to the receiving company. Open: incoterms in the landed cost, multi-stop routes, carrier performance, billed freight in cost to serve, docks and tracking are in IDEAS.md. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

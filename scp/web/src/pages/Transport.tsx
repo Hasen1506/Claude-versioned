@@ -70,9 +70,10 @@ export function Transport({ route }: { route: string[] }) {
   const vehicles = v?.groups.flatMap((g) => g.vehicles) ?? [];
   const open = (ds.freight_orders ?? []).filter((f) => ["planned", "tendered", "accepted"].includes(f.status ?? "planned"));
   const head = <StageHeader title="Transport" kicker="Which vehicle carries what, with which carrier, and what it costs."
-    how={<>What is waiting to load is every open delivery and every stock transfer with something left to ship, loading
-      in the next {ds.transport?.horizon_days ?? 7} days: a delivery on its planned goods issue, a transfer its lane's
-      transit time before it is due. On each lane, what loads within the window shares a vehicle. Vehicles are filled
+    how={<>What is waiting to load is every open delivery, every stock transfer with something left to ship and every
+      sent purchase order line from a supplier whose terms leave the carriage to us (EXW, FCA, FAS, FOB: a collection),
+      loading in the next {ds.transport?.horizon_days ?? 7} days: a delivery on its planned goods issue, a transfer or a
+      collection its lane's transit time before it is due. On each lane, what loads within the window shares a vehicle. Vehicles are filled
       first fit, heaviest first, up to their kilograms and cubic metres. Every carrier with a rate for the lane is
       costed on its own vehicles (a shipment, a kilogram and a cubic metre, never under its minimum) and the cheapest
       is proposed; where no carrier has a rate, the lane's own cost. A settled bill is shared over what the vehicle
@@ -131,6 +132,7 @@ function ToLoad({ v, step }: { v: TransportView; step: Step }) {
               <td>{x.carrier ? g.choices.find((c) => c.carrier === x.carrier)?.name ?? x.carrier : <span className="faint">no carrier: the lane's cost</span>}
                 <div className="faint small">{MODE[x.mode] ?? x.mode}</div></td>
               <td>{[...x.deliveries, ...x.transfers].join(", ")}
+                {x.purchases.length > 0 && <div>collect from the supplier: {x.purchases.join(", ")}</div>}
                 {x.late.length > 0 && <div><Badge sev="warning">late: {x.late.join(", ")}</Badge></div>}
                 {x.early.length > 0 && <div className="faint small">sent early to share it: {x.early.join(", ")}</div>}
                 {x.over && <div><Badge sev="error">bigger than one vehicle: split it</Badge></div>}</td>

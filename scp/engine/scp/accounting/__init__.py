@@ -449,7 +449,7 @@ class _Journal:
         for fo in ds.freight_orders:
             if fo.status != "settled" or fo.billed is None or fo.settled_on is None or fo.settled_on > day:
                 continue
-            co = entity_of(ds, fo.ship_from)
+            co = entity_of(ds, fo.ship_to if fo.purchases else fo.ship_from)   # a collection: the buyer pays
             carrier = fo.carrier or ""
             self._post(fo.settled_on, fo.id, "Journal", fo.id,
                        f"freight bill {fo.bill or fo.id} from {_name(ds, carrier) or 'the carrier'}: "
@@ -623,7 +623,7 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
             pay[j._company_of_supplier_invoice(inv)] += (-1 if inv.credit else 1) * left * fx(ds, inv.currency)
     for fo in ds.freight_orders:
         if fo.status == "settled" and fo.billed is not None and fo.settled_on is not None and fo.settled_on <= day:
-            pay[entity_of(ds, fo.ship_from)] += fo.billed
+            pay[entity_of(ds, fo.ship_to if fo.purchases else fo.ship_from)] += fo.billed
     grir: dict[str, float] = defaultdict(float)
     from ..purchasing.payables import lines_index
     lines = lines_index(ds, outside=False)
