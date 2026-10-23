@@ -42,9 +42,11 @@ from ..plan.rates import bucket_days, horizon_flows, independent_demand, node_ro
 from ..time import Buckets
 from ..time.capacity import hours_between, overtime_between
 from ..validate import has_errors, validate
+from .horizon import extend
 from .lp import INF, LinearProgram
 from .result import (
-    Binding, DemandLine, Economics, Flow, ResourceLine, SolverStats, SopBucket, SopKpis, SopResult, SupplyLine,
+    Binding, BucketMoney, DemandLine, Economics, Flow, ResourceLine, SolverStats, SopBucket, SopKpis, SopResult,
+    SupplyLine,
 )
 
 
@@ -58,13 +60,14 @@ def _prio_factor(p: float) -> float:
 
 
 def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
-    s = ds.settings
-    cfg = ds.sop
-    profit = cfg.mode is SopMode.PROFIT
-    res = SopResult(ok=False, mode=cfg.mode, currency=s.currency, carrying_rate=s.carrying_rate)
+    res = SopResult(ok=False, mode=ds.sop.mode, currency=ds.settings.currency, carrying_rate=ds.settings.carrying_rate)
     res.issues = validate(ds)
     if has_errors(res.issues):
         return res
+    ds, longer = extend(ds)
+    s = ds.settings
+    cfg = ds.sop
+    profit = cfg.mode is SopMode.PROFIT
     g = build_graph(ds)
     val = costing.roll_up(ds, g)
     bk = Buckets(s.model_copy(update={"bucket": cfg.bucket}))
@@ -483,10 +486,15 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
 
     # ---- economics & KPIs --------------------------------------------------------------------------------
     econ = defaultdict(float)
+    per = [defaultdict(float) for _ in range(T)]            # the same, bucket by bucket (every column ends in |t)
     for j, (k, c) in cost_of.items():
         econ[k] += c * xv(j)
+        per[int(lp.col_name[j].rsplit("|", 1)[1])]["cost"] += c * xv(j)
     for n in nodes:
         econ["holding"] += sum(lp.cost[j] * xv(j) for j in inv[n])
+        for t, j in enumerate(inv[n]):
+            per[t]["cost"] += lp.cost[j] * xv(j)
+            per[t]["stock"] += val.unit_value.get(n, 0.0) * xv(j)
         if n in gap:
             econ["ss"] += sum(lp.cost[j] * xv(j) for j in gap[n])
     for n in demand_nodes:
@@ -494,10 +502,16 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
             for k, ss, bb, ll in segment_cols[n]:
                 ref = segment_price[k] if segment_price[k] is not None else val.unit_value.get(n, 0.0)
                 econ["revenue" if segment_price[k] is not None else "at_cost"] += sum(ref * xv(j) for j in ss)
+                if segment_price[k] is not None:
+                    for t, j in enumerate(ss):
+                        per[t]["revenue"] += ref * xv(j)
                 econ["backlog"] += sum(lp.cost[j] * xv(j) for j in bb)
                 econ["lost"] += sum(lp.cost[j] * xv(j) for j in ll)
         else:
             econ["revenue" if n in priced else "at_cost"] += sum(price(n) * xv(j) for j in sales[n])
+            if n in priced:
+                for t, j in enumerate(sales[n]):
+                    per[t]["revenue"] += price(n) * xv(j)
             econ["backlog"] += sum(lp.cost[j] * xv(j) for j in back[n])
             econ["lost"] += sum(lp.cost[j] * xv(j) for j in lost[n])
     total = sum(econ[k] for k in ("purchase", "production", "transport", "holding", "overtime", "backlog", "lost", "ss"))
@@ -506,6 +520,8 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
         holding=econ["holding"], overtime=econ["overtime"], backlog_penalty=econ["backlog"], lost_penalty=econ["lost"],
         ss_penalty=econ["ss"], total_cost=total, profit=econ["revenue"] + econ["at_cost"] - total,
         valued_at_cost=econ["at_cost"], unpriced=no_price)
+    res.money = [BucketMoney(bucket=t, revenue=p["revenue"], cost=p["cost"], margin=p["revenue"] - p["cost"],
+                             stock_value=p["stock"]) for t, p in enumerate(per)]
     d_tot = sum(sum(v) for v in dem.values())
     s_tot = sum(sum(dl.sales) for dl in res.demand)
     on_time = sum(min(dl.demand[t], max(0.0, dl.sales[t] - (dl.backlog[t - 1] if t else 0.0)))
@@ -522,6 +538,7 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
         "orders are due in the first bucket.",
         "Setups, lot sizes and minimum order quantities are left to MRP and scheduling: the LP plans volumes.",
         "Safety-stock targets are each node's configured policy; falling below costs the shortfall penalty.",
+        *longer,
     ]
     if no_price:
         res.notes.append(f"No selling price for {', '.join(no_price)}: its sales are valued at cost, so they earn no "

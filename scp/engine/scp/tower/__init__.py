@@ -18,7 +18,7 @@ from .result import DataQualityRow, Kpi, KpiRow, TowerResult, WorkItem
 from .fix import FixError, FixResult, fix_edits, try_fix
 from .worklist import Raw, Tracker, collect, get_tracker
 
-ONE_CLICK = {"expedite", "switch_supplier", "overtime"}
+ONE_CLICK = {"expedite", "switch_supplier", "overtime", "push_out"}
 SEV = {"error": 0, "warning": 1, "info": 2}
 
 

@@ -68,7 +68,7 @@ def _transit(ds: Dataset, origin: str, dest: str) -> float:
     return min(days) if days else 0.0
 
 
-def _pull_in(rc, when: dt.date, why: str) -> list[FixEdit]:
+def _redate(rc, when: dt.date, why: str) -> list[FixEdit]:
     out = [FixEdit(collection="receipts", id=rc.id, field="due_date", before=rc.due_date.isoformat(),
                    value=when.isoformat(), note=f"{rc.id}: due {when.isoformat()} instead of {rc.expected_date.isoformat()} ({why})")]
     if rc.confirmed_date is not None:
@@ -87,9 +87,9 @@ def _expedite(ds: Dataset, w: WorkItem) -> list[FixEdit]:
     named = next((r for r in ds.receipts if r.id == w.order_id), None) if w.order_id else None
     if named is not None:
         if w.code == "PO_CONFIRMED_LATE" and named.confirmed_date and named.confirmed_date > named.due_date:
-            return _pull_in(named, max(start, named.due_date), "the date asked for")
+            return _redate(named, max(start, named.due_date), "the date asked for")
         if w.code == "RESCHEDULE_IN" and w.date and w.date < named.expected_date:
-            return _pull_in(named, max(start, w.date), "the date it is needed")
+            return _redate(named, max(start, w.date), "the date it is needed")
         if named.expected_date < start:
             raise FixError(f"{named.id} is already overdue: the plan counts it as arriving today; chase it instead")
         raise FixError(f"{named.id} is not late against a date the plan needs it: nothing to pull in")
@@ -114,11 +114,23 @@ def _expedite(ds: Dataset, w: WorkItem) -> list[FixEdit]:
         arrives = target + dt.timedelta(days=math.ceil(lead))
         why = f"needed {need.isoformat()}" + (f"; the earliest it can reach {w.location} is {arrives.isoformat()}"
                                                if arrives > need else "")
-        out += _pull_in(rc, target, why)
+        out += _redate(rc, target, why)
         left -= rc.expected_qty
         if left <= 1e-9:
             break
     return out
+
+
+def _push_out(ds: Dataset, w: WorkItem) -> list[FixEdit]:
+    """A receipt that arrives before it is first needed (RESCHEDULE_OUT, N366): due on the day it is needed, so its
+    stock is not held for the days in between. A purchase order's supplier has to agree to the new date."""
+    named = next((r for r in ds.receipts if r.id == w.order_id), None) if w.order_id else None
+    if named is None or w.code != "RESCHEDULE_OUT":
+        raise FixError("only an open order the plan says to push out has a one-click version: cancel or move others "
+                       "on their own page")
+    if not w.date or w.date <= named.expected_date:
+        raise FixError(f"{named.id} is not early against the date the plan first needs it: nothing to push out")
+    return _redate(named, w.date, "the date it is first needed")
 
 
 def _switch(ds: Dataset, w: WorkItem) -> list[FixEdit]:
@@ -184,6 +196,8 @@ def fix_edits(ds: Dataset, plan: PlanResult | None, w: WorkItem) -> list[FixEdit
         raise FixError("this exception has no suggested action")
     if a.kind == "expedite":
         return _expedite(ds, w)
+    if a.kind == "push_out":
+        return _push_out(ds, w)
     if a.kind == "switch_supplier":
         return _switch(ds, w)
     if a.kind == "overtime":

@@ -49,6 +49,10 @@ test("a month of S&OP: budget in, five sign-offs, the plan against the budget, t
   // 3 supply review: the capacity plan solved by month
   await expect(page.getByText(/Supplied: .*100\.0%/)).toBeVisible({ timeout: 60_000 });
   await expect(page.getByRole("table", { name: "Month" }).getByRole("columnheader", { name: "Supply plan" })).toBeVisible();
+  // and what it brings in, costs and leaves in stock, month by month (N364)
+  const money = page.getByRole("table", { name: "The plan's money" });
+  await expect(money.getByRole("columnheader", { name: "Margin" })).toBeVisible();
+  await expect(money.getByRole("row", { name: /Oct 2026/ })).toContainText("₹");
   await sign(page, "supply review");
 
   // 4 pre-S&OP and 5 the executive meeting take their minutes

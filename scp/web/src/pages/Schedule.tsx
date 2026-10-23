@@ -20,7 +20,8 @@ type Seqs = Record<string, string[]>;
 const sequences = (res: ScheduleResult): Seqs => Object.fromEntries(res.resources.map((r) => [r.id, r.sequence]));
 
 const RULE_NAME: Record<string, string> = {
-  edd: "Earliest due date", spt: "Shortest job first", slack: "Least slack", campaign: "Campaigns", backward: "Backward (just in time)",
+  edd: "Earliest due date", spt: "Shortest job first", slack: "Least slack", cr: "Critical ratio", campaign: "Campaigns",
+  backward: "Backward (just in time)",
 };
 
 // ---- time helpers: engine times are clock hours from the origin (planning start, 00:00) -----------

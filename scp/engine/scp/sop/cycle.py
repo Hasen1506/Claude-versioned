@@ -21,9 +21,10 @@ from ..model import Dataset
 from ..model.common import BucketSize, Out
 from ..plan.rates import independent_demand
 from ..time import Buckets
-from ..validate import validate
+from ..validate import has_errors, validate
 from ..versions import VersionError
 from ..versions.store import Store, get_store
+from .horizon import extend
 from .plan import run_sop
 
 STEPS = ("data", "demand", "supply", "pre", "exec")
@@ -62,6 +63,9 @@ class MonthFigures(Out):
     demand_revenue: float
     supply_qty: float | None = None
     supply_revenue: float | None = None
+    supply_cost: float | None = None    # supply steps: purchase, production, transport, holding, overtime (N364)
+    supply_margin: float | None = None  # supply revenue − supply cost
+    stock_value: float | None = None    # stock at unit value at the month's end
 
 
 class FamilyFigures(Out):
@@ -106,6 +110,9 @@ def figures(ds: Dataset, step: str) -> Figures:
     if step not in STEPS:
         raise VersionError(f"no step '{step}'", 404)
     issues = validate(ds)
+    longer: list[str] = []
+    if not has_errors(issues):
+        ds, longer = extend(ds)      # over the S&OP horizon, the forecast beyond the weekly plan's added (N360)
     bk = _months(ds)
     T = len(bk)
     keys = [b.start.strftime("%Y-%m") for b in bk]
@@ -161,6 +168,8 @@ def figures(ds: Dataset, step: str) -> Figures:
 
     sq: list[float] | None = None
     sr: list[float] | None = None
+    sc: list[float] | None = None
+    sv: list[float] | None = None
     if step in SUPPLY:
         res = run_sop(ds.model_copy(update={"sop": ds.sop.model_copy(update={"bucket": BucketSize.MONTH})}))
         if not res.ok:
@@ -178,6 +187,8 @@ def figures(ds: Dataset, step: str) -> Figures:
                     if priced:
                         sr[t] += s * line.price
                         f[5] += s * line.price
+            sc = [m.cost for m in res.money[:T]] + [0.0] * (T - len(res.money))
+            sv = [m.stock_value for m in res.money[:T]] + [0.0] * (T - len(res.money))
             out.fill_rate = res.kpis.fill_rate if res.kpis else None
             out.limits = [b.label for b in res.binding[:3]]
             k = ds.sop.demand_factor
@@ -195,7 +206,10 @@ def figures(ds: Dataset, step: str) -> Figures:
         out.months.append(MonthFigures(
             month=keys[t], label=label, share=round(share, 4), budget_qty=round(bq[t], 4),
             budget_revenue=round(br[t], 2), demand_qty=round(dq[t], 4), demand_revenue=round(dr[t], 2),
-            supply_qty=None if sq is None else round(sq[t], 4), supply_revenue=None if sr is None else round(sr[t], 2)))
+            supply_qty=None if sq is None else round(sq[t], 4), supply_revenue=None if sr is None else round(sr[t], 2),
+            supply_cost=None if sc is None else round(sc[t], 2),
+            supply_margin=None if sr is None or sc is None else round(sr[t] - sc[t], 2),
+            stock_value=None if sv is None else round(sv[t], 2)))
     for name in sorted(fam):
         v = fam[name]
         out.families.append(FamilyFigures(
@@ -204,6 +218,7 @@ def figures(ds: Dataset, step: str) -> Figures:
             supply_revenue=None if sr is None else round(v[5], 2)))
     if not ds.budgets:
         out.notes.append("No budget in the data: add one under Data → Budgets to see the plan against it.")
+    out.notes += longer
     return out
 
 

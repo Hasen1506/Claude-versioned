@@ -27,6 +27,10 @@ class SopSettings(Model):
     ss_shortfall_rate_per_day: float = Unit(
         "fraction", le=1, default=0.002,
         description="Penalty per unit per day below the safety-stock target, as a share of unit value")
+    horizon_months: int | None = Field(
+        None, ge=1, le=36,
+        description="How far the S&OP plan looks, in months (18 to 24 is usual). Beyond the weekly plan's horizon its "
+                    "demand is the statistical and consensus forecast. Empty: as far as the weekly plan")
     allow_overtime: bool = Field(True, description="Let the plan buy overtime hours up to each resource's limit")
     # what-if levers: scenarios are the same dataset with different levers
     demand_factor: float = Unit("ratio", le=10, default=1.0, description="Scenario: scale all demand (1 = as planned)")

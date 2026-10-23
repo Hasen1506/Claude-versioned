@@ -131,13 +131,15 @@ owner from the screens only (`e2e/persona-day.spec.ts`): firming moved to *Suppl
 its own rail item, *Work waiting, by job* on Home and *To collect and pay* on Money, *Goods in & out* by place and day
 for the storekeeper; firming and opening Home calculate everything again. Next: 8.5, a practitioner's review.
 
-In progress: 8.5 (N358–N365). A desk review first, the matrix and the day read as a planner, a scheduler and an S&OP
+Done as a desk review: 8.5 (N358–N366). A desk review first, the matrix and the day read as a planner, a scheduler and an S&OP
 lead would read them; a review by someone who plans for a living is still owed. It found the matrix had skipped
 scheduling, the S&OP process and the measures (now CONFORMANCE §9–§11), that *Inventory policy* compared a cycle or
 fill-rate target with orders on time (now measured as the target is set), and that the measures had no unit fill rate
-or order cycle time, and the shop floor no critical ratio (all three added). Open: the S&OP plan's horizon, tied to
-the weekly plan's 182 days (N360, next); the S&OP cycle's money view (N364); a second day for a demand planner, a
-scheduler and the order desk (N363).
+or order cycle time, and the shop floor no critical ratio (all three added). Then the S&OP horizon in months, past the
+weekly plan's (N360). Then the plan's money in the cycle (N364), and a second working day for the demand planner,
+the planner's reschedule messages, the order desk and the scheduler (N363, N366; `e2e/persona-day-2.spec.ts`), with
+Home's *Work waiting* gaining their jobs. Still owed: the same reading by someone who plans for a living; the matrix,
+the two days and these findings are the pack to hand them.
 
 | # | What | How |
 |---|---|---|

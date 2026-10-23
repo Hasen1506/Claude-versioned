@@ -100,7 +100,7 @@ planning", and Vollmann et al. *Manufacturing Planning and Control*. Audited 23 
 | M4 | Lot sizes and their modifiers (min, max, rounding, full batches) | `plan/lotsize` | Products at places | test_mrp, test_planning_depth | there |
 | M5 | Firm planned orders, planning time fence, firming types | `fence_end`, firming 1–4 (EP 2.3) | Supply → Firm orders (N350) | test_s4_guide_part_c | there |
 | M6 | Demand time fence (master scheduling): inside it only customer orders count, the forecast is ignored | `demand_time_fence_days` on the product at a place (and its MRP group; customer channels follow it): forecast left after consumption inside it is not planned; under make to stock the orders inside it are; DEMAND_TIME_FENCE says how much | Products at places → strategy; Supply plan → messages | test_mrp::test_inside_the_demand_time_fence… (hand-worked: 30.71, 35, 70; working days); e2e demand-fence | there (8.3) |
-| M7 | Exception messages: reschedule in / out, cancel, past due, below safety stock | `_reschedule_in`, `_reschedule_out`, exceptions | Home → inbox; Supply plan → situations | test_s4_backtest_b, test_mrp | there |
+| M7 | Exception messages: reschedule in / out, cancel, past due, below safety stock; each acted on | `_reschedule_in`, `_reschedule_out`, exceptions; one-click expedite and push-out (`tower/fix`, N366) | Home → inbox; Supply plan → situations; Performance → Problems → *Try it* | test_s4_backtest_b, test_mrp, test_roadmap_fix (MO-100455 to 10 Oct); e2e persona-day-2 | there |
 | M8 | Rescheduling horizon and tolerance | EP 2.1 | Settings; MRP groups | test_s4_guide_part_c | there |
 | M9 | Pegging (single and full), sales-order stock, fixed pegging | `_peg`, EP 2.5 | Products at places → where needed; trace | test_mrp, test_planning_strategies | there |
 | M10 | Strategies: make to stock, to order, assemble to order, planning with final assembly; consumption windows | `plan/consumption`, strategies | Products at places → strategy | test_planning_strategies, test_mrp | there |
@@ -357,15 +357,17 @@ Added in 8.5: the audit gave the monthly process one row (D14). Read against the
 | P5 | Unconstrained demand beside the constrained supply plan, with the gap and the limits that cause it | `figures` supply steps, `limits`, `fill_rate` | S&OP cycle → supply review | test_sop_cycle | there |
 | P6 | Scenarios compared in the supply review (demand up, a shift added) | `sop` levers; stored versions as columns (EP 5.3) | Capacity plan; Versions | test_sop, test_whatif | there: compared on Capacity plan, not inside the cycle page |
 | P7 | Decisions recorded with the sign-off (minutes) | `MINUTES` for pre and exec | S&OP cycle | test_sop_cycle | there |
-| P8 | A horizon of 18 to 24 months, monthly | `sop` buckets over `settings.horizon_days` (182 on the examples) | Capacity plan | — | partial: the S&OP plan sees only the operational horizon |
-| P9 | Financial view: margin, inventory value and cash by month beside the volume plan | revenue only in the cycle; margin, stock and cash on Money | Money | test_finance | partial: the executive step shows revenue, not margin or stock |
+| P8 | A horizon of 18 to 24 months, monthly | `sop.horizon_months`: past the weekly plan's horizon, the consensus forecast run out on the same grid (`sop/horizon`) | Capacity plan → settings; S&OP cycle figures | test_sop_horizon (70 a week: 280 inside 28 days, 630 after, 910 in 3 months; a week split at the plan's end) | there (8.5, N360) |
+| P9 | Financial view: margin, inventory value and cash by month beside the volume plan | `SopResult.money` per bucket (revenue, cost, margin, stock at the end); the cycle's supply steps carry it | S&OP cycle → *The plan's money* | test_sop_horizon (1,000 revenue, 300 × 0.2 × 27 ÷ 365 to keep, 300 of stock) | there (8.5, N364): cash by week stays on Money |
 | P10 | The month's plan released to the operational plan (build-ahead targets) | `sop/release` | Capacity plan → release | test_sop | there |
 | P11 | Product review: new and dying products as a step | NPI rules, discontinuation exist in demand and MRP | Demand | — | missing as a step |
 | P12 | How well S&OP works: plan stability, forecast accuracy by family, the plan against what happened | `plan_stability`, forecast KPIs | Performance | test_tower | partial: not per cycle |
 
 **What this section says:** the process and its sign-offs are there; what an S&OP lead would object to first is P8.
-A plant that decides on a new press or a second supplier needs to see a year and more ahead, and the S&OP plan stops
-where the weekly plan stops. 7 of 12 there, 4 partial, 1 missing.
+A plant that decides on a new press or a second supplier needs to see a year and more ahead, and the S&OP plan stopped
+where the weekly plan stops. 7 of 12 there at the audit, 4 partial, 1 missing. **After P8:** 8 of 12 there; Kaveri
+at 18 months plans 19 months to March 2028, its demand there from the consensus forecast of 9 series. **After P9:**
+9 of 12 there, 2 partial (P6, P12), 1 missing (P11).
 
 ## 11. Performance measures
 

@@ -3953,6 +3953,23 @@ export interface components {
              */
             note: string;
         };
+        /**
+         * BucketMoney
+         * @description One bucket's money in the constrained plan (N364): what its sales bring in, what it costs to make, buy, move,
+         *     keep and work overtime for (penalties left out: they are the model's, not money), and the stock it ends with.
+         */
+        BucketMoney: {
+            /** Bucket */
+            bucket: number;
+            /** Revenue */
+            revenue: number;
+            /** Cost */
+            cost: number;
+            /** Margin */
+            margin: number;
+            /** Stock Value */
+            stock_value: number;
+        };
         /** BucketOut */
         BucketOut: {
             /** Index */
@@ -10018,6 +10035,12 @@ export interface components {
             supply_qty: number | null;
             /** Supply Revenue */
             supply_revenue: number | null;
+            /** Supply Cost */
+            supply_cost: number | null;
+            /** Supply Margin */
+            supply_margin: number | null;
+            /** Stock Value */
+            stock_value: number | null;
         };
         /**
          * MovementType
@@ -16063,6 +16086,11 @@ export interface components {
              */
             binding: components["schemas"]["Binding"][];
             economics: components["schemas"]["Economics"] | null;
+            /**
+             * Money
+             * @default []
+             */
+            money: components["schemas"]["BucketMoney"][];
             kpis: components["schemas"]["SopKpis"] | null;
             solver: components["schemas"]["SolverStats"] | null;
             /**
@@ -16103,6 +16131,11 @@ export interface components {
              * @default 0.002
              */
             ss_shortfall_rate_per_day: number;
+            /**
+             * Horizon Months
+             * @description How far the S&OP plan looks, in months (18 to 24 is usual). Beyond the weekly plan's horizon its demand is the statistical and consensus forecast. Empty: as far as the weekly plan
+             */
+            horizon_months?: number | null;
             /**
              * Allow Overtime
              * @description Let the plan buy overtime hours up to each resource's limit

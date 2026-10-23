@@ -214,6 +214,7 @@ function Figures({ f, frozen, unit, setUnit }: { f: CycleFigures; frozen: boolea
       {f.step === "data" && <span>{f.blocking ? <Badge sev="error">{f.blocking} blocking</Badge> : <Badge sev="ok">No blocking problems</Badge>} {f.warnings} warnings{f.history_to ? `; sales history to ${f.history_to}` : "; no sales history"}.</span>}
     </div>
     {table("Month", rows, true)}
+    {supply && f.months.some((m) => m.supply_cost != null) && <MoneyTable f={f} />}
     {f.families.length > 1 && table("Product family", f.families.map((x) => ({ key: x.family, label: x.family || "No family / the company", ...pick(x) })), false)}
     {(f.unpriced.length > 0 || f.notes.length > 0) && <ul className="small faint" style={{ margin: 0, paddingLeft: 18 }}>
       {f.unpriced.length > 0 && <li>No selling price for {f.unpriced.join(", ")}: their units count, their revenue does not.</li>}
@@ -221,6 +222,20 @@ function Figures({ f, frozen, unit, setUnit }: { f: CycleFigures; frozen: boolea
       {f.notes.map((n) => <li key={n}>{n}</li>)}
     </ul>}
   </div>;
+}
+
+/** The supply plan's money month by month (N364): what it brings in, costs, earns, and the stock it leaves. */
+function MoneyTable({ f }: { f: CycleFigures }) {
+  const m = (v: number | null | undefined) => money(v ?? 0, f.currency);
+  const t = (k: "supply_revenue" | "supply_cost" | "supply_margin") => f.months.reduce((a, x) => a + (x[k] ?? 0), 0);
+  return <div className="table-wrap"><table className="t" aria-label="The plan's money">
+    <thead><tr><th>The plan's money</th><th className="num">Revenue</th><th className="num">Cost</th><th className="num">Margin</th><th className="num">Stock at the month's end</th></tr></thead>
+    <tbody>
+      {f.months.map((x) => <tr key={x.month}><td style={{ whiteSpace: "nowrap" }}>{x.label}</td><td className="num">{m(x.supply_revenue)}</td>
+        <td className="num">{m(x.supply_cost)}</td><td className="num">{m(x.supply_margin)}</td><td className="num">{m(x.stock_value)}</td></tr>)}
+      <tr className="total"><td><b>Total</b></td><td className="num"><b>{m(t("supply_revenue"))}</b></td><td className="num"><b>{m(t("supply_cost"))}</b></td>
+        <td className="num"><b>{m(t("supply_margin"))}</b></td><td className="num faint small">cost: buying, making, moving, keeping, overtime</td></tr>
+    </tbody></table></div>;
 }
 
 /** The month's path: each signed step's plan against the budget, demand review to executive. */
