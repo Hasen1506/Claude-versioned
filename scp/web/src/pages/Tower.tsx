@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, FixEdit, FixResult, Kpi, TowerResult, WorkItem, WorkItemEntry } from "../api/types";
 import {
@@ -386,14 +386,23 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
     && (!lateOnly || w.breached));
   const sel = items.find((w) => w.id === selId) ?? null;
 
-  const patch = async (w: WorkItem, p: Parameters<typeof api.towerItem>[1]) => {
+  // one change at a time, each applied to the worklist as it stands when its answer comes: an owner typed and "Seen"
+  // clicked straight after are two changes, and the later answer must not put back the list the earlier one started from
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const patch = (w: WorkItem, p: Parameters<typeof api.towerItem>[1]) => {
     setErr(null);
-    try {
-      const u = await api.towerItem(w.id, { ...p, sla_days: (ds.tower?.sla_days ?? {}) as Record<string, number> });
-      store.put("tower", { ...res, worklist: res.worklist.map((x) => (x.id === u.id ? { ...u, age_days: x.age_days, breached: x.breached } : x)) }, rev);
-    } catch (e) {
-      setErr(String(e));
-    }
+    queue.current = queue.current.then(async () => {
+      try {
+        const u = await api.towerItem(w.id, { ...p, sla_days: (ds.tower?.sla_days ?? {}) as Record<string, number> });
+        const cur = store.get().runs.tower;
+        const now = cur.data ?? res;
+        store.put("tower", { ...now, worklist: now.worklist.map((x) => (x.id === u.id ? { ...u, age_days: x.age_days, breached: x.breached } : x)) },
+          cur.data && cur.revision !== null ? cur.revision : rev);
+      } catch (e) {
+        setErr(String(e));
+      }
+    });
+    return queue.current;
   };
 
   const byOwner = useMemo(() => {

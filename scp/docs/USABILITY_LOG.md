@@ -1322,6 +1322,7 @@ on a desktop and at phone width. Phases F–J are the proposal at the end of thi
 What held up: the network builder, product wizard, stock and demand uploads (once the columns matched), the
 checklist, plan everything, requisitions to a purchase order with a late confirmation that planning used at once, the
 roll-forward report, and every page at phone width except *Machines & shifts* (no page scrolls sideways).
+| N328 | On the Problems list, an owner typed and "Seen" clicked straight after could lose the acknowledgement: each change wrote back the list it started from, so the owner's answer, arriving last, put the item back to open (seen in CI). | Serious | **Fixed.** Changes go one at a time, each applied to the list as it stands when its answer comes; a browser test holds the owner's answer back to make it come last. |
 
 ### Proposed next phases
 
