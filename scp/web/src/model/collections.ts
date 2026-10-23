@@ -10,7 +10,7 @@ export type CollectionKey =
   | "movements" | "closed_orders" | "accuracy" | "forecast_snapshots" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
   | "customers" | "payment_terms" | "sales_orders" | "quotations" | "deliveries" | "invoices" | "returns"
   | "contracts" | "supplier_invoices" | "supplier_returns" | "budgets"
-  | "storage_types" | "bins" | "putaway_rules" | "carriers";
+  | "storage_types" | "bins" | "putaway_rules" | "carriers" | "entities" | "transfer_prices";
 
 export interface Column {
   label: string;
@@ -427,6 +427,27 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Id", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
       { label: "Rates", get: (o) => ((o.rates as Obj[]) ?? []).map((r) => `${s(r.lane) || `every ${s(r.mode)} lane`}`).join(", ") },
       { label: "Pays in days", get: (o) => o.payment_days as number, num: true }, { label: "Blocked", get: (o) => (o.blocked ? "yes" : "") },
+    ],
+  },
+  {
+    key: "entities", label: "Companies of the group", singular: "company of the group", defName: "LegalEntity", issueType: "entity",
+    group: "Network", keyOf: (o) => s(o.id),
+    blurb: "The group's other companies, each with its own books, GSTIN and invoice series. A place belongs to one of them; a place without one belongs to this company.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) }, { label: "GSTIN", get: (o) => s(o.tax_id) },
+      { label: "State", get: (o) => s(o.region) }, { label: "Invoices start", get: (o) => s(o.invoice_prefix) || `IC-${s(o.id)}/` },
+      { label: "Places", get: (o, ds) => (ds.locations ?? []).filter((l) => l.entity === o.id).map((l) => l.id).join(", ") },
+    ],
+  },
+  {
+    key: "transfer_prices", label: "Transfer prices", singular: "transfer price", defName: "TransferPrice", issueType: "transfer_price",
+    group: "Network", keyOf: (o) => s(o.id),
+    blurb: "What one company of the group charges another for what it ships: a fixed price, the cost plus a mark-up, or the selling price less a margin. A product's rule goes before the rule for all products, a named seller and buyer before any.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Seller", get: (o) => s(o.seller) || "any" }, { label: "Buyer", get: (o) => s(o.buyer) || "any" },
+      { label: "Product", get: (o) => s(o.product) || "every product" },
+      { label: "Price", get: (o) => o.method === "fixed" ? `fixed ${s(o.price)}` : o.method === "resale_minus" ? `selling price less ${Math.round(Number(o.markup ?? 0) * 1000) / 10} %` : `cost plus ${Math.round(Number(o.markup ?? 0) * 1000) / 10} %` },
+      { label: "From", get: (o) => s(o.valid_from) },
     ],
   },
   {

@@ -8,6 +8,11 @@ A product's price control (S/4 MBEW-VPRSV) decides how:
   left, production at its planned value; every issue goes out at the average. An invoice that differs from the order
   moves the average by the part of the difference still in stock; the part already gone is a price difference.
 
+With several companies in the network (Enterprise 7.3) each keeps its own books: a transfer to another company comes
+in at the transfer price (what it was billed at, else the rule's price), and the company that shipped it sold it at
+that price. The group's books (``books="group"``) keep the transfer at what it was worth where it left, so the
+difference between the two is the profit still in stock between companies.
+
 Planning is not changed by any of this: it keeps valuing stock at the planned unit value (holding cost, lot sizes),
 as S/4 MRP does whatever the price control.
 """
@@ -24,6 +29,7 @@ from ..plan.costing import freight_per_unit, fx, handling, roll_up
 from ..plan.leadtime import supplier_lane
 from ..purchasing.payables import lines_index
 from .stock import before
+from .transfer_price import crossing, entity_of, price, shipment_prices, source_of
 
 EPS = 1e-9
 OUT_TYPES = {MovementType.ISSUE, MovementType.SALE, MovementType.TRANSFER_OUT, MovementType.SCRAP, MovementType.RETURN}
@@ -31,6 +37,7 @@ OUT_TYPES = {MovementType.ISSUE, MovementType.SALE, MovementType.TRANSFER_OUT, M
 
 class ValuationRow(Out):
     location: str
+    entity: str = ""                       # the company of the group it belongs to ("" = the company itself)
     product: str
     control: PriceControl
     qty: float
@@ -73,6 +80,10 @@ class ValuationView(Out):
     cost_of_sales: float                   # value of what was sold, at what it was worth when it left
     count_differences: float               # value of count differences (+ found)
     scrapped: float
+    books: str = "entity"                  # entity: each company's own books; group: transfers at what left
+    intercompany_sales: float = 0.0        # shipped to other companies, at the transfer price
+    intercompany_cost: float = 0.0         # what those shipments were worth where they left
+    in_transit: float = 0.0                # shipped and not yet received, at what it will come in at
     notes: list[str] = []
 
 
@@ -128,6 +139,9 @@ class _Books:
         self.cogs = self.counts = self.scrapped = 0.0
         self.at_move: dict[str, float] = {}           # movement id → value per unit it was posted at
         self.shipped: dict[str, list[float]] = defaultdict(list)   # transfer → [qty, value] that left
+        self.ic_price: dict[str, float] = {}          # shipment to another company → its transfer price
+        self.entity_books = False                     # each company's own books (several companies)
+        self.ic_sales = self.ic_cost = 0.0
 
     def node(self, loc: str, prod: str) -> _Node:
         n = self.nodes.get((loc, prod))
@@ -233,20 +247,19 @@ class _Books:
             self.book(day, loc, prod, what, ref, 0.0, to_stock, before)
 
 
-def value_stock(ds: Dataset, as_of: date | None = None, limit: int = 500) -> ValuationView:
-    """Every place's stock in the books on ``as_of`` (default: the latest posting, the planning start at the
-    earliest: the week under way is in the books): its quantity, value and price, the postings that moved the value,
-    and the price differences booked aside."""
-    day = as_of or max([ds.settings.planning_start, *(m.date for m in ds.movements),
-                        *(i.date for i in ds.supplier_invoices if not i.cancelled)])
+def run_books(ds: Dataset, day: date, books: str = "entity") -> tuple[_Books, dict[Node, float]]:
+    """Every posting up to ``day`` through the books; what each movement was valued at is in ``at_move``."""
     std = standards(ds)
-    books = _Books(ds, std)
+    books_ = _Books(ds, std)
     lines = lines_index(ds, outside=False)
     po = {lid: _landed(ds, lid, ln) for lid, ln in lines.items() if ln.price is not None}
     kinds = {r.id: r.kind.value for r in ds.receipts}
     kinds.update({c.id: c.kind for c in ds.closed_orders if c.id not in kinds})
     journal = before(ds, day + timedelta(days=1))
     by_id = {m.id: m for m in journal}
+    if books != "group" and ds.entities:
+        books_.entity_books = True
+        books_.ic_price = shipment_prices(ds, std, journal)
 
     events: list[tuple[date, int, int, object]] = [(m.date, 0, i, m) for i, m in enumerate(journal)]
     for i, inv in enumerate(ds.supplier_invoices):
@@ -255,27 +268,39 @@ def value_stock(ds: Dataset, as_of: date | None = None, limit: int = 500) -> Val
     events.sort(key=lambda e: (e[0], e[1], e[2]))
     for _day, kind, _, ev in events:
         if kind == 0:
-            _movement(books, ev, po, kinds, by_id)        # type: ignore[arg-type]
+            _movement(books_, ev, po, kinds, by_id)        # type: ignore[arg-type]
         else:
-            _invoice(books, ds, ev, po, lines)
+            _invoice(books_, ds, ev, po, lines)
 
+    return books_, std
+
+
+def value_stock(ds: Dataset, as_of: date | None = None, limit: int = 500, books: str = "entity") -> ValuationView:
+    """Every place's stock in the books on ``as_of`` (default: the latest posting, the planning start at the
+    earliest: the week under way is in the books): its quantity, value and price, the postings that moved the value,
+    and the price differences booked aside. ``books``: "entity" (each company's own) or "group" (consolidated)."""
+    day = as_of or max([ds.settings.planning_start, *(m.date for m in ds.movements),
+                        *(i.date for i in ds.supplier_invoices if not i.cancelled)])
+    books_, std = run_books(ds, day, books)
     rows = []
-    for (loc, prod), n in sorted(books.nodes.items()):
+    for (loc, prod), n in sorted(books_.nodes.items()):
         if abs(n.qty) <= EPS and abs(n.value) <= 0.005 and not n.changes:
             continue
-        rows.append(ValuationRow(location=loc, product=prod, control=n.control, qty=round(n.qty, 6),
-                                 value=round(n.value, 2), price=round(n.price, 4), standard=round(n.standard, 4),
+        rows.append(ValuationRow(location=loc, entity=entity_of(ds, loc), product=prod, control=n.control,
+                                 qty=round(n.qty, 6), value=round(n.value, 2), price=round(n.price, 4), standard=round(n.standard, 4),
                                  changes=n.changes))
     notes = []
     if not std:
         notes.append("The network cannot be built yet: standard prices are the products' standard costs.")
-    ents = sorted(books.entries, key=lambda e: e.date, reverse=True)
+    ents = sorted(books_.entries, key=lambda e: e.date, reverse=True)
     return ValuationView(
         as_of=day, currency=ds.settings.currency, control=ds.execution.price_control, rows=rows,
-        entries=ents[:limit], differences=sorted(books.diffs, key=lambda x: x.date, reverse=True)[:limit],
-        total_value=round(sum(r.value for r in rows), 2), total_differences=round(sum(x.amount for x in books.diffs), 2),
-        cost_of_sales=round(books.cogs, 2), count_differences=round(books.counts, 2), scrapped=round(books.scrapped, 2),
-        notes=notes)
+        entries=ents[:limit], differences=sorted(books_.diffs, key=lambda x: x.date, reverse=True)[:limit],
+        total_value=round(sum(r.value for r in rows), 2), total_differences=round(sum(x.amount for x in books_.diffs), 2),
+        cost_of_sales=round(books_.cogs, 2), count_differences=round(books_.counts, 2), scrapped=round(books_.scrapped, 2),
+        books="group" if books == "group" else "entity", intercompany_sales=round(books_.ic_sales, 2),
+        intercompany_cost=round(books_.ic_cost, 2),
+        in_transit=round(sum(v for q, v in books_.shipped.values() if q > EPS), 2), notes=notes)
 
 
 def _landed(ds: Dataset, lid: str, ln) -> _Line:
@@ -319,6 +344,15 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
             b.into(day, loc, prod, q, unit if unit is not None else b.node(loc, prod).price, what, m.reversal_of)
             if orig is not None and orig.type is MovementType.RETURN and orig.reference in po:
                 po[orig.reference].received += q
+            if orig is not None and orig.type is MovementType.TRANSFER_OUT and orig.reference in b.shipped:
+                left = unit if unit is not None else b.node(loc, prod).price
+                each = b.ic_price.get(orig.id, left)
+                sq, sv = b.shipped[orig.reference]
+                take = min(q, sq)
+                b.shipped[orig.reference] = [sq - take, sv - take * each]
+                if orig.id in b.ic_price:
+                    b.ic_sales -= take * each
+                    b.ic_cost -= take * left
         return
     q = abs(m.qty)
     if m.type is MovementType.OPENING:
@@ -346,7 +380,14 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
             take = min(q, sq)
             b.shipped[ref] = [sq - take, sv - take * unit]
             b.at_move[m.id] = b.into(day, loc, prod, q, unit, "transfer receipt", ref,
+                                     "transfer at its transfer price, against the standard" if b.ic_price else
                                      "transfer at what it was worth where it left, against the standard")
+        elif kind == "transfer" and b.entity_books and crossing(b.ds, frm := source_of(b.ds, m) or "", loc) == "entity":
+            # from another company with no shipment in the journal (on the way at go-live): at the transfer price,
+            # billed by the old system
+            unit = price(b.ds, b.std, frm, loc, prod, day)[0]
+            b.at_move[m.id] = b.into(day, loc, prod, q, unit, "transfer receipt", ref,
+                                     "transfer from another company at its transfer price, against the standard")
         else:                                              # production (or no order known): at the planned value
             b.at_move[m.id] = b.into(day, loc, prod, q, b.node(loc, prod).standard,
                                      "production receipt" if kind == "production" else "receipt", ref or None)
@@ -373,7 +414,11 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
             b.scrapped += v
         elif m.type is MovementType.TRANSFER_OUT and m.reference:
             sq, sv = b.shipped.get(m.reference, [0.0, 0.0])
-            b.shipped[m.reference] = [sq + q, sv + v]
+            tp = b.ic_price.get(m.id)
+            if tp is not None:                             # sold to another company: it arrives at the price
+                b.ic_sales += q * tp
+                b.ic_cost += v
+            b.shipped[m.reference] = [sq + q, sv + (q * tp if tp is not None else v)]
 
 
 def _invoice(b: _Books, ds: Dataset, inv, po: dict[str, _Line], lines) -> None:

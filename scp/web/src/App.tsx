@@ -18,6 +18,7 @@ const Selling = lazy(() => import("./pages/Selling").then((m) => ({ default: m.S
 const Execution = lazy(() => import("./pages/Execution").then((m) => ({ default: m.Execution })));
 const Warehouse = lazy(() => import("./pages/Warehouse").then((m) => ({ default: m.Warehouse })));
 const Transport = lazy(() => import("./pages/Transport").then((m) => ({ default: m.Transport })));
+const Group = lazy(() => import("./pages/Group").then((m) => ({ default: m.Group })));
 const Outside = lazy(() => import("./pages/Outside").then((m) => ({ default: m.Outside })));
 const Scan = lazy(() => import("./pages/Scan").then((m) => ({ default: m.Scan })));
 const Finance = lazy(() => import("./pages/Finance").then((m) => ({ default: m.Finance })));
@@ -120,6 +121,7 @@ export function App() {
           : page === "buying" ? <Buying route={route} />
           : page === "selling" ? <Selling route={route} />
           : page === "finance" ? <Finance route={route} />
+          : page === "group" ? <Group route={route} />
           : page === "tower" ? <Tower route={route} />
           : page === "versions" ? <Versions />
           : page === "whatif" ? <WhatIf />

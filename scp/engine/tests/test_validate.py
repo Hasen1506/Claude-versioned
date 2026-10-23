@@ -262,6 +262,20 @@ def _jobwork_due(d):
                       "sent_on": "2024-01-01", "lines": [{"product": "B", "qty": 5, "value": 1, "location": "P"}]}]
 
 
+def _intercompany_misfit(d):
+    d["entities"] = [{"id": "E2", "name": "Sister company"}]
+    d["locations"][1]["entity"] = "E2"                         # the supplier S
+
+
+def _transfer_price_missing(d):
+    d["entities"] = [{"id": "E2", "name": "Sister company"}]
+    d["locations"].append({"id": "W", "type": "dc", "entity": "E2"})
+    d["lanes"] = [{"id": "L-PW", "origin": "P", "destination": "W", "modes": [{"mode": "truck_ftl", "transit_days": 1}]}]
+    d["location_products"].append({"location": "W", "product": "A"})
+    d["receipts"] = [{"id": "TR-1", "kind": "transfer", "location": "W", "product": "A", "qty": 5,
+                      "due_date": "2026-01-10", "source": "L-PW"}]
+
+
 def _reversal_unknown(d):
     d["movements"] = [{"id": "GM-1", "date": "2026-01-01", "type": "receipt", "location": "P", "product": "B",
                        "qty": 5, "reversal_of": "GM-0"}]
@@ -310,6 +324,7 @@ MUTATORS = {
     "SERIALS_COUNT": _serials_count, "COLD_CHAIN_LANE": _cold_chain,
     "PLANNING_MATERIAL_CHAIN": _planning_chain, "VARIANT_FORECAST": _variant_forecast, "WH_MISFIT": _wh_misfit, "TM_MISFIT": _tm_misfit,
     "OUTSIDE_MISFIT": _outside_misfit, "JOBWORK_DUE": _jobwork_due,
+    "INTERCOMPANY_MISFIT": _intercompany_misfit, "TRANSFER_PRICE_MISSING": _transfer_price_missing,
 }
 
 

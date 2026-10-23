@@ -25,6 +25,7 @@ const supply: NavPage = { id: "plan", label: "Supply plan", question: "What do w
 const promise: NavPage = { id: "promise", label: "Promise dates", question: "What can we promise each customer, and when?", run: "promise" };
 const actuals: NavPage = { id: "execution", label: "Stock & actuals", question: "What actually happened: goods received, used and shipped, and the stock on hand?", run: "actuals" };
 const buying: NavPage = { id: "buying", label: "Buying", question: "What should we order, from whom, and where are our orders?", run: "purchasing" };
+const money: NavPage = { id: "finance", label: "Money", question: "What does the plan cost and earn?", run: "finance" };
 const setup: NavPage = { id: "setup", label: "Guided setup", question: "What is my company made of, and what's still missing?" };
 
 // Nine places to go, one per job: plan, serve customers, buy, run the stock, see the results, set up. A job with
@@ -57,7 +58,10 @@ export const NAV: NavGroup[] = [
     ] },
   ] },
   { label: "Results", items: [
-    { id: "finance", label: "Money", question: "What does the plan cost and earn?", run: "finance" },
+    { ...money, tabs: [
+      money,
+      { id: "group", label: "Group companies", question: "What do the group's companies sell each other, at what price, and what profit is still in stock between them?", optional: true },
+    ] },
     { id: "tower", label: "Performance", question: "Are we hitting our targets, and what needs following up?", run: "tower" },
   ] },
   { label: "Setup", items: [

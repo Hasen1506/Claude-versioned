@@ -21,6 +21,7 @@ export const KEYS: Record<string, string[]> = {
   storage_types: ["location", "id"], bins: ["location", "id"], putaway_rules: ["location", "product"],
   warehouse_tasks: ["id"], waves: ["id"], carriers: ["id"], freight_orders: ["id"],
   third_party_orders: ["id"], challans: ["id"], shipping_notices: ["id"],
+  entities: ["id"], transfer_prices: ["id"], intercompany_invoices: ["id"],
 };
 
 /** Parts compared as one object (scp/versions/diff.py SINGLE). */

@@ -8,7 +8,7 @@ import type {
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
   User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
-  WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, CyclePlan, PutawayProposal, PickList, WarehouseActionResponse,
+  WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, IntercompanyView, IntercompanyAction, IntercompanyActionInput, IntercompanyActionResponse, CyclePlan, PutawayProposal, PickList, WarehouseActionResponse,
   TransportView, TransportAction, TransportActionResponse,
   OutsideView, OutsideAction, OutsideActionInput, OutsideActionResponse,
   PortalView, PortalAction, PortalActionInput, PortalActionResponse, PortalLink,
@@ -347,7 +347,13 @@ export const api = {
   salesAct: (dataset: Dataset, action: SalesAction, extra: SalesActionInput = {}) =>
     write<SalesActionResponse>("/api/sales/act", dataset, { action, ...extra }),
   /** Stock in the books: quantity, value and price per place, the postings that moved it, the price differences. */
-  valuation: (ds: Dataset) => planPost<ValuationView>("/api/valuation", ds),
+  valuation: (ds: Dataset, books: "entity" | "group" = "entity") =>
+    planPost<ValuationView>(`/api/valuation${books === "group" ? "?books=group" : ""}`, ds),
+  /** The companies of the group: transfers between them, billing, invoices and the profit in stock (Enterprise 7.3). */
+  intercompany: (ds: Dataset) => planPost<IntercompanyView>("/api/intercompany", ds),
+  /** Bill the shipments due between companies, or cancel an inter-company invoice. */
+  intercompanyAct: (dataset: Dataset, action: IntercompanyAction, extra: Partial<IntercompanyActionInput> = {}) =>
+    write<IntercompanyActionResponse>("/api/intercompany/act", dataset, { action, ...extra }),
   /** Cycle counting: each stocked product's ABC class, its last count and when it is next due (Enterprise 6.2). */
   cycleCounts: (ds: Dataset, location?: string) =>
     planPost<CyclePlan>(`/api/cycle-counts${location ? `?location=${encodeURIComponent(location)}` : ""}`, ds),

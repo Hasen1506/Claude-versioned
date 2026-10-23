@@ -31,10 +31,10 @@ def build() -> dict:
         "locations": [
             {"id": "PLANT", "name": "Preserving kitchen", "type": "plant"},
             {"id": "COPACK", "name": "Co-packer", "type": "plant"},
-            {"id": "DC", "name": "Distribution centre", "type": "dc"},
+            {"id": "DC", "name": "Distribution centre", "type": "dc", "entity": "SHOPS"},   # the farm-shop company's
             {"id": "CUST", "name": "Grocery chain", "type": "customer"},
             {"id": "SUP-F", "name": "Fruit farm (US)", "type": "supplier"},
-            {"id": "SUP-J", "name": "Jar & sugar merchant", "type": "supplier"},
+            {"id": "SUP-J", "name": "Jar & sugar merchant", "type": "supplier", "entity": "SHOPS"},  # not in the group
             {"id": "SUP-OLD", "name": "Former fruit supplier", "type": "supplier"},
         ],
         "products": [
@@ -115,7 +115,11 @@ def build() -> dict:
                      {"id": "PO-100-10", "kind": "purchase", "location": "PLANT", "product": "SUGAR", "qty": 40,
                       "due_date": "2026-07-09", "source": "PU-SUGAR", "po": "PO-100"},
                      {"id": "PO-200-10", "kind": "purchase", "location": "PLANT", "product": "FRUIT", "qty": 20,
-                      "due_date": "2026-07-09", "po": "PO-200"}],
+                      "due_date": "2026-07-09", "po": "PO-200"},
+                     # jam for the shops' DC, which belongs to another company of the group with no transfer price
+                     {"id": "TR-55", "kind": "transfer", "location": "DC", "product": "JAM", "qty": 20,
+                      "due_date": "2026-07-10", "source": "L-PD"}],
+        "entities": [{"id": "SHOPS", "name": "Crescent Farm Shops Ltd"}],
         "vendors": [{"supplier": "SUP-OLD", "blocked": True, "block_reason": "replaced by SUP-F"}],
         "purchase_orders": [{"id": "PO-100", "supplier": "SUP-F", "location": "PLANT", "order_date": "2026-07-01"},
                             {"id": "PO-200", "supplier": "SUP-OLD", "location": "PLANT", "order_date": "2026-06-20"}],
@@ -181,6 +185,7 @@ WARNINGS = {
     ("PLANNING_MATERIAL_CHAIN", "product", "LABEL-GOLD"), ("VARIANT_FORECAST", "demand", "PLANT/LABEL"),
     ("WH_MISFIT", "bin", "DC/A-01"), ("TM_MISFIT", "carrier", "CR-HAUL"),
     ("OUTSIDE_MISFIT", "challan", "JW-0012"), ("JOBWORK_DUE", "challan", "JW-0012"),
+    ("INTERCOMPANY_MISFIT", "location", "SUP-J"), ("TRANSFER_PRICE_MISSING", "receipt", "TR-55"),
 }
 
 

@@ -2217,7 +2217,8 @@ export interface paths {
         /**
          * Post Valuation
          * @description Stock in the books: each place's quantity, value and price (standard or moving average), the postings that
-         *     moved it and the price differences booked aside.
+         *     moved it and the price differences booked aside. With several companies, ``books=group`` values transfers
+         *     between them at what they cost the group instead of at their transfer prices.
          */
         post: operations["post_valuation_api_valuation_post"];
         delete?: never;
@@ -2464,6 +2465,48 @@ export interface paths {
          * @description Post what happened: ship a transfer, receive an order (with its parts issued), or count stock.
          */
         post: operations["post_posting_api_actuals_post_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/intercompany": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Intercompany
+         * @description The companies of the group: transfers between them at their transfer prices, the billing due list, the
+         *     inter-company invoices and the profit still in stock between them.
+         */
+        post: operations["post_intercompany_api_intercompany_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/intercompany/act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Intercompany Action
+         * @description Bill the shipments due between companies (an invoice per pair of places, a credit note for what came back),
+         *     or cancel an invoice.
+         */
+        post: operations["post_intercompany_action_api_intercompany_act_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4540,6 +4583,37 @@ export interface components {
             /** Qty */
             qty: number;
         };
+        /** Consolidation */
+        Consolidation: {
+            /** Stock Entities */
+            stock_entities: number;
+            /** Stock Group */
+            stock_group: number;
+            /** Transit Entities */
+            transit_entities: number;
+            /** Transit Group */
+            transit_group: number;
+            /** Unrealised */
+            unrealised: number;
+            /** Differences Entities */
+            differences_entities: number;
+            /** Differences Group */
+            differences_group: number;
+            /** Sales */
+            sales: number;
+            /** Cost */
+            cost: number;
+            /** Margin */
+            margin: number;
+            /** Margin Before */
+            margin_before: number;
+            /** Realised */
+            realised: number;
+            /** Cost Of Sales Entities */
+            cost_of_sales_entities: number;
+            /** Cost Of Sales Group */
+            cost_of_sales_group: number;
+        };
         /** ContractLine */
         ContractLine: {
             /** Product */
@@ -5248,6 +5322,12 @@ export interface components {
             job_work?: components["schemas"]["JobWorkSettings"];
             /** Shipping Notices */
             shipping_notices?: components["schemas"]["ShippingNotice"][];
+            /** Entities */
+            entities?: components["schemas"]["LegalEntity"][];
+            /** Transfer Prices */
+            transfer_prices?: components["schemas"]["TransferPrice"][];
+            /** Intercompany Invoices */
+            intercompany_invoices?: components["schemas"]["IntercompanyInvoice"][];
             /** Closed Orders */
             closed_orders?: components["schemas"]["ClosedOrder"][];
             /** Accuracy */
@@ -5839,6 +5919,31 @@ export interface components {
         EmailVerify: {
             /** Token */
             token: string;
+        };
+        /** EntityRow */
+        EntityRow: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Tax Id */
+            tax_id: string;
+            /** Places */
+            places: string[];
+            /** Stock */
+            stock: number;
+            /** Sales */
+            sales: number;
+            /** Cost */
+            cost: number;
+            /** Margin */
+            margin: number;
+            /** Purchases */
+            purchases: number;
+            /** Billed */
+            billed: number;
+            /** Tax */
+            tax: number;
         };
         /** ErpAck */
         ErpAck: {
@@ -7272,6 +7377,160 @@ export interface components {
             /** Vendor Material */
             vendor_material: string;
         };
+        /** IntercompanyActionRequest */
+        IntercompanyActionRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "bill" | "cancel";
+            /** Id */
+            id?: string | null;
+            /** Movements */
+            movements?: string[] | null;
+            /** Date */
+            date?: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** IntercompanyActionResponse */
+        IntercompanyActionResponse: {
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
+            /** Message */
+            message: string;
+            /**
+             * Invoices
+             * @default []
+             */
+            invoices: string[];
+        };
+        /** IntercompanyInvoice */
+        IntercompanyInvoice: {
+            /**
+             * Id
+             * @description The invoice number (GST: up to 16 characters)
+             */
+            id: string;
+            /**
+             * Kind
+             * @default invoice
+             * @enum {string}
+             */
+            kind: "invoice" | "credit_note";
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Seller
+             * @description The company that shipped; empty = the company itself
+             * @default
+             */
+            seller: string;
+            /**
+             * Buyer
+             * @description The company that received; empty = the company itself
+             * @default
+             */
+            buyer: string;
+            /** Ship From */
+            ship_from: string;
+            /** Ship To */
+            ship_to: string;
+            /**
+             * Split
+             * @description How the GST shows: CGST and SGST in one state, IGST across; empty = one tax
+             * @default
+             * @enum {string}
+             */
+            split: "" | "cgst_sgst" | "igst";
+            /** Lines */
+            lines: components["schemas"]["IntercompanyLine"][];
+            /**
+             * Cancelled
+             * @default false
+             */
+            cancelled: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** IntercompanyLine */
+        IntercompanyLine: {
+            /**
+             * Movement
+             * @description The shipment (the transfer's goods issue)
+             */
+            movement: string;
+            /**
+             * Order
+             * @description The stock transfer
+             */
+            order: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Price
+             * @description The transfer price per base unit, before tax
+             */
+            price: number;
+            /**
+             * Tax Rate
+             * @default 0
+             */
+            tax_rate: number;
+        };
+        /** IntercompanyView */
+        IntercompanyView: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /**
+             * Period Start
+             * Format: date
+             */
+            period_start: string;
+            /**
+             * Period End
+             * Format: date
+             */
+            period_end: string;
+            /** Currency */
+            currency: string;
+            /** Entities */
+            entities: components["schemas"]["EntityRow"][];
+            /** Shipments */
+            shipments: components["schemas"]["ShipmentRow"][];
+            /** Orders */
+            orders: components["schemas"]["OrderRow"][];
+            /** Invoices */
+            invoices: components["schemas"]["InvoiceRow"][];
+            /** Due */
+            due: number;
+            /** Due Value */
+            due_value: number;
+            consolidation: components["schemas"]["Consolidation"];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
         /**
          * InventoryDoc
          * @description A physical inventory document (≈ MI01/MI04/MI07): places and products to count on a day, their book stock
@@ -7611,6 +7870,31 @@ export interface components {
              */
             ret?: string | null;
         };
+        /** InvoiceLineRow */
+        InvoiceLineRow: {
+            /** Movement */
+            movement: string;
+            /** Order */
+            order: string;
+            /** Product */
+            product: string;
+            /** Product Name */
+            product_name: string;
+            /** Hsn */
+            hsn: string;
+            /** Unit */
+            unit: string;
+            /** Qty */
+            qty: number;
+            /** Price */
+            price: number;
+            /** Net */
+            net: number;
+            /** Tax Rate */
+            tax_rate: number;
+            /** Tax */
+            tax: number;
+        };
         /** InvoiceLineView */
         InvoiceLineView: {
             /** Order */
@@ -7629,6 +7913,64 @@ export interface components {
             received: number;
             /** Invoiced */
             invoiced: number;
+        };
+        /** InvoiceRow */
+        InvoiceRow: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Seller */
+            seller: string;
+            /** Seller Name */
+            seller_name: string;
+            /** Seller Gstin */
+            seller_gstin: string;
+            /** Seller Address */
+            seller_address: string;
+            /** Buyer */
+            buyer: string;
+            /** Buyer Name */
+            buyer_name: string;
+            /** Buyer Gstin */
+            buyer_gstin: string;
+            /** Buyer Address */
+            buyer_address: string;
+            /** Ship From */
+            ship_from: string;
+            /** Ship From Name */
+            ship_from_name: string;
+            /** Ship To */
+            ship_to: string;
+            /** Ship To Name */
+            ship_to_name: string;
+            /** Place Of Supply */
+            place_of_supply: string;
+            /** Split */
+            split: string;
+            /** Lines */
+            lines: components["schemas"]["InvoiceLineRow"][];
+            /** Net */
+            net: number;
+            /** Cgst */
+            cgst: number;
+            /** Sgst */
+            sgst: number;
+            /** Igst */
+            igst: number;
+            /** Tax */
+            tax: number;
+            /** Total */
+            total: number;
+            /** Cancelled */
+            cancelled: boolean;
+            /** Note */
+            note: string;
         };
         /** InvoiceView */
         InvoiceView: {
@@ -8329,6 +8671,40 @@ export interface components {
             /** Basis */
             basis: string;
         };
+        /** LegalEntity */
+        LegalEntity: {
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Tax Id
+             * @description Its tax registration (GSTIN, VAT number), printed on its invoices; a place's own registration goes before it
+             * @default
+             */
+            tax_id: string;
+            /**
+             * Region
+             * @description Its state or region for the place of supply; empty = from the GSTIN
+             * @default
+             */
+            region: string;
+            /**
+             * Address
+             * @description Its registered address, a line per row, printed on its invoices
+             * @default
+             */
+            address: string;
+            /**
+             * Invoice Prefix
+             * @description The start of its inter-company invoice numbers (GST: a series of its own, 16 characters in all); empty = IC-<id>/
+             * @default
+             */
+            invoice_prefix: string;
+        };
         /** LevelMove */
         LevelMove: {
             /** Order */
@@ -8488,6 +8864,11 @@ export interface components {
              * @default
              */
             tax_id: string;
+            /**
+             * Entity
+             * @description Our places: the company of the group it belongs to (its books and invoices); empty = the company itself
+             */
+            entity?: string | null;
             /** Calendar */
             calendar?: string | null;
             /** Lat */
@@ -9949,6 +10330,40 @@ export interface components {
              * @default 0
              */
             shipped: number;
+        };
+        /** OrderRow */
+        OrderRow: {
+            /** Order */
+            order: string;
+            /** Product */
+            product: string;
+            /** Product Name */
+            product_name: string;
+            /** Ship From */
+            ship_from: string;
+            /** Ship To */
+            ship_to: string;
+            /** Seller */
+            seller: string;
+            /** Buyer */
+            buyer: string;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Ordered */
+            ordered: number;
+            /** Shipped */
+            shipped: number;
+            /** To Ship */
+            to_ship: number;
+            /** Price */
+            price: number;
+            /** Basis */
+            basis: string;
+            /** Value */
+            value: number;
         };
         /**
          * OrderStock
@@ -14606,6 +15021,50 @@ export interface components {
              */
             weekdays?: number[] | null;
         };
+        /** ShipmentRow */
+        ShipmentRow: {
+            /** Movement */
+            movement: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Order */
+            order: string;
+            /** Product */
+            product: string;
+            /** Product Name */
+            product_name: string;
+            /** Ship From */
+            ship_from: string;
+            /** Ship To */
+            ship_to: string;
+            /** Seller */
+            seller: string;
+            /** Buyer */
+            buyer: string;
+            /** Crossing */
+            crossing: string;
+            /** Qty */
+            qty: number;
+            /** Cost */
+            cost: number;
+            /** Price */
+            price: number;
+            /** Basis */
+            basis: string;
+            /** Amount */
+            amount: number;
+            /** Margin */
+            margin: number;
+            /** Billed Qty */
+            billed_qty: number;
+            /** Due Qty */
+            due_qty: number;
+            /** Invoices */
+            invoices: string[];
+        };
         /**
          * ShippingNotice
          * @description Goods on their way from a supplier: they arrive on ``arrives_on`` and are received against the notice.
@@ -16216,6 +16675,49 @@ export interface components {
             /** Product */
             product?: string | null;
         };
+        /** TransferPrice */
+        TransferPrice: {
+            /** Id */
+            id: string;
+            /**
+             * Seller
+             * @description The company that ships; empty = any
+             */
+            seller?: string | null;
+            /**
+             * Buyer
+             * @description The company that receives; empty = any
+             */
+            buyer?: string | null;
+            /**
+             * Product
+             * @description Empty = every product
+             */
+            product?: string | null;
+            /**
+             * Method
+             * @description cost_plus: the planned unit value where it leaves, plus the mark-up; fixed: the price; resale_minus: the product's selling price less the margin
+             * @default cost_plus
+             * @enum {string}
+             */
+            method: "cost_plus" | "fixed" | "resale_minus";
+            /**
+             * Markup
+             * @description cost_plus: the mark-up on cost (0.08 = 8 %); resale_minus: the margin taken off
+             * @default 0
+             */
+            markup: number;
+            /**
+             * Price
+             * @description fixed: the price per base unit
+             */
+            price?: number | null;
+            /**
+             * Valid From
+             * @description From this day of shipping; empty = always
+             */
+            valid_from?: string | null;
+        };
         /** TransportActionRequest */
         TransportActionRequest: {
             dataset: components["schemas"]["Dataset"];
@@ -16543,6 +17045,11 @@ export interface components {
         ValuationRow: {
             /** Location */
             location: string;
+            /**
+             * Entity
+             * @default
+             */
+            entity: string;
             /** Product */
             product: string;
             control: components["schemas"]["PriceControl"];
@@ -16583,6 +17090,26 @@ export interface components {
             count_differences: number;
             /** Scrapped */
             scrapped: number;
+            /**
+             * Books
+             * @default entity
+             */
+            books: string;
+            /**
+             * Intercompany Sales
+             * @default 0
+             */
+            intercompany_sales: number;
+            /**
+             * Intercompany Cost
+             * @default 0
+             */
+            intercompany_cost: number;
+            /**
+             * In Transit
+             * @default 0
+             */
+            in_transit: number;
             /**
              * Notes
              * @default []
@@ -21327,6 +21854,7 @@ export interface operations {
         parameters: {
             query?: {
                 as_of?: string | null;
+                books?: "entity" | "group";
             };
             header?: never;
             path?: never;
@@ -21760,6 +22288,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PoActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_intercompany_api_intercompany_post: {
+        parameters: {
+            query?: {
+                as_of?: string | null;
+                period_start?: string | null;
+                period_end?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntercompanyView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_intercompany_action_api_intercompany_act_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntercompanyActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntercompanyActionResponse"];
                 };
             };
             /** @description Validation Error */

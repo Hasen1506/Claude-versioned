@@ -71,6 +71,7 @@
    "region": "North",
    "address": "Warehouse 12, Sector 37 industrial area\nGurugram 122001, Haryana",
    "calendar": "CAL-IN-6D",
+   "entity": "KAN",
    "lat": 28.46,
    "lon": 77.03,
    "storage_capacity_m3": 3000,
@@ -1325,6 +1326,23 @@
      "capacity_m3": 30
     }
    ]
+  }
+ ],
+ "entities": [
+  {
+   "id": "KAN",
+   "name": "Kaveri Appliances North Pvt Ltd (fictional)",
+   "tax_id": "06AAJCK7716N1Z8",
+   "address": "Unit 1104, Tower B, Global Business Park\nGurugram 122002, Haryana",
+   "invoice_prefix": "KAN/"
+  }
+ ],
+ "transfer_prices": [
+  {
+   "id": "TP-NORTH",
+   "buyer": "KAN",
+   "method": "cost_plus",
+   "markup": 0.06
   }
  ],
  "demand": [

@@ -18,6 +18,7 @@ from .finance import FinanceSettings
 from .tower import TowerSettings
 from .warehouse import Bin, PutawayRule, StorageType, Wave, WarehouseTask
 from .transport import Carrier, FreightOrder, TransportSettings
+from .intercompany import IntercompanyInvoice, LegalEntity, TransferPrice
 from .outside import JobWorkChallan, JobWorkSettings, ThirdPartyOrder
 from .portal import ShippingNotice
 from .demand import DemandEvent, ForecastOverride, ForecastSettings, ForecastSnapshot, NpiRule
@@ -97,6 +98,9 @@ class Dataset(Model):
     challans: list[JobWorkChallan] = Field(default_factory=list)
     job_work: JobWorkSettings = Field(default_factory=JobWorkSettings)
     shipping_notices: list[ShippingNotice] = Field(default_factory=list)
+    entities: list[LegalEntity] = Field(default_factory=list)
+    transfer_prices: list[TransferPrice] = Field(default_factory=list)
+    intercompany_invoices: list[IntercompanyInvoice] = Field(default_factory=list)
     closed_orders: list[ClosedOrder] = Field(default_factory=list)
     accuracy: list[AccuracyRecord] = Field(default_factory=list)
     rolled_weeks: list[RolledWeek] = Field(default_factory=list)
@@ -125,6 +129,10 @@ class Dataset(Model):
     @cached_property
     def location_by_id(self) -> dict[str, Location]:
         return _index(self.locations)
+
+    @cached_property
+    def entity_by_id(self) -> dict[str, LegalEntity]:
+        return _index(self.entities)
 
     @cached_property
     def product_by_id(self) -> dict[str, Product]:

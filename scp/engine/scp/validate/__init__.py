@@ -83,6 +83,10 @@ RULES: dict[str, tuple[Severity, str]] = {
     "TM_MISFIT": ("warning", "Transport records that do not fit together (carriers, rates, freight orders)"),
     "OUTSIDE_MISFIT": ("warning", "Third-party orders, job-work challans or shipping notices that do not fit the rest "
                                   "of the data"),
+    "INTERCOMPANY_MISFIT": ("warning", "Companies of the group, transfer prices or inter-company invoices that do not "
+                                       "fit the rest of the data"),
+    "TRANSFER_PRICE_MISSING": ("warning", "Transfer between two companies of the group with no transfer price: it "
+                                          "moves at cost"),
     "JOBWORK_DUE": ("warning", "Parts at a job worker past the GST limit: they count as supplied, tax is due"),
     "REVERSAL_UNKNOWN": ("warning", "Reversal of a movement that is not in the journal"),
     "SERIALS_COUNT": ("warning", "Serial numbers that do not match the quantity"),
@@ -127,6 +131,7 @@ def validate(ds: Dataset) -> list[Issue]:
     _warehouse(ds, c)
     _transport(ds, c)
     _outside(ds, c)
+    _intercompany(ds, c)
     order = {"error": 0, "warning": 1}
     c.issues.sort(key=lambda i: (order[i.severity], i.code, i.object_type, i.object_id))
     return c.issues
@@ -157,7 +162,8 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "purchase_order": ds.purchase_orders, "inventory_doc": ds.inventory_docs, "mrp_group": ds.mrp_groups,
         "warehouse_task": ds.warehouse_tasks, "wave": ds.waves, "carrier": ds.carriers,
         "freight_order": ds.freight_orders, "third_party_order": ds.third_party_orders, "challan": ds.challans,
-        "shipping_notice": ds.shipping_notices,
+        "shipping_notice": ds.shipping_notices, "entity": ds.entities, "transfer_price": ds.transfer_prices,
+        "intercompany_invoice": ds.intercompany_invoices,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
@@ -209,7 +215,8 @@ def _ref(ds: Dataset, c: _Collector, kind: str, value: str | None, typ: str, oid
         index = {p.family for p in ds.products if p.family}
     else:
         index = {"location": ds.location_by_id, "product": ds.product_by_id, "calendar": ds.calendar_by_id,
-                 "resource": ds.resource_by_id, "payment_terms": ds.payment_terms_by_id}[kind]
+                 "resource": ds.resource_by_id, "payment_terms": ds.payment_terms_by_id,
+                 "entity": ds.entity_by_id}[kind]
     if value not in index:
         c.add("REF_UNKNOWN", typ, oid, f"{field} refers to unknown {kind} '{value}'",
               f"Create {kind} '{value}' or fix the reference", field)
@@ -981,6 +988,57 @@ def _outside(ds: Dataset, c: _Collector) -> None:
             c.add("JOBWORK_DUE", "challan", ch.id, f"{', '.join(late[:5])} still at {ch.job_worker} past the "
                   "limit: they count as supplied on the day they were sent", "Get them back, or pay the tax on "
                   "them and write them off", "lines")
+
+
+def _intercompany(ds: Dataset, c: _Collector) -> None:
+    """Several companies in one network (Enterprise 7.3): a place's company and a transfer price's companies and
+    product must exist (errors, as for any record); a company on a supplier or a customer, a transfer between
+    companies with no price, and an invoice that no longer fits its shipments are warnings."""
+    from ..actuals.transfer_price import crossing, entity_of, shipments
+    from ..intercompany import missing_prices
+    for lo in ds.locations:
+        if lo.entity is None:
+            continue
+        _ref(ds, c, "entity", lo.entity, "location", lo.id, "entity")
+        if lo.type in (LocationType.SUPPLIER, LocationType.CUSTOMER):
+            c.add("INTERCOMPANY_MISFIT", "location", lo.id, f"is a {lo.type.value} and belongs to {lo.entity}: only "
+                  "our own places belong to a company of the group", "Clear its company", "entity")
+    for r in ds.transfer_prices:
+        _ref(ds, c, "entity", r.seller, "transfer_price", r.id, "seller")
+        _ref(ds, c, "entity", r.buyer, "transfer_price", r.id, "buyer")
+        _ref(ds, c, "product", r.product, "transfer_price", r.id, "product")
+        if r.seller is not None and r.seller == r.buyer:
+            c.add("INTERCOMPANY_MISFIT", "transfer_price", r.id, "sells to the company that sells: it never applies",
+                  "Name another buyer", "buyer")
+    if ds.entities:
+        for oid, seller, buyer, prod in missing_prices(ds):
+            names = {e.id: e.name or e.id for e in ds.entities}
+            c.add("TRANSFER_PRICE_MISSING", "receipt", oid,
+                  f"moves {prod} from {names.get(seller, ds.settings.company_name)} to "
+                  f"{names.get(buyer, ds.settings.company_name)} with no transfer price: at cost, no profit to the "
+                  "seller", "Add a transfer price for the two companies", "source")
+    if not ds.intercompany_invoices:
+        return
+    ship = {m.id: (m, to) for m, to, _q in shipments(ds)}
+    for inv in ds.intercompany_invoices:
+        _ref(ds, c, "location", inv.ship_from, "intercompany_invoice", inv.id, "ship_from")
+        _ref(ds, c, "location", inv.ship_to, "intercompany_invoice", inv.id, "ship_to")
+        for ln in inv.lines:
+            _ref(ds, c, "product", ln.product, "intercompany_invoice", inv.id, "lines")
+        if inv.cancelled:
+            continue
+        gone = [ln.movement for ln in inv.lines if ln.movement not in ship]
+        if gone:
+            c.add("INTERCOMPANY_MISFIT", "intercompany_invoice", inv.id, f"bills {', '.join(gone[:5])}, no shipment "
+                  "between two companies or registrations in the journal", "Cancel the invoice and bill again",
+                  "lines")
+        if (inv.ship_from in ds.location_by_id and inv.ship_to in ds.location_by_id
+                and (entity_of(ds, inv.ship_from), entity_of(ds, inv.ship_to)) != (inv.seller, inv.buyer)):
+            c.add("INTERCOMPANY_MISFIT", "intercompany_invoice", inv.id, "names a seller or buyer that the places no "
+                  "longer belong to", "Cancel the invoice and bill again", "seller")
+        elif inv.ship_from in ds.location_by_id and not crossing(ds, inv.ship_from, inv.ship_to):
+            c.add("INTERCOMPANY_MISFIT", "intercompany_invoice", inv.id, "is between places of one registration: "
+                  "nothing to bill", "Cancel the invoice", "ship_to")
 
 
 def _warehouse(ds: Dataset, c: _Collector) -> None:

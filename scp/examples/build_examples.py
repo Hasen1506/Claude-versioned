@@ -113,7 +113,10 @@ def kitchenware() -> dict:
          "lat": 18.76, "lon": 73.86, "storage_capacity_m3": 2500, "handling_cost_per_unit": 2},
         {"id": "DC-BHIWANDI", "name": "Bhiwandi DC (Mumbai)", "type": "dc", "region": "West", "address": "Gala 4, Building B7, Vashere logistics park\nBhiwandi 421302, Maharashtra", "calendar": "CAL-IN-6D",
          "lat": 19.30, "lon": 73.06, "storage_capacity_m3": 4000, "handling_cost_per_unit": 6},
+        # Enterprise 7.3: the Delhi DC belongs to the group's northern sales company, which buys from Kaveri at cost
+        # plus 6 % and invoices from its own GSTIN in Haryana
         {"id": "DC-DELHI", "name": "Delhi NCR DC", "type": "dc", "region": "North", "address": "Warehouse 12, Sector 37 industrial area\nGurugram 122001, Haryana", "calendar": "CAL-IN-6D",
+         "entity": "KAN",
          "lat": 28.46, "lon": 77.03, "storage_capacity_m3": 3000, "handling_cost_per_unit": 7},
         {"id": "CUS-WEST-TRADE", "name": "West trade distributors", "type": "customer", "region": "West",
          "lat": 19.08, "lon": 72.88},
@@ -381,6 +384,10 @@ def kitchenware() -> dict:
         "purchasing": {"approval_limit": 1000000, "release_window_days": 7},
         **delhi_warehouse(),
         "carriers": kaveri_carriers(),
+        "entities": [{"id": "KAN", "name": "Kaveri Appliances North Pvt Ltd (fictional)", "tax_id": "06AAJCK7716N1Z8",
+                      "address": "Unit 1104, Tower B, Global Business Park\nGurugram 122002, Haryana",
+                      "invoice_prefix": "KAN/"}],
+        "transfer_prices": [{"id": "TP-NORTH", "buyer": "KAN", "method": "cost_plus", "markup": 0.06}],
         "demand": demand, "receipts": receipts, "history": history, "events": events, "npi": npi,
         "overrides": overrides,
         # sequence-dependent setups: winding gauge change (thick→thin needs re-tensioning) and

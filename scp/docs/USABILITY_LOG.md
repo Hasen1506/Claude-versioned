@@ -1178,6 +1178,50 @@ a 2-day lane, with 10 % over-delivery allowed.
 | N314 | Confirming 2,000 lines took 1.1 s: each line looked through every receipt again. | Minor | **Fixed:** the supplier's lines are indexed once (0.03 s). |
 | N315 | The supplier's batch is kept on the notice but not on the receipt of a product without batches. The link is not e-mailed from the server. Messages come over HTTPS with the link's secret, not through the Peppol network (AS4). The supplier cannot send their invoice through the portal or print the dispatch advice. | Minor | Open. |
 
+### 7.3: Several companies in one network
+
+ENTERPRISE_PLAN 7.3, on the Kaveri Kitchenware example (*Money → Group companies*), through the API and in the
+browser. The example now has a second company. *Kaveri Appliances North* (GSTIN 06AAJCK7716N1Z8, Haryana) owns the
+Delhi NCR DC and buys from Kaveri at cost plus 6 % (TP-NORTH). Kaveri values stock at standard prices. The API run
+turned on GST at 18 % with the CGST/SGST/IGST split; the browser test kept the example as it is.
+
+* *Input:*
+  * The plan's transfer TO-0013-01 (525 kettles, Pune to Delhi, leaving Thu 29 Oct) is made firm as STO-02202.
+  * The *Inter-company orders* tab shows it from Kaveri to Kaveri Appliances North at ₹485.01 each: the
+    kettle's planned unit value at Pune (₹457.55) plus 6 %.
+* *Processing:*
+  * STO-02202 ships from Pune on Thu 29 Oct. It is on the billing due list: 525 at ₹485.01, ₹254,630.25, with a
+    margin of ₹14,415.41.
+  * *Bill* makes invoice IC/0001 from Kaveri's series. Maharashtra to Haryana is IGST, ₹45,833.44, for a total of
+    ₹300,463.69.
+  * The kettles arrive in Delhi on Mon 2 Nov, and 1,000 go to the north trade distributors on Wed 4 Nov.
+  * Some kettles from STO-2201 were on the road at go-live: their receipt is in the journal but their shipment is
+    not. They come into Kaveri Appliances North's books at the transfer price and are not billed here.
+* *Output:*
+  * The companies table shows Kaveri's sale (₹254,630.25, cost ₹240,214.84, billed ₹254,630.25) and Kaveri
+    Appliances North's purchase of the same.
+  * The invoice prints in three copies: original for the recipient, duplicate for the transporter, triplicate for
+    the supplier. It shows both GSTINs, the place of supply (06 Haryana), the HSN, and IGST.
+  * Delhi values kettles at its standard price (₹471.57), so the transfer-price profit lands in price differences:
+    ₹22,478.16, being the ₹14,415.41 on STO-02202 plus ₹8,062.75 on STO-2201, which was shipped before go-live.
+    Stock is the same in both sets of books, and none of the profit is still in stock.
+  * At a moving-average price, the receiving company holds the goods at what it paid. The profit still in stock
+    is then the difference between its books and the group's. In the engine tests, the companies' and the group's
+    cost of sales differ by exactly the margin on what was sold on.
+  * Cancelling IC/0001 puts the shipment back on the due list. A shipment taken back after billing goes on a credit
+    note at the price it was billed at. An invoice cannot be cancelled while a credit note credits it.
+  * A transfer between two GSTINs of one company is billed at cost, and neither set of books changes.
+* *At 2,001 shipments from Pune to Delhi:*
+  * View 0.20 s; billing 0.11 s (five invoices of up to 500 lines); valuation 0.13 s; checks 0.06 s.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N316 | Goods from another company that were on the road at go-live (their receipt is in the journal, their shipment is not) came into the receiving company's books at the planned value instead of the transfer price. | Major | **Fixed:** they come in at the transfer price. The page says they were billed by the old system, and the consolidation counts their margin. |
+| N317 | Billing more than 500 shipments between one pair of places failed, because an invoice holds 500 lines. | Minor | **Fixed:** the rest go on further invoices. A number given by hand is refused when there would be more than one document. |
+| N318 | The rate showed to the paisa but was charged to four decimals. On 458 units, quantity × rate missed the taxable value by ₹1.28. The browser test caught it. | Minor | **Fixed:** transfer prices are to the paisa. |
+| N319 | The open inter-company orders listed STO-2201, already received. The companies table counted only the current month, so a shipment of 29 Oct showed nothing on 4 Nov. | Minor | **Fixed:** what has been received is not open. The table covers the financial year to date (from April with the rupee). |
+| N320 | The group shares one currency (no foreign subsidiary in its own). Planning treats the group as one company: no transfer price in planned cost, no planning per company. Cost plus is on the planned unit value, not the actual cost. Inter-company invoices have no e-invoice IRN or e-way bill. Nothing is settled between companies: their receivables and payables come with 7.4. | Minor | Open: settlement and postings with 7.4. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

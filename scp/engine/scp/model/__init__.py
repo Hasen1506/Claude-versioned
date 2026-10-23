@@ -34,12 +34,14 @@ from .master import (
 )
 from .warehouse import Bin, Putaway, PutawayRule, StorageType, TaskKind, Wave, WarehouseTask
 from .transport import Carrier, FreightOrder, FreightRate, TransportSettings
+from .intercompany import IntercompanyInvoice, IntercompanyLine, LegalEntity, TransferPrice
 from .outside import ChallanLine, ChallanReturn, DropShipment, JobWorkChallan, JobWorkSettings, ThirdPartyOrder
 from .portal import NoticeLine, ShippingNotice
 from .transactional import DemandRecord, Reservation, SalesHistory, ConfirmedDelivery, ScheduledReceipt
 
 __all__ = [
     "Carrier", "FreightOrder", "FreightRate", "TransportSettings",
+    "IntercompanyInvoice", "IntercompanyLine", "LegalEntity", "TransferPrice",
     "ChallanLine", "ChallanReturn", "DropShipment", "JobWorkChallan", "JobWorkSettings", "ThirdPartyOrder",
     "NoticeLine", "ShippingNotice",
     "Bin", "Putaway", "PutawayRule", "StorageType", "TaskKind", "Wave", "WarehouseTask",

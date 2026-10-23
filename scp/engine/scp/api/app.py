@@ -51,8 +51,10 @@ from .. import transport as tm
 from ..transport import TransportError, TransportReport, TransportView
 from ..transport import view as transport_view
 from .. import dropship as tp
+from .. import intercompany as ic
 from .. import jobwork as jw
 from ..dropship import DropShipError, DropShipView
+from ..intercompany import IntercompanyError, IntercompanyView
 from ..jobwork import JobWorkError, JobWorkView
 from ..warehouse import (
     PickList, PutawayProposal, WarehouseError, WarehouseReport, WarehouseView, cancel_task, confirm_task, create_putaway,
@@ -898,10 +900,12 @@ def _wh(make):
 
 
 @app.post("/api/valuation", response_model=ValuationView)
-def post_valuation(ds: PlanData, as_of: dt.date | None = None) -> Response:
+def post_valuation(ds: PlanData, as_of: dt.date | None = None,
+                   books: Literal["entity", "group"] = "entity") -> Response:
     """Stock in the books: each place's quantity, value and price (standard or moving average), the postings that
-    moved it and the price differences booked aside."""
-    return respond("valuation", ds, lambda: value_stock(ds, as_of), as_of)
+    moved it and the price differences booked aside. With several companies, ``books=group`` values transfers
+    between them at what they cost the group instead of at their transfer prices."""
+    return respond("valuation", ds, lambda: value_stock(ds, as_of, books=books), as_of, books)
 
 
 @app.post("/api/cycle-counts", response_model=CyclePlan)
@@ -1239,6 +1243,49 @@ def post_posting(req: PostRequest) -> PoActionResponse:
     except PostingError as e:
         raise HTTPException(409, str(e)) from e
     return PoActionResponse(**answer(req.dataset, new), report=rep)
+
+
+# ------------------------------------------------------------------------------------------------ companies (7.3)
+@app.post("/api/intercompany", response_model=IntercompanyView)
+def post_intercompany(ds: PlanData, as_of: dt.date | None = None, period_start: dt.date | None = None,
+                      period_end: dt.date | None = None) -> Response:
+    """The companies of the group: transfers between them at their transfer prices, the billing due list, the
+    inter-company invoices and the profit still in stock between them."""
+    return respond("intercompany", ds, lambda: ic.view(ds, as_of, period_start, period_end),
+                   as_of, period_start, period_end)
+
+
+class IntercompanyActionRequest(Out):
+    dataset: PlanData
+    action: Literal["bill", "cancel"]
+    id: str | None = Field(None, max_length=16)        # bill: the number (one document); cancel: which
+    movements: list[str] | None = Field(None, max_length=500)   # bill: only these shipments
+    date: dt.date | None = None
+    note: str = Field("", max_length=400)
+
+
+class IntercompanyActionResponse(Out):
+    dataset: Dataset | None = None
+    patch: dict[str, Any] | None = None
+    message: str
+    invoices: list[str] = []
+
+
+@app.post("/api/intercompany/act", response_model=IntercompanyActionResponse)
+def post_intercompany_action(req: IntercompanyActionRequest) -> IntercompanyActionResponse:
+    """Bill the shipments due between companies (an invoice per pair of places, a credit note for what came back),
+    or cancel an invoice."""
+    ds = req.dataset
+    try:
+        if req.action == "bill":
+            new, r = ic.bill(ds, req.date, req.movements, req.id, req.note)
+        else:
+            if not req.id:
+                raise IntercompanyError("say which invoice")
+            new, r = ic.cancel(ds, req.id)
+    except IntercompanyError as e:
+        raise HTTPException(409, str(e)) from e
+    return IntercompanyActionResponse(**answer(ds, new), message=r.message, invoices=r.invoices)
 
 
 # --- versions & scenarios (P8) -------------------------------------------------------------------

@@ -147,6 +147,9 @@ class Location(Model):
                          description="Postal address, a line per row: printed on purchase orders (the supplier's, "
                                      "the place to deliver to)")
     tax_id: str = Field("", max_length=40, description="Tax registration (GSTIN, VAT number), printed on purchase orders")
+    entity: str | None = Ref("entity", default=None,
+                             description="Our places: the company of the group it belongs to (its books and invoices); "
+                                         "empty = the company itself")
     calendar: str | None = Ref("calendar", default=None)
     lat: float | None = Field(None, ge=-90, le=90)
     lon: float | None = Field(None, ge=-180, le=180)
