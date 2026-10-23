@@ -86,8 +86,9 @@ test("an inter-company transfer: firmed, shipped, received, billed at the transf
   await page.getByRole("tab", { name: /Companies/ }).click();
   const ours = cos.getByRole("row", { name: /Kaveri Kitchenware/ });
   const north = cos.getByRole("row", { name: /Kaveri Appliances North/ });
-  expect(num(await ours.locator("td").nth(4).innerText())).toBeCloseTo(amount, 0);     // sold to the group
-  expect(num(await north.locator("td").nth(7).innerText())).toBeCloseTo(amount, 0);    // bought from the group
+  // the view is fetched again after each change: read until it has come (a one-off read can see the one before)
+  await expect.poll(async () => num(await ours.locator("td").nth(4).innerText()), { timeout: 30_000 }).toBeCloseTo(amount, 0);  // sold to the group
+  await expect.poll(async () => num(await north.locator("td").nth(7).innerText()), { timeout: 30_000 }).toBeCloseTo(amount, 0); // bought from the group
   await expect(page.getByRole("table", { name: "Elimination" })).toContainText("Stock in the group's books");
   await page.screenshot({ path: "test-results/group-companies.png", fullPage: true });
 
@@ -103,8 +104,8 @@ test("an inter-company transfer: firmed, shipped, received, billed at the transf
   await page.getByRole("button", { name: /^Bill 1 shipment$/ }).click();
   await expect(done(page)).toContainText("invoice IC/0002", { timeout: 30_000 });
   await page.getByRole("tab", { name: /Companies/ }).click();
+  await expect.poll(async () => num(await ours.locator("td").nth(9).innerText()), { timeout: 30_000 }).toBeGreaterThanOrEqual(amount - 0.5);   // the invoice, with any tax
   expect(num(await north.locator("td").nth(10).innerText())).toBeCloseTo(num(await ours.locator("td").nth(9).innerText()), 0);
-  expect(num(await ours.locator("td").nth(9).innerText())).toBeGreaterThanOrEqual(amount - 0.5);   // the invoice, with any tax
   await page.getByRole("tab", { name: /Invoices/ }).click();
   const inv2 = page.getByRole("table", { name: "Inter-company invoices" }).getByRole("row", { name: /IC\/0002/ });
   await inv2.getByRole("button", { name: "Settle IC/0002" }).click();
@@ -112,6 +113,6 @@ test("an inter-company transfer: firmed, shipped, received, billed at the transf
   await expect(inv2).toContainText("settled");
   await expect(inv2.getByRole("button", { name: "Cancel IC/0002" })).toHaveCount(0);
   await page.getByRole("tab", { name: /Companies/ }).click();
-  expect(num(await ours.locator("td").nth(9).innerText())).toBe(0);
+  await expect.poll(async () => num(await ours.locator("td").nth(9).innerText()), { timeout: 30_000 }).toBe(0);
   expect(num(await north.locator("td").nth(10).innerText())).toBe(0);
 });
