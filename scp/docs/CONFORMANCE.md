@@ -202,3 +202,39 @@ seller does with customers as a whole is thinner. At the audit: 20 of 26 there, 
 missing). The one that changes what customers get is S11: when the ordered product is short, a product the company
 accepts in its place may be free on the date asked. **After S11:** 21 of 26 there, 3 partial (S20, S22, S23), 3 missing
 (S24 to S26), all in IDEAS.md.
+
+## 6. Warehouse
+
+Read against CPIM "warehouse management", the S/4 guide §12 (EWM basics: storage types, bins, put-away and picking
+strategies, warehouse tasks, waves, replenishment) and Bartholdi & Hackman, *Warehouse & Distribution Science*.
+Audited 23 October 2026.
+
+| # | Concept | Engine | Page and name | Oracle | Status |
+|---|---|---|---|---|---|
+| W1 | Storage types and bins with limits by quantity and weight; blocked bins | EP 6.1 | Warehouse → stock by bin; Set up → storage bins | test_warehouse | there |
+| W2 | Put-away strategies (fixed bin, add to stock, next empty), storage type search order, bins per product | EP 6.1 | Warehouse → put away | test_warehouse | there |
+| W3 | Picking: picking areas before the reserve, first expiring first, first in, nearest on the walk | EP 6.1 | Warehouse → waves & picking | test_warehouse | there |
+| W4 | Waves and one pick list in walk order across deliveries | EP 6.1 | Warehouse → waves & picking | test_warehouse | there |
+| W5 | Warehouse tasks confirmed by scanning bin and product; short picks asked to be counted | EP 6.1 | Phone scan page; Warehouse → open tasks | test_warehouse; e2e warehouse | there |
+| W6 | Stock by bin from the goods-movement journal, adding up to the place's stock | EP 6.1 | Warehouse → stock by bin | test_warehouse | there |
+| W7 | Replenishment of picking bins: refilled from the reserve between a minimum and a maximum | `warehouse.propose_refill`, `create_refill`; `Bin.min_qty` | Warehouse → *Refill picking bins* | test_warehouse (hand-worked: 16 to S1, 10 of the batch expiring first then 6, open picks and refills counted, two bins never sharing stock, weight limit, a short reserve named); e2e warehouse | there (8.3); at the audit a move typed by hand |
+| W8 | Slotting: fast movers placed near the start of the walk, by picks | — | — | — | missing |
+| W9 | Batches with expiry; first expiring first; nothing expired picked | O1 | Stock & actuals; Warehouse | test_warehouse, test_stock | there |
+| W10 | Stock types: quality inspection, blocked, in transit | O1 | Stock & actuals | test_actuals | there |
+| W11 | Serial numbers | O3 | Stock & actuals | test_actuals | there |
+| W12 | Physical inventory with a freeze, counts and differences posted | O3 | Stock & actuals → counts | test_actuals | there |
+| W13 | Cycle counting by ABC class | EP 6.2 | Stock & actuals → cycle counts | test_valuation | there |
+| W14 | Goods receipt with tolerances; advance shipping notice from the supplier | B6, EP 7.2 | Stock & actuals; Supplier portal | test_procure_to_pay, test_portal | there |
+| W15 | Packing: packages and gross weight on the delivery | M3 | Selling → deliveries | test_order_to_cash | there |
+| W16 | Handling units: pallets and cartons, nested and labelled | — | — | — | missing |
+| W17 | Cross-docking: goods in sent straight to deliveries waiting for them | — | — | — | missing |
+| W18 | Cold chain: refrigerated storage and transport | R30 | Products; lanes | test_stock | there |
+| W19 | Space: bin fill and the place's storage volume against its capacity | bin fill; `storage_capacity_m3` in S&OP | Warehouse → stock by bin; S&OP | test_sop | partial: the plan's MRP does not check a place's volume |
+| W20 | Warehouse measures: pick accuracy, dock-to-stock time, order to goods issue, lines a day | — | — | — | missing |
+| W21 | Workload of a wave in hours by time standards | — | — | — | missing |
+
+**What this section says** (audit): the inside of a warehouse is there as S/4's basic EWM has it (bins, strategies,
+waves, scanning, batches, counts); what is thinner is how a warehouse is run and measured: slotting, handling units,
+cross-docking, its measures and its workload. At the audit: 14 of 21 there, 2 partial, 5 missing. The one that
+changes what the floor does every day is W7: a picking shelf emptied by the morning's picks waits until someone sees
+it. **After W7:** 15 of 21 there, 1 partial (W19), 5 missing (W8, W16, W17, W20, W21), all in IDEAS.md.

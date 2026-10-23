@@ -707,3 +707,98 @@ def move_task(ds: Dataset, location: str, product: str, qty: float, from_bin: st
     return (ds.model_copy(update={"warehouse_tasks": [*ds.warehouse_tasks, t]}),
             WarehouseReport(message=f"{t.id}: move {_n(qty)} {_name(ds, product)} from {from_bin} to {to_bin}.",
                             tasks=[t.id], next_task=t.id))
+
+
+# ------------------------------------------------------------------------------------------------ refilling picking bins
+class ProposedMove(Out):
+    product: str
+    batch: str | None = None
+    qty: float
+    from_bin: str
+    to_bin: str
+
+
+class RefillBin(Out):
+    bin: str
+    product: str
+    level: float                        # what it holds, with the open tasks into and out of it
+    min_qty: float
+    max_qty: float
+    refill: float                       # what the moves bring (less than wanted: the reserve has no more)
+
+
+class RefillProposal(Out):
+    location: str
+    bins: list[RefillBin]
+    moves: list[ProposedMove]
+    notes: list[str]
+
+
+def propose_refill(ds: Dataset, location: str, on: date | None = None) -> RefillProposal:
+    """Which picking bins are at or below their refill point, and the moves from the reserve that fill them up to their
+    most (≈ EWM planned replenishment of fixed bins by a minimum and a maximum); nothing is changed. The reserve is
+    every bin of a storage type not picked from; its unrestricted stock goes first expiring first, then first in, then
+    nearest on the walk. A bin's level counts the open tasks into and out of it, so a refill already on its way, or a
+    pick still to come out of it, is counted once."""
+    if not has_bins(ds, location):
+        raise WarehouseError(f"{location} has no bins: create its storage types and bins first")
+    st = Stock(ds, location, on)
+    room = Room(ds, st)
+    types = _types(ds, location)
+    exp = {(b.product, b.id): b.expires_on for b in ds.batches}
+    taken: dict[tuple[str, str, str | None, StockType], float] = defaultdict(float)   # out of a bin on open tasks
+    for t in ds.warehouse_tasks:
+        if t.location == location and t.status == "open" and t.from_bin:
+            taken[(t.from_bin, t.product, t.batch, t.stock_type)] += t.qty
+
+    def reserve(b: str) -> bool:
+        x = st.bins.get(b)
+        return bool(x and not x.blocked and x.storage_type in types and not types[x.storage_type].picking)
+
+    out = RefillProposal(location=location, bins=[], moves=[], notes=[])
+    for b in sorted(st.bins.values(), key=lambda b: (b.walk, b.id)):
+        if b.min_qty is None or b.blocked or b.product is None or b.max_qty is None:
+            continue
+        p = b.product
+        level = room.held[b.id][p]
+        if level > b.min_qty + EPS:
+            continue
+        want = _whole(ds, p, min(b.max_qty - level, room.left(b, p)))
+        src = sorted((x for x in st.quants.values()
+                      if x.product == p and x.stock_type is StockType.UNRESTRICTED and reserve(x.bin)),
+                     key=lambda x: (exp.get((p, x.batch or "")) or date.max, x.since, _walk(st.bins, x.bin)))
+        left = want
+        for x in src:
+            k = (x.bin, p, x.batch, x.stock_type)
+            q = _whole(ds, p, min(left, x.qty - taken[k]))
+            if q <= EPS:
+                continue
+            out.moves.append(ProposedMove(product=p, batch=x.batch, qty=q, from_bin=x.bin, to_bin=b.id))
+            taken[k] += q
+            left -= q
+        out.bins.append(RefillBin(bin=b.id, product=p, level=round(level, 6), min_qty=b.min_qty, max_qty=b.max_qty,
+                                  refill=round(want - left, 6)))
+        if want - left <= EPS:
+            out.notes.append(f"bin {b.id} holds {_n(level)} {_name(ds, p)}, at or below its refill point of "
+                             f"{_n(b.min_qty)}, and the reserve has none to refill it: put some away to the reserve")
+        elif left > EPS:
+            out.notes.append(f"bin {b.id} gets {_n(want - left)} of the {_n(want)} it needs: the reserve has no more "
+                             f"{_name(ds, p)}")
+    return out
+
+
+def create_refill(ds: Dataset, location: str, on: date | None = None) -> tuple[Dataset, WarehouseReport]:
+    """Make the move tasks :func:`propose_refill` proposes."""
+    p = propose_refill(ds, location, on)
+    if not p.moves:
+        raise WarehouseError("no picking bin needs refilling" + (": " + "; ".join(p.notes) if p.notes else ""))
+    day = on or ds.settings.planning_start
+    ids = _task_ids(ds)
+    made = [WarehouseTask(id=next(ids), location=location, kind=TaskKind.MOVE, product=x.product, batch=x.batch,
+                          qty=x.qty, from_bin=x.from_bin, to_bin=x.to_bin, created_on=day, note="refill")
+            for x in p.moves]
+    msg = (f"{len(made)} refill task{'s' if len(made) != 1 else ''} at {location}: "
+           + ", ".join(f"{_n(t.qty)} {_name(ds, t.product)} from {t.from_bin} to {t.to_bin}" for t in made[:6])
+           + (", …" if len(made) > 6 else ".") + (" " + "; ".join(p.notes).capitalize() + "." if p.notes else ""))
+    return (ds.model_copy(update={"warehouse_tasks": [*ds.warehouse_tasks, *made]}),
+            WarehouseReport(message=msg, tasks=[t.id for t in made], next_task=made[0].id))

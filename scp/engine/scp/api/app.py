@@ -61,8 +61,9 @@ from ..dropship import DropShipError, DropShipView
 from ..intercompany import IntercompanyError, IntercompanyView
 from ..jobwork import JobWorkError, JobWorkView
 from ..warehouse import (
-    PickList, PutawayProposal, WarehouseError, WarehouseReport, WarehouseView, cancel_task, confirm_task, create_putaway,
-    create_wave, move_task, pick_list, propose_putaway, view as warehouse_view,
+    PickList, PutawayProposal, RefillProposal, WarehouseError, WarehouseReport, WarehouseView, cancel_task, confirm_task,
+    create_putaway, create_refill, create_wave, move_task, pick_list, propose_putaway, propose_refill,
+    view as warehouse_view,
 )
 from ..sales.result import SalesReport, SalesView
 from ..promise import PromiseResult, check_lines, check_order, commit, run_bop, run_promise
@@ -983,6 +984,13 @@ def post_warehouse_putaway(ds: PlanData, location: str, as_of: dt.date | None = 
     return _wh(lambda: propose_putaway(ds, location, as_of))
 
 
+@app.post("/api/warehouse/refill", response_model=RefillProposal)
+def post_warehouse_refill(ds: PlanData, location: str, as_of: dt.date | None = None) -> RefillProposal:
+    """Which picking bins are at or below their refill point, and the moves from the reserve that fill them (nothing
+    is changed)."""
+    return _wh(lambda: propose_refill(ds, location, as_of))
+
+
 @app.post("/api/warehouse/picks", response_model=PickList)
 def post_warehouse_picks(ds: PlanData, wave: str) -> PickList:
     """A wave's pick list in walk order."""
@@ -992,8 +1000,8 @@ def post_warehouse_picks(ds: PlanData, wave: str) -> PickList:
 class WarehouseActionRequest(Out):
     model_config = ConfigDict(allow_inf_nan=False)
     dataset: PlanData
-    action: Literal["putaway", "wave", "confirm", "cancel", "move"]
-    location: str | None = None                     # putaway, wave, move
+    action: Literal["putaway", "refill", "wave", "confirm", "cancel", "move"]
+    location: str | None = None                     # putaway, refill, wave, move
     deliveries: list[str] | None = None             # wave: these (default: every one due by the date)
     task: str | None = None                         # confirm, cancel
     qty: float | None = None                        # confirm: what was moved (default: all); move: how much
@@ -1016,7 +1024,8 @@ class WarehouseActionResponse(Out):
 
 @app.post("/api/warehouse/act", response_model=WarehouseActionResponse)
 def post_warehouse_action(req: WarehouseActionRequest) -> WarehouseActionResponse:
-    """One warehouse step: make the put-away tasks, a wave of picks, confirm or cancel a task, move between bins."""
+    """One warehouse step: make the put-away or refill tasks, a wave of picks, confirm or cancel a task, move between
+    bins."""
     ds, a = req.dataset, req.action
 
     def need(v, what):
@@ -1027,6 +1036,8 @@ def post_warehouse_action(req: WarehouseActionRequest) -> WarehouseActionRespons
     def run():
         if a == "putaway":
             return create_putaway(ds, need(req.location, "place"), req.date)
+        if a == "refill":
+            return create_refill(ds, need(req.location, "place"), req.date)
         if a == "wave":
             return create_wave(ds, need(req.location, "place"), req.deliveries, req.date)
         if a == "confirm":

@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 from enum import Enum
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from .actuals import StockType
 from .common import Id, Model, Ref, Unit
@@ -56,7 +56,19 @@ class Bin(Model):
                                                                    "(empty: no limit)")
     max_kg: float | None = Unit("kg", default=None, description="Most weight it holds (empty: no limit)")
     product: str | None = Ref("product", default=None, description="Kept for one product (fixed-bin put-away)")
+    min_qty: float | None = Unit("qty", default=None,
+                                 description="Refill point of a fixed picking bin: at or below it, the bin is refilled "
+                                             "up to its most from the reserve (empty: refilled by hand)")
     blocked: bool = Field(False, description="Nothing is put away into it or picked from it")
+
+    @model_validator(mode="after")
+    def _refill(self) -> Bin:
+        if self.min_qty is not None:
+            if not self.product or not self.max_qty:
+                raise ValueError("a bin refilled at a point is kept for one product and holds a most")
+            if self.min_qty >= self.max_qty:
+                raise ValueError("a bin's refill point is below the most it holds")
+        return self
 
 
 class PutawayRule(Model):

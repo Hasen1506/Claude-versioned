@@ -1470,6 +1470,26 @@ is thinner.
 |---|---|---|---|
 | N346 | An order short of one product could only wait or be split by hand: nothing said that a product the company accepts in its place was free on the date asked, so on Kaveri an online order waited ten days for 902 grinders while 567 of the stronger model sat at the same warehouse. | Serious | **Fixed.** *Substitutions* (product, substitute, customers, valid dates, a note); promising offers each one's free stock on the date asked for the part not on time, held against the next order and within allocations; *Ship N as …* moves that part to a line of the substitute at the ordered price, which names the line it stands in for. Open: backorder processing does not take substitutes itself; customer segments by revenue, quotation conversion, rebates, freight on customer orders and customer consignment are in IDEAS.md. |
 
+### 8.3: Warehouse
+
+CONFORMANCE §6: 21 concepts against CPIM warehouse management, the S/4 guide §12 and Bartholdi & Hackman; 14 there,
+2 partial, 5 missing. Inside the warehouse it matches S/4's basic EWM; running and measuring one is thinner.
+
+**Refilling picking bins (W7), on Kaveri's Delhi DC.**
+
+* *Input:* the stock put away at go-live (two shelves of 300 for each appliance, the rest in the high rack), then the
+  week's deliveries picked, one pick 20 short. The first six shelves are kept for their appliance and refilled at 100.
+* *Processing:* *Warehouse → Refill picking bins*.
+* *Output:*
+  * S-01-03 (500 W grinder) holds 20 and gets 280; S-01-04 holds 100 and gets 200; S-01-05 (750 W) is empty and
+    gets 300. The kettles' shelves were not picked from.
+  * Four moves from the rack, first in first: 280 and 148 from R-01-02, 52 from R-01-03, 300 from R-02-01.
+  * Once the tasks are made, no bin needs refilling: the open refills count.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N347 | A picking shelf emptied by the picks stayed empty until someone noticed and typed a move from the rack: on Kaveri's Delhi DC the week's picks left the 750 W grinder's first shelf empty and the 500 W's at 20. | Serious | **Fixed.** A bin kept for one product can have a refill point; *Warehouse → Refill picking bins* lists the bins at or below it (counting open tasks into and out of them) and the moves from the reserve that fill them to their most, first expiring first, then first in, then nearest; one click makes the tasks. Open: slotting, handling units, cross-docking, the plan's check of a place's volume, warehouse measures and a wave's workload are in IDEAS.md. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

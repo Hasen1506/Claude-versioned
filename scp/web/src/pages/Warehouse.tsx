@@ -3,14 +3,14 @@
 // tasks. The phone page (Scan.tsx) confirms the same tasks with a scanner. Engine: scp/warehouse.
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { Dataset, PickList, PutawayProposal, WarehouseAction, WarehouseTask, WarehouseView } from "../api/types";
+import type { Dataset, PickList, PutawayProposal, RefillProposal, WarehouseAction, WarehouseTask, WarehouseView } from "../api/types";
 import { Badge, Edits, Empty, Panel, StageHeader, StatTile, Tabs } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
 import { Loc, Msg, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { store, useStore } from "../state/store";
 
-type View = "bins" | "putaway" | "picking" | "tasks";
+type View = "bins" | "putaway" | "refill" | "picking" | "tasks";
 
 /** Places that have bins, first the one asked for. */
 export function binPlaces(ds: Dataset): string[] {
@@ -100,6 +100,7 @@ export function Warehouse({ route }: { route: string[] }) {
       <Tabs<View> value={view} onChange={(x) => go("warehouse", x, loc)} tabs={[
         { id: "bins", label: "Stock by bin", count: v?.bins.filter((b) => b.product).length },
         { id: "putaway", label: "Put away", count: loose.length || undefined },
+        { id: "refill", label: "Refill picking bins" },
         { id: "picking", label: "Waves & picking", count: (ds.waves ?? []).filter((w) => w.location === loc).length || undefined },
         { id: "tasks", label: "Open tasks", count: open.length },
       ]} />
@@ -107,6 +108,7 @@ export function Warehouse({ route }: { route: string[] }) {
       {v && v.notes.map((n) => <div key={n} className="banner warning"><Badge sev="warning">Check</Badge><span><Msg text={n} /></span></div>)}
       {v && view === "bins" && <Bins v={v} />}
       {view === "putaway" && <Putaway ds={ds} loc={loc} v={v} />}
+      {view === "refill" && <Refill ds={ds} loc={loc} />}
       {view === "picking" && <Picking ds={ds} loc={loc} />}
       {view === "tasks" && <Tasks ds={ds} tasks={open} />}
     </div></div>
@@ -178,6 +180,42 @@ function Putaway({ ds, loc, v }: { ds: Dataset; loc: string; v: WarehouseView | 
           <td className="num">{qty(t.qty)}</td><td><code>{t.to_bin}</code></td><td>{t.storage_type}</td></tr>)}</tbody>
       </table>}
       {p?.notes.map((n) => <p key={n} className="banner warning"><Msg text={n} /></p>)}
+    </Panel>
+  </>);
+}
+
+function Refill({ ds, loc }: { ds: Dataset; loc: string }) {
+  const [p, setP] = useState<RefillProposal | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const step = useStep();
+  useEffect(() => {
+    let live = true;
+    api.refillProposal(ds, loc).then((x) => { if (live) { setP(x); setErr(null); } }, (e) => live && setErr(String(e)));
+    return () => { live = false; };
+  }, [ds, loc]);
+  const kept = (ds.bins ?? []).filter((b) => b.location === loc && b.min_qty != null).length;
+  return (<>
+    {step.banners}
+    {err && <div className="banner error" role="alert"><Badge sev="error">No proposal</Badge>{err}</div>}
+    <Panel flush title="Picking bins at their refill point" actions={<Edits>
+      <button className="btn primary" disabled={step.busy || !p?.moves.length} onClick={() => step.run("refill", { location: loc })}>
+        Make the refill tasks</button></Edits>}>
+      {p && !p.bins.length && <Empty title="No bin needs refilling">{kept
+        ? `Every one of the ${plural(kept, "picking bin")} with a refill point holds more than it, counting the open tasks into and out of it.`
+        : <>No bin here has a refill point: give a picking bin kept for one product its refill point under <a href={href("data", "bins")}>Storage bins</a>.</>}</Empty>}
+      {p && p.bins.length > 0 && <table className="t" aria-label="Bins to refill">
+        <thead><tr><th>Bin</th><th>Product</th><th className="num">Holds</th><th className="num">Refill at</th><th className="num">Most</th><th className="num">Refill</th></tr></thead>
+        <tbody>{p.bins.map((b) => <tr key={b.bin}><td><code>{b.bin}</code></td><td><Prod id={b.product} /></td>
+          <td className="num">{qty(b.level)}</td><td className="num">{qty(b.min_qty)}</td><td className="num">{qty(b.max_qty)}</td>
+          <td className="num"><b>{qty(b.refill)}</b></td></tr>)}</tbody>
+      </table>}
+      {p && p.moves.length > 0 && <table className="t" aria-label="Refill moves">
+        <thead><tr><th>From</th><th>Product</th><th>Batch</th><th className="num">Quantity</th><th>To</th></tr></thead>
+        <tbody>{p.moves.map((m, i) => <tr key={i}><td><code>{m.from_bin}</code></td><td><Prod id={m.product} /></td><td>{m.batch ?? ""}</td>
+          <td className="num">{qty(m.qty)}</td><td><code>{m.to_bin}</code></td></tr>)}</tbody>
+      </table>}
+      {p?.notes.map((n) => <p key={n} className="banner warning"><Msg text={n} /></p>)}
+      <p className="small muted" style={{ padding: "0 14px 12px", margin: 0 }}>The reserve is every storage type not picked from; its stock goes first expiring first, then first in, then nearest on the walk. Confirming a refill moves stock between bins: the place's stock and the plan stay as they are.</p>
     </Panel>
   </>);
 }

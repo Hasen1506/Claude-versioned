@@ -426,11 +426,12 @@ export const COLLECTIONS: CollectionDef[] = [
   {
     key: "bins", label: "Storage bins", singular: "bin", defName: "Bin", issueType: "bin",
     group: "Execution", keyOf: (o) => `${s(o.location)}/${s(o.id)}`,
-    blurb: "Every bin with the label its barcode carries, its place on the picking walk and what it holds at most (units or kilograms).",
+    blurb: "Every bin with the label its barcode carries, its place on the picking walk and what it holds at most (units or kilograms). A picking bin kept for one product can have a refill point: at or below it, the warehouse page proposes moves from the reserve that fill it to its most.",
     columns: [
       { label: "Place", get: (o) => s(o.location) }, { label: "Bin", get: (o) => s(o.id) }, { label: "Storage type", get: (o) => s(o.storage_type) },
       { label: "Walk", get: (o) => o.walk as number, num: true }, { label: "Most units", get: (o) => o.max_qty as number, num: true },
       { label: "Most kg", get: (o) => o.max_kg as number, num: true }, { label: "Kept for", get: (o) => s(o.product) },
+      { label: "Refill at", get: (o) => (o.min_qty ?? null) as number | null, num: true },
       { label: "Blocked", get: (o) => (o.blocked ? "yes" : "") },
     ],
   },

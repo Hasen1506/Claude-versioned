@@ -214,3 +214,16 @@ on 9 Oct 2026. Not built yet:
 * **Consignment at the customer and vendor-managed inventory (S26).** Our stock at the customer, billed when used, and
   replenishment we plan from their stock and sales.
 
+## Warehouse (CONFORMANCE §6)
+
+* **Slotting (W8).** Fast movers, by picks over the last weeks, proposed for the bins nearest the start of the walk.
+* **Handling units (W16).** Pallets and cartons with what is on them, nested and labelled (SSCC), moved and shipped
+  whole.
+* **Cross-docking (W17).** A receipt that a waiting delivery needs goes straight to goods out, not to a bin.
+* **Space against capacity in the plan (W19).** MRP warns when the projected stock at a place takes more volume than
+  the place holds, as S&OP already caps it.
+* **Warehouse measures (W20).** Pick accuracy (short picks), dock-to-stock time, order to goods issue, lines picked a
+  day.
+* **Workload of a wave (W21).** Hours a wave takes by time standards per line and per unit, against the people on the
+  shift.
+

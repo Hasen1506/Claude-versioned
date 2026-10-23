@@ -8,7 +8,7 @@ import type {
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
   User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
-  WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, PolicyView, PolicyApplyResponse, PolicyApplyInput, AccountingView, AccountingExport, IntercompanyView, IntercompanyAction, IntercompanyActionInput, IntercompanyActionResponse, CyclePlan, PutawayProposal, PickList, WarehouseActionResponse,
+  WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, PolicyView, PolicyApplyResponse, PolicyApplyInput, AccountingView, AccountingExport, IntercompanyView, IntercompanyAction, IntercompanyActionInput, IntercompanyActionResponse, CyclePlan, PutawayProposal, RefillProposal, PickList, WarehouseActionResponse,
   TransportView, TransportAction, TransportActionResponse,
   OutsideView, OutsideAction, OutsideActionInput, OutsideActionResponse,
   PortalView, PortalAction, PortalActionInput, PortalActionResponse, PortalLink,
@@ -415,6 +415,9 @@ export const api = {
   /** Where the stock in no bin would be put away, by the place's rules (nothing is changed). */
   putawayProposal: (ds: Dataset, location: string) =>
     planPost<PutawayProposal>(`/api/warehouse/putaway?location=${encodeURIComponent(location)}`, ds),
+  /** Which picking bins are at their refill point, and the moves from the reserve that fill them (nothing changes). */
+  refillProposal: (ds: Dataset, location: string) =>
+    planPost<RefillProposal>(`/api/warehouse/refill?location=${encodeURIComponent(location)}`, ds),
   /** A wave's pick list, in walk order. */
   pickList: (ds: Dataset, wave: string) => planPost<PickList>(`/api/warehouse/picks?wave=${encodeURIComponent(wave)}`, ds),
   /** One warehouse step: put-away tasks, a wave, confirm or cancel a task (bin and product as read), a bin move. */

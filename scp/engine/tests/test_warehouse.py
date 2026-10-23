@@ -383,3 +383,86 @@ def test_a_pick_from_a_bin_emptied_meanwhile_is_refused():
                            "qty": 25, "note": "water damage"})
     with pytest.raises(wh.WarehouseError, match="bin S2 holds only 0"):
         wh.confirm_task(ds(d), rep.next_task)
+
+
+# ---- refilling picking bins (Enterprise 8.3, CONFORMANCE §6, W7) -------------------------------------------------
+
+def _refill(s1: dict | None = None, reserve: tuple = (("OLD", 10, "R2", "2026-01-02"), ("NEW", 30, "R1", "2026-01-01")),
+            **kw) -> dict:
+    """S1 is B's picking bin (most 20, refilled at 5) holding 4 of batch NEW, and S2 a shelf holding 7 more; the rack is
+    the reserve: OLD (expires 1 Mar) in R2, NEW (expires 1 Jun) in R1, nearer on the walk and in first."""
+    d = plant()
+    d["products"][1]["shelf_life_days"] = 200
+    d["location_products"][1]["on_hand"] = 0
+    d["bins"][0].update({"product": "B", "min_qty": 5, **(s1 or {})})
+    d["batches"] = [{"product": "B", "id": "OLD", "expires_on": "2026-03-01"},
+                    {"product": "B", "id": "NEW", "expires_on": "2026-06-01"}]
+    rows = [("NEW", 4, "S1", "2026-01-03"), ("NEW", 7, "S2", "2026-01-03"), *reserve]
+    d["movements"] = [{"id": f"GM-{i:05d}", "date": on, "type": "opening", "location": "P", "product": "B", "qty": q,
+                       "batch": b, "bin": bn, **kw} for i, (b, q, bn, on) in enumerate(rows, 1)]
+    return d
+
+
+def test_a_picking_bin_at_its_refill_point_is_filled_to_its_most_from_the_reserve_first_expiring_first():
+    D = ds(_refill())
+    p = wh.propose_refill(D, "P")
+    # S1 holds 4 ≤ 5: 16 to bring it to 20. OLD expires first (though farther on the walk and in later): its 10, then
+    # 6 of NEW. S2 is a shelf, picked from, so never a source.
+    assert [(m.from_bin, m.batch, m.qty, m.to_bin) for m in p.moves] == [("R2", "OLD", 10, "S1"), ("R1", "NEW", 6, "S1")]
+    assert [(b.bin, b.level, b.refill) for b in p.bins] == [("S1", 4, 16)] and p.notes == []
+    D2, rep = wh.create_refill(D, "P")
+    assert [(t.kind.value, t.note) for t in D2.warehouse_tasks] == [("move", "refill"), ("move", "refill")]
+    assert wh.propose_refill(D2, "P").moves == []            # open refills count: S1 is at 20 with them
+    for tid in rep.tasks:
+        D2, _ = wh.confirm_task(D2, tid)
+    by_batch = {(r.bin, r.batch): r.qty for r in wh.view(D2, "P").bins if r.product}
+    assert by_batch == {("S1", "NEW"): 10, ("S1", "OLD"): 10, ("S2", "NEW"): 7, ("R1", "NEW"): 24}
+    assert place_stock(D2) == place_stock(D) and plan_text(D2) == plan_text(D)   # a bin move is not a stock change
+
+
+def test_a_bin_above_its_refill_point_waits_and_open_picks_out_of_it_count():
+    assert wh.propose_refill(ds(_refill(s1={"min_qty": 3})), "P").moves == []      # 4 > 3
+    assert [b.refill for b in wh.propose_refill(ds(_refill(s1={"min_qty": 4})), "P").bins] == [16]   # 4: at it
+    assert wh.propose_refill(ds(_refill(s1={"blocked": True})), "P").bins == []     # a blocked bin is not refilled
+    d = _refill(s1={"max_kg": 30})
+    d["products"][1]["weight_kg"] = 2.0                    # 4 in it weigh 8 kg: 11 more fit in its 30 kg, not 16
+    assert [b.refill for b in wh.propose_refill(ds(d), "P").bins] == [11]
+    d = _refill(s1={"min_qty": 3})
+    d["warehouse_tasks"] = [{"id": "WT-0001", "location": "P", "kind": "pick", "product": "B", "batch": "NEW", "qty": 2,
+                             "from_bin": "S1", "created_on": START}]
+    p = wh.propose_refill(ds(d), "P")                      # 4 less the 2 still to be picked: 2 ≤ 3, so 18
+    assert [(b.level, b.refill) for b in p.bins] == [(2, 18)]
+    assert [(m.from_bin, m.batch, m.qty) for m in p.moves] == [("R2", "OLD", 10), ("R1", "NEW", 8)]
+    d["warehouse_tasks"].append({"id": "WT-0002", "location": "P", "kind": "pick", "product": "B", "batch": "OLD",
+                                 "qty": 4, "from_bin": "R2", "created_on": START})
+    p = wh.propose_refill(ds(d), "P")                      # 4 of OLD are still to be picked from R2: 6 of it are free
+    assert [(m.from_bin, m.batch, m.qty) for m in p.moves] == [("R2", "OLD", 6), ("R1", "NEW", 12)]
+
+
+def test_two_picking_bins_refilled_from_one_reserve_never_count_the_same_stock():
+    d = _refill()
+    d["bins"][1].update({"product": "B", "min_qty": 8})    # S2 too: 7 ≤ 8, so 13 more
+    p = wh.propose_refill(ds(d), "P")
+    # S1 first on the walk takes OLD's 10 and 6 of NEW; S2 the next 13 of NEW's 30
+    assert [(m.from_bin, m.batch, m.qty, m.to_bin) for m in p.moves] == [
+        ("R2", "OLD", 10, "S1"), ("R1", "NEW", 6, "S1"), ("R1", "NEW", 13, "S2")]
+
+
+def test_a_short_or_empty_reserve_is_named_and_blocked_or_inspection_stock_is_not_taken():
+    p = wh.propose_refill(ds(_refill(reserve=(("OLD", 10, "R2", "2026-01-01"),))), "P")
+    assert [(m.from_bin, m.qty) for m in p.moves] == [("R2", 10)]
+    assert p.notes == ["bin S1 gets 10 of the 16 it needs: the reserve has no more B"]
+    d = _refill()
+    d["bins"][3]["blocked"] = True                         # R2 is blocked: only NEW from R1
+    assert [(m.from_bin, m.qty) for m in wh.propose_refill(ds(d), "P").moves] == [("R1", 16)]
+    p = wh.propose_refill(ds(_refill(reserve=(("OLD", 10, "R2", "2026-01-01"),), stock_type="quality")), "P")
+    assert p.moves == [] and "the reserve has none to refill it" in p.notes[0]
+    with pytest.raises(wh.WarehouseError, match="no picking bin needs refilling"):
+        wh.create_refill(ds(_refill(s1={"min_qty": 3})), "P")
+
+
+def test_a_refill_point_needs_a_fixed_product_and_a_most_above_it():
+    for bad in ({"product": None}, {"max_qty": None}, {"min_qty": 20}):
+        d = _refill(s1=bad)
+        with pytest.raises(ValueError, match="refill"):
+            Dataset.model_validate(d)

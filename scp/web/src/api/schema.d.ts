@@ -2327,6 +2327,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/warehouse/refill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Warehouse Refill
+         * @description Which picking bins are at or below their refill point, and the moves from the reserve that fill them (nothing
+         *     is changed).
+         */
+        post: operations["post_warehouse_refill_api_warehouse_refill_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/warehouse/picks": {
         parameters: {
             query?: never;
@@ -2358,7 +2379,8 @@ export interface paths {
         put?: never;
         /**
          * Post Warehouse Action
-         * @description One warehouse step: make the put-away tasks, a wave of picks, confirm or cancel a task, move between bins.
+         * @description One warehouse step: make the put-away or refill tasks, a wave of picks, confirm or cancel a task, move between
+         *     bins.
          */
         post: operations["post_warehouse_action_api_warehouse_act_post"];
         delete?: never;
@@ -3708,6 +3730,11 @@ export interface components {
              * @description Kept for one product (fixed-bin put-away)
              */
             product?: string | null;
+            /**
+             * Min Qty
+             * @description Refill point of a fixed picking bin: at or below it, the bin is refilled up to its most from the reserve (empty: refilled by hand)
+             */
+            min_qty?: number | null;
             /**
              * Blocked
              * @description Nothing is put away into it or picked from it
@@ -12764,6 +12791,19 @@ export interface components {
              */
             name: string;
         };
+        /** ProposedMove */
+        ProposedMove: {
+            /** Product */
+            product: string;
+            /** Batch */
+            batch: string | null;
+            /** Qty */
+            qty: number;
+            /** From Bin */
+            from_bin: string;
+            /** To Bin */
+            to_bin: string;
+        };
         /** ProposedTask */
         ProposedTask: {
             /** Product */
@@ -13339,6 +13379,32 @@ export interface components {
         RecoveryCodes: {
             /** Codes */
             codes: string[];
+        };
+        /** RefillBin */
+        RefillBin: {
+            /** Bin */
+            bin: string;
+            /** Product */
+            product: string;
+            /** Level */
+            level: number;
+            /** Min Qty */
+            min_qty: number;
+            /** Max Qty */
+            max_qty: number;
+            /** Refill */
+            refill: number;
+        };
+        /** RefillProposal */
+        RefillProposal: {
+            /** Location */
+            location: string;
+            /** Bins */
+            bins: components["schemas"]["RefillBin"][];
+            /** Moves */
+            moves: components["schemas"]["ProposedMove"][];
+            /** Notes */
+            notes: string[];
         };
         /**
          * ReleaseLevel
@@ -18251,7 +18317,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "putaway" | "wave" | "confirm" | "cancel" | "move";
+            action: "putaway" | "refill" | "wave" | "confirm" | "cancel" | "move";
             /** Location */
             location?: string | null;
             /** Deliveries */
@@ -22845,6 +22911,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PutawayProposal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_warehouse_refill_api_warehouse_refill_post: {
+        parameters: {
+            query: {
+                location: string;
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefillProposal"];
                 };
             };
             /** @description Validation Error */

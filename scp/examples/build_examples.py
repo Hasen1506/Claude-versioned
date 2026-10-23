@@ -68,9 +68,11 @@ def weekly_history(loc: str, prod: str, base: float, season: dict[int, float], r
 def delhi_warehouse() -> dict:
     """The Delhi DC's bins (Enterprise 6.1): a picking area of shelves along the walk, filled first and topped up with
     the same product, and a high-rack reserve by weight behind it. Stock taken at go-live is in no bin yet: putting
-    it away is the first warehouse step."""
-    shelves = [{"location": "DC-DELHI", "id": f"S-01-{i:02d}", "storage_type": "SHELF", "walk": 10 * i, "max_qty": 300}
-               for i in range(1, 9)]
+    it away is the first warehouse step. The first six shelves are kept two to each appliance and refilled from the
+    reserve when down to 100 (Enterprise 8.3); the last two take whatever comes."""
+    kept = ["KT-15", "KT-15", "MG-500", "MG-500", "MG-750", "MG-750"]
+    shelves = [{"location": "DC-DELHI", "id": f"S-01-{i:02d}", "storage_type": "SHELF", "walk": 10 * i, "max_qty": 300,
+                **({"product": kept[i - 1], "min_qty": 100} if i <= len(kept) else {})} for i in range(1, 9)]
     racks = [{"location": "DC-DELHI", "id": f"R-{a:02d}-{i:02d}", "storage_type": "RACK", "walk": 100 * a + 10 * i,
               "max_kg": 1800} for a in (1, 2) for i in range(1, 5)]
     return {

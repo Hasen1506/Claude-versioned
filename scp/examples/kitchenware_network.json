@@ -1158,42 +1158,54 @@
    "id": "S-01-01",
    "storage_type": "SHELF",
    "walk": 10,
-   "max_qty": 300
+   "max_qty": 300,
+   "product": "KT-15",
+   "min_qty": 100
   },
   {
    "location": "DC-DELHI",
    "id": "S-01-02",
    "storage_type": "SHELF",
    "walk": 20,
-   "max_qty": 300
+   "max_qty": 300,
+   "product": "KT-15",
+   "min_qty": 100
   },
   {
    "location": "DC-DELHI",
    "id": "S-01-03",
    "storage_type": "SHELF",
    "walk": 30,
-   "max_qty": 300
+   "max_qty": 300,
+   "product": "MG-500",
+   "min_qty": 100
   },
   {
    "location": "DC-DELHI",
    "id": "S-01-04",
    "storage_type": "SHELF",
    "walk": 40,
-   "max_qty": 300
+   "max_qty": 300,
+   "product": "MG-500",
+   "min_qty": 100
   },
   {
    "location": "DC-DELHI",
    "id": "S-01-05",
    "storage_type": "SHELF",
    "walk": 50,
-   "max_qty": 300
+   "max_qty": 300,
+   "product": "MG-750",
+   "min_qty": 100
   },
   {
    "location": "DC-DELHI",
    "id": "S-01-06",
    "storage_type": "SHELF",
    "walk": 60,
-   "max_qty": 300
+   "max_qty": 300,
+   "product": "MG-750",
+   "min_qty": 100
   },
   {
    "location": "DC-DELHI",

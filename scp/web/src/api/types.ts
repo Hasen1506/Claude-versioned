@@ -172,6 +172,7 @@ export type CyclePlan = S["CyclePlan"];
 export type CycleRow = S["CycleRow"];
 export type BinRow = S["BinRow"];
 export type PutawayProposal = S["PutawayProposal"];
+export type RefillProposal = S["RefillProposal"];
 export type PickList = S["PickList"];
 export type PickRow = S["PickRow"];
 export type WarehouseTask = S["WarehouseTask"];

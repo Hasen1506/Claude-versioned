@@ -122,6 +122,20 @@ test("put away at go-live, a wave picked by scanning on the phone, one pick shor
   await page.goto("/#/warehouse/bins/DC-DELHI");
   await expect(page.getByRole("table", { name: "Stock by bin" })).toBeVisible();
   await expect(page.getByRole("table", { name: "Stock in no bin" })).toHaveCount(0);
+
+  // Enterprise 8.3 (CONFORMANCE §6, W7): the picks emptied the grinders' shelves; each is kept for its product and
+  // refilled from the rack at 100. S-01-03 holds the 20 the short pick left, S-01-04 100, S-01-05 none: 280, 200
+  // and 300 up to their 300, from the rack first in first.
+  await page.getByRole("tab", { name: "Refill picking bins" }).click();
+  const need = page.getByRole("table", { name: "Bins to refill" });
+  await expect(need.locator("tbody tr")).toHaveCount(3, { timeout: 30_000 });
+  await expect(need.getByRole("row", { name: /^S-01-03 / })).toContainText(/Mixer grinder 500 W\s*20\s*100\s*300\s*280/);
+  await expect(need.getByRole("row", { name: /^S-01-04 / })).toContainText(/100\s*100\s*300\s*200/);
+  await expect(need.getByRole("row", { name: /^S-01-05 / })).toContainText(/Mixer grinder 750 W\s*0\s*100\s*300\s*300/);
+  await expect(page.getByRole("table", { name: "Refill moves" }).locator("tbody tr")).toHaveCount(4);
+  await page.getByRole("button", { name: "Make the refill tasks" }).click();
+  await expect(done(page)).toContainText("4 refill tasks at Delhi NCR DC: 280 Mixer grinder 500 W from R-01-02 to S-01-03", { timeout: 30_000 });
+  await expect(page.getByText("No bin needs refilling")).toBeVisible();      // the open refills count
 });
 
 test("bins, storage types and put-away rules are master data", async ({ page }) => {
