@@ -32,7 +32,7 @@ from .documents import (
     StockError, cancel_counts, complete, count_doc, enter_counts, move_stock, post_counts, reverse, scrap, short_orders,
     shorten,
 )
-from .lots import planning_stock
+from .lots import order_stock, planning_stock
 from .stock import EPS, counterparty, movement_ids, pending_openings
 from ..plan.structure import needs
 
@@ -80,6 +80,11 @@ def _on(ds: Dataset, on: date | None) -> date:
     return on or ds.settings.planning_start
 
 
+def _prod(ds: Dataset, pid: str) -> str:
+    p = ds.product_by_id.get(pid)
+    return (p.name if p and p.name else None) or pid
+
+
 def _q(q: float) -> float:
     return round(q, 6)
 
@@ -118,7 +123,7 @@ def ship(ds: Dataset, oid: str, qty: float | None = None, on: date | None = None
     transit = shipped[(frm, rc.product)] + q - got[(rc.location, rc.product)]
     return (ds.model_copy(update={"movements": [*ds.movements, *moves]}),
             ActionReport(ok=True, movements=[x.id for x in moves], doc=moves[0].doc,
-                         message=f"{oid}: {_n(q)} shipped from {_at(ds, frm)} on {on.isoformat()}{_batches(moves)}; "
+                         message=f"{oid}: {_n(q)} {_prod(ds, rc.product)} shipped from {_at(ds, frm)} on {on.isoformat()}{_batches(moves)}; "
                                  f"{_n(transit)} now in transit to {_at(ds, rc.location)}"
                                  + ("; " + "; ".join(notes) if notes else "") + "."))
 
@@ -141,7 +146,10 @@ def _production_parts(ds: Dataset, rc: ScheduledReceipt, total: float, made: flo
                       issued: dict) -> tuple[list[tuple[str, str, float]], str]:
     """The default backflush, shared by posting and its read-only preview."""
     if not (rc.reservations or rc.original_reservations):
-        return _bom_parts(ds, rc, made, first=before_q <= EPS), "from the bill of materials"
+        # what all made so far draws, less what was issued to the order already (earlier backflushes, parts sent to
+        # a job worker, issues posted by hand)
+        parts = [(loc, prod, q - issued.get((loc, prod), 0.0)) for loc, prod, q in _bom_parts(ds, rc, total, True)]
+        return [x for x in parts if x[2] > EPS], "from the bill of materials"
     parts = []
     ordered = _ordered(rc)
     ps = ds.production_source_by_id.get(rc.source or "")
@@ -270,7 +278,7 @@ def receive(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
     notes += more
     left = ordered - total
     status = ("closed short" if left > EPS else "complete") if closes else f"{_n(left)} still to come"
-    msg = (f"{oid}: {_n(q)} {'made' if rc.kind is ReceiptKind.PRODUCTION else 'received'} at {_at(ds, rc.location)} on "
+    msg = (f"{oid}: {_n(q)} {_prod(ds, rc.product)} {'made' if rc.kind is ReceiptKind.PRODUCTION else 'received'} at {_at(ds, rc.location)} on "
            f"{on.isoformat()}{_batches(moves)} ({status})"
            + ("; " + "; ".join(notes) if notes else "")
            + ". Stock and the order are updated when the plan moves past this date.")
@@ -317,6 +325,22 @@ def ordered_now(ds: Dataset, d: DemandRecord) -> float:
     return d.ordered_qty if d.ordered_qty is not None else d.qty
 
 
+def freeze_price(ds: Dataset, oid: str) -> tuple[Dataset, str]:
+    """Fix the price of a line that has none of its own when its goods leave (S/4 guide §15, pricing type G rather than
+    B): today's list price at the line's quantity scale, less the customer's discounts. It is billed at that, not at
+    whatever the list says when the invoice is made. Returns the words saying so ("" when nothing changed)."""
+    d = next((x for x in ds.demand if x.kind is DemandKind.SALES_ORDER and x.id == oid), None)
+    if d is None or d.price is not None:
+        return ds, ""
+    base, disc = ds.list_price(d.location, d.product, ordered_now(ds, d))
+    if base is None:
+        return ds, ""
+    net = round(base * (1 - disc), 6)
+    new = d.model_copy(update={"price": net, "discount": round(disc, 6)})
+    return (ds.model_copy(update={"demand": [new if x is d else x for x in ds.demand]}),
+            f"{oid} had no agreed price: {ds.settings.currency} {net:,.2f} a unit fixed at goods issue")
+
+
 def ship_point(ds: Dataset, d: DemandRecord) -> str | None:
     """Where a sales order ships from: where it was promised from, else the customer's first route, else the order's
     own place when it is one that holds stock."""
@@ -348,14 +372,30 @@ def deliver(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
     if q <= EPS:
         raise PostingError(f"everything on {oid} has already been delivered")
     on = _on(ds, on)
-    m = GoodsMovement(id=next(movement_ids(ds)), date=on, type=MovementType.SALE, location=frm, product=d.product,
+    ids = movement_ids(ds)
+    m = GoodsMovement(id=next(ids), date=on, type=MovementType.SALE, location=frm, product=d.product,
                       qty=_q(q), reference=oid, counterparty=d.location, final=bool(final),
                       note=(note or ("Delivered, rest cancelled" if final else "Delivered"))[:200],
                       batch=(lot or {}).get("batch"))
+    # stock held for this order at the shipping place goes first (S/4 sales-order stock); the rest is free stock
+    held = order_stock(x for x in [*ds.movements, *pending_openings(ds)] if x.date <= on).get((frm, d.product), {})
+    mine = min(q, max(0.0, held.get(oid, 0.0)))
+    first = [m]
+    if mine > EPS:
+        first = [m.model_copy(update={"qty": _q(mine), "sales_order": oid})]
+        if q - mine > EPS:
+            first.append(m.model_copy(update={"id": next(ids), "qty": _q(q - mine), "final": False}))
+            first[0] = first[0].model_copy(update={"final": False})
+            first[-1] = first[-1].model_copy(update={"final": bool(final)})
     left = ordered - done - q
     status = ("closed short" if left > EPS else "complete") if final or left <= EPS else f"{_n(left)} still open"
-    moves, _, notes = _complete(ds, [m], on, lot)
-    msg = (f"{oid}: {_n(q)} delivered to {_at(ds, d.location)} from {_at(ds, frm)} on {on.isoformat()}{_batches(moves)} "
+    moves, _, notes = _complete(ds, first, on, lot)
+    if mine > EPS:
+        notes = [f"{_n(mine)} from the stock held for {oid}", *notes]
+    ds, fixed = freeze_price(ds, oid)
+    if fixed:
+        notes.append(fixed)
+    msg = (f"{oid}: {_n(q)} {_prod(ds, d.product)} delivered to {_at(ds, d.location)} from {_at(ds, frm)} on {on.isoformat()}{_batches(moves)} "
            f"({status})" + ("; " + "; ".join(notes) if notes else "")
            + ". Stock and the order are updated when the plan moves past this date.")
     return (ds.model_copy(update={"movements": [*ds.movements, *moves]}),
@@ -422,7 +462,7 @@ def post(ds: Dataset, action: str, *, order: str | None = None, qty: float | Non
          note: str = "", ship_from: str | None = None, lot: Lot | None = None, location: str | None = None,
          product: str | None = None, to_type: StockType | None = None, movement: str | None = None,
          doc: str | None = None, nodes: list[tuple[str, str]] | None = None, block: bool = True,
-         uncounted_zero: bool = False) -> tuple[Dataset, ActionReport]:
+         uncounted_zero: bool = False, classes: list[str] | None = None) -> tuple[Dataset, ActionReport]:
     lot = lot or {}
     if qty is not None and action in {"receive", "deliver", "ship", "move", "scrap"}:
         qty = round(float(qty), 6)
@@ -449,6 +489,11 @@ def post(ds: Dataset, action: str, *, order: str | None = None, qty: float | Non
             return post_counts(ds, doc or "", uncounted_zero)
         if action == "count_cancel":
             return cancel_counts(ds, doc or "")
+        if action == "cycle_count":
+            from .cycle import count_due
+            if not location:
+                raise PostingError("say which place to count")
+            return count_due(ds, location, on, classes)
         if action == "shorten":
             if qty is None:
                 raise PostingError("say how many the order should be for")

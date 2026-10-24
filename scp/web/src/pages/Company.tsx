@@ -43,7 +43,8 @@ export function blankCompany(v: CompanyValues): Dataset {
       horizon_days: 7 * (v.horizonWeeks ?? ASSUMPTIONS.horizonWeeks), bucket: "week", week_start: 0, fx_rates: v.fx,
       wacc: (v.wacc ?? ASSUMPTIONS.wacc) / 100, holding_spread: (v.spread ?? ASSUMPTIONS.spread) / 100,
       default_service_level: (v.service ?? ASSUMPTIONS.service) / 100, default_calendar: "CAL-STD", ...(v.timezone ? { timezone: v.timezone } : {}),
-      default_lot_policy: COVER.find((c) => c.id === v.cover)!.policy, default_lot_periods: COVER.find((c) => c.id === v.cover)!.periods },
+      default_lot_policy: COVER.find((c) => c.id === v.cover)!.policy, default_lot_periods: COVER.find((c) => c.id === v.cover)!.periods,
+      working_day_fences: true },   // fences and goods-receipt time in working days, as S/4 (ENTERPRISE_PLAN 2.3)
     calendars: [{ id: "CAL-STD", name: workweekName(v.workdays), workdays: v.workdays, holidays: [] }],
     locations: [], products: [], location_products: [], resources: [], production_sources: [],
     purchasing_sources: [], lanes: [], demand: [], receipts: [], history: [], events: [], npi: [], overrides: [],

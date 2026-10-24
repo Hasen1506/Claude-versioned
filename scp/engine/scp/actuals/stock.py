@@ -36,10 +36,18 @@ def pending_openings(ds: Dataset) -> list[GoodsMovement]:
     start = ds.settings.planning_start
     seen = {(m.location, m.product) for m in ds.movements if m.date < start}
     ids = movement_ids(ds)
-    return [GoodsMovement(id=next(ids), date=start - timedelta(days=1), type=MovementType.OPENING, location=lp.location,
-                          product=lp.product, qty=round(lp.on_hand, 6), note="Opening balance: stock entered at setup")
-            for lp in ds.location_product_by_key.values()      # a record kept twice: the one planning uses
-            if lp.on_hand > EPS and (lp.location, lp.product) not in seen]
+    out = [GoodsMovement(id=next(ids), date=start - timedelta(days=1), type=MovementType.OPENING, location=lp.location,
+                         product=lp.product, qty=round(lp.on_hand, 6), note="Opening balance: stock entered at setup")
+           for lp in ds.location_product_by_key.values()      # a record kept twice: the one planning uses
+           if lp.on_hand > EPS and (lp.location, lp.product) not in seen]
+    # stock held for a sales order, typed in at setup: its own opening, held for that order
+    held = {(m.location, m.product, m.sales_order) for m in ds.movements if m.date < start and m.sales_order}
+    out += [GoodsMovement(id=next(ids), date=start - timedelta(days=1), type=MovementType.OPENING, location=lp.location,
+                          product=lp.product, qty=round(os_.qty, 6), sales_order=os_.order,
+                          note=f"Opening balance: stock held for {os_.order}, entered at setup")
+            for lp in ds.location_product_by_key.values() for os_ in lp.order_stock
+            if os_.qty > EPS and (lp.location, lp.product, os_.order) not in held]
+    return out
 
 
 def before(ds: Dataset, as_of: date) -> list[GoodsMovement]:
@@ -48,10 +56,11 @@ def before(ds: Dataset, as_of: date) -> list[GoodsMovement]:
 
 
 def stock(movs: list[GoodsMovement]) -> dict[Node, float]:
-    """On-hand per node = Σ signed movements."""
+    """Free on-hand per node = Σ signed movements, without the stock held for sales orders."""
     out: dict[Node, float] = defaultdict(float)
     for m in movs:
-        out[(m.location, m.product)] += m.signed
+        if m.sales_order is None:
+            out[(m.location, m.product)] += m.signed
     return dict(out)
 
 
@@ -64,16 +73,21 @@ def stock_rows(ds: Dataset, as_of: date) -> list[StockRow]:
     release, a block or a scrap acts on)."""
     movs = sorted(before(ds, as_of), key=lambda m: (m.date, m.id))
     by_node: dict[Node, list[GoodsMovement]] = defaultdict(list)
+    held: dict[Node, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for m in movs:
-        by_node[(m.location, m.product)].append(m)
+        if m.sales_order is None:
+            by_node[(m.location, m.product)].append(m)
+        else:     # held for a sales order: shown apart, never in the free stock
+            held[(m.location, m.product)][m.sales_order] += m.signed
     now_node: dict[Node, list[GoodsMovement]] = by_node
     if as_of == ds.settings.planning_start:
         now_node = defaultdict(list)
         for m in sorted([*ds.movements, *pending_openings(ds)], key=lambda m: (m.date, m.id)):
-            now_node[(m.location, m.product)].append(m)
+            if m.sales_order is None:
+                now_node[(m.location, m.product)].append(m)
     transit = in_transit(ds)
     nodes = (set(by_node) | set(now_node) | {(lp.location, lp.product) for lp in ds.location_products if lp.on_hand > 0}
-             | set(transit))
+             | set(transit) | set(held))
     setup = {(m.location, m.product) for m in pending_openings(ds)}
     bi = batch_index(ds)
     counting = {(it.location, it.product): d.id for d in ds.inventory_docs if d.status == "open" for it in d.items}
@@ -135,7 +149,8 @@ def stock_rows(ds: Dataset, as_of: date) -> list[StockRow]:
                              quality=round(kinds["quality"], 6), blocked=round(kinds["blocked"], 6),
                              expired=round(expired, 6), in_transit=round(transit.get(n, 0.0), 6),
                              planning_stock=round(plan, 6) if ms else None, lots=[] if plain else lots,
-                             serials=sorted(k for k, v in serials.items() if v > 0.5), counting=counting.get(n)))
+                             serials=sorted(k for k, v in serials.items() if v > 0.5), counting=counting.get(n),
+                             held={so: round(q, 6) for so, q in sorted(held.get(n, {}).items()) if abs(q) > EPS}))
     return rows
 
 

@@ -18,7 +18,7 @@ from .result import DataQualityRow, Kpi, KpiRow, TowerResult, WorkItem
 from .fix import FixError, FixResult, fix_edits, try_fix
 from .worklist import Raw, Tracker, collect, get_tracker
 
-ONE_CLICK = {"expedite", "switch_supplier", "overtime"}
+ONE_CLICK = {"expedite", "switch_supplier", "overtime", "push_out"}
 SEV = {"error": 0, "warning": 1, "info": 2}
 
 
@@ -60,6 +60,28 @@ def try_inbox_fix(ds: Dataset, key: str, *, tracker: Tracker | None = None, stor
     return try_fix(ds, key, lambda d, p: tracker.peek(d, detect(d, p), scope)[0])
 
 
+def _price(ds: Dataset, plan: PlanResult, items: list[WorkItem]) -> None:
+    price_items(ds, plan if plan.ok else None, items)                 # roadmap F: money at risk and one action each
+    for w in items:                                                   # which actions can be tried in one click
+        if w.action is not None and w.action.kind in ONE_CLICK:
+            try:
+                fix_edits(ds, plan if plan.ok else None, w)
+                w.action.one_click = True
+            except FixError as e:
+                w.action.why_not = str(e)
+
+
+def open_items(ds: Dataset, plan: PlanResult, *, tracker: Tracker | None = None, store: Store | None = None,
+               scope: str | None = None) -> list[WorkItem]:
+    """The worklist's open and acknowledged items with this plan, as the inbox ranks them (most money at risk
+    first), each priced and its action marked one-click or not. Records nothing."""
+    tracker = tracker or (Tracker(store) if store is not None else get_tracker())
+    live = [w for w in tracker.peek(ds, detect(ds, plan), scope)[0] if w.status in ("open", "acknowledged")]
+    _price(ds, plan, live)
+    by = {w.id: w for w in live}
+    return [by[i] for i in inbox_order(live) if i in by]
+
+
 def _previous_base(ds: Dataset, store: Store | None = None, scope: str | None = None) -> tuple[Dataset | None, str]:
     """The latest earlier base version of this company: of the server company ``scope`` when one is open, else the
     browser's own versions with the same company name."""
@@ -96,14 +118,7 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     out.worklist = sorted(live, key=lambda w: (order.get(w.status, 3), not w.breached, SEV[w.severity], -w.age_days,
                                                w.category, w.key))
     out.cleared = cleared
-    price_items(ds, plan if plan.ok else None, out.worklist)          # roadmap F: money at risk and one action each
-    for w in out.worklist:                                            # which actions can be tried in one click
-        if w.action is not None and w.action.kind in ONE_CLICK:
-            try:
-                fix_edits(ds, plan if plan.ok else None, w)
-                w.action.one_click = True
-            except FixError as e:
-                w.action.why_not = str(e)
+    _price(ds, plan, out.worklist)
     out.inbox = inbox_order(out.worklist)
     by_id = {w.id: w for w in out.worklist}
     out.money_at_risk = round(sum(by_id[i].money_at_risk for i in out.inbox), 2)
@@ -112,6 +127,7 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     k.forecast()
     k.confirmation()
     k.otif()
+    k.fill_and_cycle_time()
     k.supplier()
     k.adherence()
     if plan.ok:
@@ -132,12 +148,12 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
         out.notes.append("The supply plan is blocked by readiness errors: plan-based KPIs and exceptions are missing.")
     k.ageing(live)
     order_ids = ["forecast_accuracy", "forecast_bias", "confirmation_rate", "otif_confirmed", "otif_requested",
-                 "perfect_order", "supplier_reliability", "schedule_adherence", "days_of_supply", "excess_obsolete",
+                 "perfect_order", "fill_rate", "order_cycle_time", "supplier_reliability", "schedule_adherence", "days_of_supply", "excess_obsolete",
                  "inventory_turns", "dio", "dso", "dpo", "cash_to_cash",
                  "plan_stability", "exception_ageing", "cost_to_serve"]
     out.kpis = sorted(k.out, key=lambda x: order_ids.index(x.id) if x.id in order_ids else 99)
     return out
 
 
-__all__ = ["FixError", "FixResult", "Kpi", "TowerResult", "WorkItem", "get_tracker", "plan_stability", "run_tower",
-           "try_inbox_fix"]
+__all__ = ["FixError", "FixResult", "Kpi", "TowerResult", "WorkItem", "get_tracker", "open_items", "plan_stability",
+           "run_tower", "try_inbox_fix"]

@@ -34,6 +34,9 @@ class DemandRecord(Model):
     discount: float = Unit("fraction", lt=1, default=0.0,
                            description="Sales order: the discount its net price already has in it (customer and price "
                                        "discounts together), shown on its documents")
+    substitute_for: str | None = Field(None, max_length=64,
+                                       description="Sales order: the order line this one ships in place of (a substitute "
+                                                   "product taken for the part that line could not have on time)")
     fulfilled_confirmations: list[Confirmation] = Field(default_factory=list,
         description="Schedule lines removed by deliveries; retained for quantity-based confirmation metrics")
     period_days: int | None = Field(
@@ -50,6 +53,11 @@ class DemandRecord(Model):
         None, ge=1, le=366, description="Forecast only: the days the forecast as entered covered (see `original_date`)")
     original_qty: float | None = Unit(
         "qty", default=None, description="Forecast only: the quantity of the forecast as entered (see `original_date`)")
+    high_qty: float | None = Unit(
+        "qty", default=None,
+        description="Forecast only: the high end of the forecast's interval over the record (P90 at the default 80 % "
+                    "interval), written by a forecast release. An order check keeps it for the orders still to come "
+                    "to give a safe date beside the expected one. Empty: no spread is known")
     released: bool = Field(
         False, description="Forecast only: written by a forecast release. Releasing every series again replaces it, "
                            "so a series the new forecast no longer has does not stay in demand")
@@ -104,6 +112,9 @@ class ScheduledReceipt(Model):
                                                "needed, planning counts it where it is needed and reports the delay "
                                                "instead of adding an order in front of it")
     po: str | None = Field(None, max_length=64, description="Purchase: the purchase order (header) this line is on")
+    sales_order: str | None = Field(None, max_length=64,
+                                    description="Made or bought for this sales order (S/4 sales-order stock): planned, "
+                                                "promised and issued only to it, and held for it once received")
     planned_as: str | None = Field(None, max_length=64,
                                    description="The planned order it was firmed from (for reference: planned numbers "
                                                "are handed out again on every plan)")
@@ -171,6 +182,12 @@ class SalesHistory(Model):
     qty: float = Unit("qty")
     price: float | None = Unit("money_per_unit", default=None)
     promo: bool = False
+    lost_qty: float = Unit("qty", ge=0, default=0.0,
+                           description="Demand turned away: asked for but not sold (out of stock, or a short delivery "
+                                       "closed). The forecast learns from what was sold plus this")
+    stockout: bool = Field(False, description="Out of stock for part of it, so what sold is less than the demand by an "
+                                              "amount nobody counted: the forecast reads it at the level of the "
+                                              "periods around it when it sold less")
     period_days: int | None = Field(
         None, ge=1, le=366,
         description="The row is a total over [date, date + period_days), e.g. a month of sales: it is spread evenly "

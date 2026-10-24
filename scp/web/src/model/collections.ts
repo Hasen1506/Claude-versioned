@@ -6,10 +6,11 @@ type Obj = Record<string, unknown>;
 
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
-  | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
-  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
+  | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "substitutions" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides" | "family_overrides"
+  | "movements" | "closed_orders" | "accuracy" | "forecast_snapshots" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
   | "customers" | "payment_terms" | "sales_orders" | "quotations" | "deliveries" | "invoices" | "returns"
-  | "contracts" | "supplier_invoices" | "supplier_returns";
+  | "contracts" | "supplier_invoices" | "supplier_returns" | "budgets"
+  | "storage_types" | "bins" | "putaway_rules" | "carriers" | "entities" | "transfer_prices";
 
 export interface Column {
   label: string;
@@ -146,7 +147,7 @@ export const COLLECTIONS: CollectionDef[] = [
   {
     key: "mrp_groups", label: "MRP groups", singular: "MRP group", defName: "MrpGroup", issueType: "mrp_group",
     group: "Planning data", keyOf: (o) => s(o.id),
-    blurb: "Planning values shared by many products: a planning policy that names the group is planned with the group's strategy, lot size, safety time, fence and consumption windows wherever the group sets one.",
+    blurb: "Planning values shared by many products: a planning policy that names the group is planned with the group's strategy, lot size, safety time, fence, consumption windows and rescheduling horizon wherever the group sets one.",
     columns: [
       { label: "Id", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
       { label: "Strategy", get: (o) => s(o.strategy ?? "each product's own") },
@@ -306,23 +307,48 @@ export const COLLECTIONS: CollectionDef[] = [
     ],
   },
   {
+    key: "substitutions", label: "Substitutions", singular: "substitution", defName: "Substitution", issueType: "substitution",
+    group: "Planning data", keyOf: (o) => `${s(o.product)}/${s(o.substitute)}`,
+    blurb: "A product that may ship in another's place when that one is short. Promising offers it for the part of an order that cannot be on time; taking the offer moves that part to a line of the substitute at the ordered price.",
+    columns: [
+      { label: "Product", get: (o) => s(o.product) }, { label: "Substitute", get: (o) => s(o.substitute) },
+      { label: "Customers", get: (o) => ((o.customers as string[]) ?? []).join(", ") || "all" },
+      { label: "From", get: (o) => s(o.valid_from ?? "") }, { label: "To", get: (o) => s(o.valid_to ?? "") },
+      { label: "Note", get: (o) => s(o.note ?? "") },
+    ],
+  },
+  {
+    key: "budgets", label: "Budgets", singular: "budget", defName: "Budget", issueType: "budget",
+    group: "Demand inputs", keyOf: (o) => `${s(o.month).slice(0, 7)}/${s(o.product ?? o.family ?? "*")}`,
+    blurb: "What the company planned to sell each month, for a product, a product family or the whole company. The monthly S&OP cycle sets the demand and supply plans against it, volume and revenue.",
+    columns: [
+      { label: "Month", get: (o) => s(o.month).slice(0, 7) },
+      { label: "For", get: (o) => (o.product ? s(o.product) : o.family ? `family ${s(o.family)}` : "the company") },
+      { label: "Units", get: (o) => o.qty as number, num: true },
+      { label: "Revenue", get: (o) => (o.revenue ?? null) as number | null, num: true },
+    ],
+  },
+  {
     key: "confirmations", label: "Confirmations", singular: "confirmation", defName: "Confirmation", issueType: "confirmation",
     group: "Planning data", keyOf: (_o, i) => `#${i}`,
     blurb: "Committed promises (schedule lines) per sales order. Written by Promising → Commit; they claim supply in every later check.",
     columns: [
       { label: "Order", get: (o) => s(o.order) }, { label: "From", get: (o) => s(o.ship_from) },
-      { label: "Ships", get: (o) => s(o.ship_date) }, { label: "Delivers", get: (o) => s(o.date) },
+      { label: "There to pick", get: (o) => s(o.ship_date) }, { label: "Leaves", get: (o) => s(o.goods_issue ?? o.ship_date) },
+      { label: "Delivers", get: (o) => s(o.date) },
       { label: "Method", get: (o) => s(o.method ?? "atp") }, { label: "Qty", get: (o) => o.qty as number, num: true },
     ],
   },
   {
     key: "history", label: "Sales history", singular: "history row", defName: "SalesHistory", issueType: "history",
     group: "Demand inputs", keyOf: (_o, i) => `#${i}`,
-    blurb: "What actually sold, per location, product and date (long format). The forecast learns from it; promo rows are cleansed.",
+    blurb: "What actually sold, per location, product and date (long format). The forecast learns from it; promo rows are cleansed, and a row out of stock or with demand turned away is read as the demand it was.",
     columns: [
       { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
       { label: "Date", get: (o) => s(o.date) }, { label: "Qty", get: (o) => o.qty as number, num: true },
       { label: "Promo", get: (o) => (o.promo ? "yes" : "") },
+      { label: "Lost", get: (o) => ((o.lost_qty as number) > 0 ? (o.lost_qty as number) : ""), num: true },
+      { label: "Out of stock", get: (o) => (o.stockout ? "yes" : "") },
     ],
   },
   {
@@ -357,6 +383,17 @@ export const COLLECTIONS: CollectionDef[] = [
     ],
   },
   {
+    key: "family_overrides", label: "Family overrides", singular: "family override", defName: "FamilyOverride", issueType: "family_override",
+    group: "Demand inputs", keyOf: (_o, i) => `#${i}`,
+    blurb: "A product family's total for one forecast period (or a percentage change), spread over its series by their own forecast. A series with its own override keeps it.",
+    columns: [
+      { label: "Family", get: (o) => s(o.family) }, { label: "Location", get: (o) => s(o.location) || "all" },
+      { label: "Period of", get: (o) => s(o.date) },
+      { label: "Change", get: (o) => (o.qty !== null && o.qty !== undefined ? `= ${o.qty}` : `${Math.round(((o.change as number) ?? 0) * 100)}%`) },
+      { label: "Reason", get: (o) => s(o.reason) },
+    ],
+  },
+  {
     key: "movements", label: "Goods movements", singular: "goods movement", defName: "GoodsMovement", issueType: "movement",
     group: "Execution", keyOf: (o) => s(o.id),
     blurb: "The stock journal: openings, goods receipts, component issues, sales, transfer issues, scrap and count adjustments. On-hand is the sum of these.",
@@ -377,6 +414,68 @@ export const COLLECTIONS: CollectionDef[] = [
     ],
   },
   {
+    key: "storage_types", label: "Storage types", singular: "storage type", defName: "StorageType", issueType: "storage_type",
+    group: "Execution", keyOf: (o) => `${s(o.location)}/${s(o.id)}`,
+    blurb: "The areas inside a plant or warehouse, each with one way of putting away: a picking shelf, a high rack, a cold room. The Warehouse page puts goods away and picks by them.",
+    columns: [
+      { label: "Place", get: (o) => s(o.location) }, { label: "Code", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
+      { label: "Put away", get: (o) => s(o.putaway) }, { label: "Picked from", get: (o) => (o.picking === false ? "no (reserve)" : "yes") },
+      { label: "Bins a product", get: (o) => s(o.bins_per_product) },
+    ],
+  },
+  {
+    key: "bins", label: "Storage bins", singular: "bin", defName: "Bin", issueType: "bin",
+    group: "Execution", keyOf: (o) => `${s(o.location)}/${s(o.id)}`,
+    blurb: "Every bin with the label its barcode carries, its place on the picking walk and what it holds at most (units or kilograms). A picking bin kept for one product can have a refill point: at or below it, the warehouse page proposes moves from the reserve that fill it to its most.",
+    columns: [
+      { label: "Place", get: (o) => s(o.location) }, { label: "Bin", get: (o) => s(o.id) }, { label: "Storage type", get: (o) => s(o.storage_type) },
+      { label: "Walk", get: (o) => o.walk as number, num: true }, { label: "Most units", get: (o) => o.max_qty as number, num: true },
+      { label: "Most kg", get: (o) => o.max_kg as number, num: true }, { label: "Kept for", get: (o) => s(o.product) },
+      { label: "Refill at", get: (o) => (o.min_qty ?? null) as number | null, num: true },
+      { label: "Blocked", get: (o) => (o.blocked ? "yes" : "") },
+    ],
+  },
+  {
+    key: "putaway_rules", label: "Put-away rules", singular: "put-away rule", defName: "PutawayRule", issueType: "putaway_rule",
+    group: "Execution", keyOf: (o) => `${s(o.location)}/${s(o.product) || "*"}`,
+    blurb: "Which storage types a product goes to, in order. The rule without a product holds for every product without one of its own.",
+    columns: [
+      { label: "Place", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) || "every other" },
+      { label: "Storage types, in order", get: (o) => ((o.storage_types as string[]) ?? []).join(" → ") },
+    ],
+  },
+  {
+    key: "carriers", label: "Carriers", singular: "carrier", defName: "Carrier", issueType: "carrier",
+    group: "Network", keyOf: (o) => s(o.id),
+    blurb: "The transport companies and what a vehicle costs with each on a lane (or on every lane of a mode). Transport puts the loads with the cheapest.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
+      { label: "Rates", get: (o) => ((o.rates as Obj[]) ?? []).map((r) => `${s(r.lane) || `every ${s(r.mode)} lane`}`).join(", ") },
+      { label: "Pays in days", get: (o) => o.payment_days as number, num: true }, { label: "Blocked", get: (o) => (o.blocked ? "yes" : "") },
+    ],
+  },
+  {
+    key: "entities", label: "Companies of the group", singular: "company of the group", defName: "LegalEntity", issueType: "entity",
+    group: "Network", keyOf: (o) => s(o.id),
+    blurb: "The group's other companies, each with its own books, GSTIN and invoice series. A place belongs to one of them; a place without one belongs to this company.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) }, { label: "GSTIN", get: (o) => s(o.tax_id) },
+      { label: "State", get: (o) => s(o.region) }, { label: "Invoices start", get: (o) => s(o.invoice_prefix) || `IC-${s(o.id)}/` },
+      { label: "Places", get: (o, ds) => (ds.locations ?? []).filter((l) => l.entity === o.id).map((l) => l.id).join(", ") },
+    ],
+  },
+  {
+    key: "transfer_prices", label: "Transfer prices", singular: "transfer price", defName: "TransferPrice", issueType: "transfer_price",
+    group: "Network", keyOf: (o) => s(o.id),
+    blurb: "What one company of the group charges another for what it ships: a fixed price, the cost plus a mark-up, or the selling price less a margin. A product's rule goes before the rule for all products, a named seller and buyer before any.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Seller", get: (o) => s(o.seller) || "any" }, { label: "Buyer", get: (o) => s(o.buyer) || "any" },
+      { label: "Product", get: (o) => s(o.product) || "every product" },
+      { label: "Price", get: (o) => o.method === "fixed" ? `fixed ${s(o.price)}` : o.method === "resale_minus" ? `selling price less ${Math.round(Number(o.markup ?? 0) * 1000) / 10} %` : `cost plus ${Math.round(Number(o.markup ?? 0) * 1000) / 10} %` },
+      { label: "From", get: (o) => s(o.valid_from) },
+    ],
+  },
+  {
     key: "closed_orders", label: "Closed orders", singular: "closed order", defName: "ClosedOrder", issueType: "closed_order",
     group: "Execution", keyOf: (o) => `${s(o.kind)}|${s(o.id)}`,
     blurb: "Orders the roll-forward completed, with due and delivery dates: the record OTIF and supplier reliability are measured on.",
@@ -394,6 +493,17 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
       { label: "Week of", get: (o) => s(o.start) }, { label: "Forecast", get: (o) => o.forecast as number, num: true },
       { label: "Actual", get: (o) => o.actual as number, num: true },
+    ],
+  },
+  {
+    key: "forecast_snapshots", label: "Kept forecasts", singular: "kept forecast", defName: "ForecastSnapshot", issueType: "forecast_snapshot",
+    group: "Demand inputs", keyOf: (o) => `${s(o.location)}|${s(o.product)}|${s(o.start)}`,
+    blurb: "What each layer of the forecast said for a period, kept by every forecast release: naïve, statistical, after events and new products, and after the planners' overrides. Forecast value add judges them once the period has sold.",
+    columns: [
+      { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
+      { label: "Period from", get: (o) => s(o.start) }, { label: "Kept on", get: (o) => s(o.made) },
+      { label: "Statistical", get: (o) => o.statistical as number, num: true },
+      { label: "Final", get: (o) => o.final as number, num: true }, { label: "Overridden by", get: (o) => s(o.author) },
     ],
   },
   {
@@ -476,7 +586,7 @@ export function issueRoute(objectType: string, objectId: string): string[] | nul
   if (objectType === "network") return ["network"];
   const c = byIssueType[objectType];
   if (!c || objectId === "*") return c ? ["data", c.key] : null;
-  if (c.key === "overrides") return ["data", c.key];
+  if (c.key === "overrides" || c.key === "family_overrides") return ["data", c.key];
   const id = c.key === "location_products" || c.key === "npi" ? objectId.replace("/", "|") : objectId;
   return ["data", c.key, id];
 }

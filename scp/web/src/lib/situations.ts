@@ -77,10 +77,42 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
           actions: [{ label: "Change the time fence (planning policies)", to: href("data", "location_products") }],
         };
         break;
+      case "FENCE_SHORTAGE":
+        s = {
+          title: `${plural(l.length, "product")} short inside the freeze window`,
+          why: "Their firming type says the plan adds no orders inside the planning time fence, so the shortage stays until the fence ends. Firm an order by hand, or bring a firm order in, if it can't wait.",
+          items: l.map((e) => ({ label: `${n(e.qty)} ${where(e)}`, detail: `short from ${d(e.date)}`, to: node(e) })),
+          actions: [{ label: "Change the firming type (planning policies)", to: href("data", "location_products") }],
+        };
+        break;
+      case "ORDER_STOCK_LEFT":
+        s = {
+          title: `${plural(l.length, "product")} held for an order that no longer needs it`,
+          why: "Stock or a firm order was made or bought for one sales order, and that order now needs less (or nothing). No other order may use it while it is held: move it to free stock, or change or cancel the firm order it came on.",
+          items: l.map((e) => ({ label: `${n(e.qty)} ${where(e)}`, detail: e.message.split(":")[0], to: node(e) })),
+          actions: [{ label: "See the stock (Stock & actuals)", to: href("execution") }],
+        };
+        break;
+      case "BUFFER_RED":
+        s = {
+          title: `${plural(l.length, "buffer")} in the red`,
+          why: "Stock on hand plus what is on order, less what is due now and the big orders coming within the lead time, is down in the red zone: the buffer's safety. The plan orders back up to the top of green today; release that order now and ask the suppliers already delivering to hurry.",
+          items: l.map((e) => ({ label: `${where(e)}`, detail: `order ${n(e.qty)} today${e.order_id ? ` (${e.order_id})` : ""}`, to: node(e) })),
+          actions: [{ label: "See the buffers (Supply → Buffers → DDMRP buffers)", to: href("inventory", "ddmrp") }],
+        };
+        break;
+      case "BUFFER_YELLOW":
+        s = {
+          title: `${plural(l.length, "buffer")} to reorder today`,
+          why: "Stock on hand plus what is on order, less what is due now, has come down into the yellow zone, so the buffer is reordered today, back up to the top of green. This is the normal order signal, not a shortage.",
+          items: l.map((e) => ({ label: `${where(e)}`, detail: `order ${n(e.qty)} today${e.order_id ? ` (${e.order_id})` : ""}`, to: node(e) })),
+          actions: [{ label: "See the buffers (Supply → Buffers → DDMRP buffers)", to: href("inventory", "ddmrp") }],
+        };
+        break;
       case "RESCHEDULE_IN":
         s = {
           title: `${plural(l.length, "incoming order")} should arrive sooner`,
-          why: "Each is due after the date it's needed, and a new order couldn't arrive any earlier. Ask the supplier or carrier to expedite.",
+          why: "Each is due after the date it's needed. The plan counts on it there instead of ordering again, because a new order couldn't arrive any earlier or the order is due within the rescheduling horizon. Ask the supplier or carrier to expedite.",
           items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)}`, detail: `needed ${d(e.date)}`, to: node(e) })),
           actions: [{ label: "See incoming orders", to: href("data", "receipts") }],
         };
@@ -96,7 +128,7 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
       case "RECEIPT_NOT_NEEDED":
         s = {
           title: `${plural(l.length, "incoming order")} not needed in the horizon`,
-          why: "Nothing in the plan needs them before the horizon ends. Cancel or push them out; if a new order covers the same need sooner, ask for this one sooner instead.",
+          why: "Nothing in the plan needs them before the planning horizon ends. Cancel or push them out; if a new order covers the same need sooner, ask for this one sooner instead, or give the product a rescheduling horizon so the plan counts on it first.",
           items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)}`, detail: `arrives ${d(e.date)}`, to: node(e) })),
           actions: [{ label: "See incoming orders", to: href("data", "receipts") }],
         };
@@ -287,7 +319,8 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
 
 /** A short plain name for an exception code from any page (the code itself stays visible for analysts). */
 const CODE_LABEL: Record<string, string> = {
-  DEMAND_AT_RISK: "Demand late or short", START_IN_PAST: "Should already have started", FENCE_SHIFT: "Moved out of the freeze window",
+  DEMAND_AT_RISK: "Demand late or short", START_IN_PAST: "Should already have started", FENCE_SHIFT: "Moved out of the freeze window", FENCE_SHORTAGE: "Short inside the freeze window",
+  ORDER_STOCK_LEFT: "Held for an order that no longer needs it", BUFFER_RED: "Buffer in the red", BUFFER_YELLOW: "Buffer to reorder today",
   RESCHEDULE_IN: "Incoming order needed sooner", RESCHEDULE_OUT: "Incoming order could come later", RECEIPT_NOT_NEEDED: "Incoming order not needed", NO_VALID_SOURCE: "No way to supply", BELOW_SAFETY_STOCK: "Below safety stock",
   EXCESS_STOCK: "Above maximum stock", SHELF_LIFE_RISK: "May expire", CAPACITY_OVERLOAD: "Over capacity",
   CAPACITY_OVERTIME: "Overtime needed", CAPACITY_DAY_OVERLOAD: "Over capacity on a day", SUPPLIER_CAPACITY: "Supplier over capacity", LANE_CAPACITY: "Lane over capacity",
@@ -296,6 +329,7 @@ const CODE_LABEL: Record<string, string> = {
   PO_CONFIRMED_LATE: "Supplier confirmed late", PO_CONFIRMED_SHORT: "Supplier confirmed less", PO_NOT_CONFIRMED: "Not confirmed by the supplier",
   RECEIPT_OVERDUE: "Order overdue", STOCK_EXPIRES: "Stock expires unused", LOT_EXPIRES: "Lot larger than its shelf life",
   OVERTIME_PLANNED: "Kept on its day with overtime", SUPPLY_SPLIT: "Split to stay within capacity", FOLLOW_UP: "Follow-up takes over",
+  DEMAND_TIME_FENCE: "Only orders count this close", REVIEW_LATE: "First review too late",
 };
 export function codeLabel(code: string): string {
   if (CODE_LABEL[code]) return CODE_LABEL[code];

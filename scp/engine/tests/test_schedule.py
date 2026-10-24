@@ -327,7 +327,8 @@ def test_example_schedule():
     assert r.kpis.objective <= r.baseline.objective + 1e-9
     assert r.kpis.orders == len(r.orders) > 10
     firm = [o for o in r.orders if o.firm]
-    assert [o.id for o in firm] == ["MO-100455"] and firm[0].release == 0.0
+    assert [o.id for o in firm] == ["MO-100455", "MO-100461"] and firm[0].release == 0.0
+    assert firm[1].release == (date(2026, 10, 5) - date(2026, 9, 28)).days * 24    # its start date, in hours
     assert {x.id for x in r.resources} >= {"PUNE-L1", "PUNE-TEST", "PUNE-WIND"}
     # every order: operations sum to its started quantity, and completion is not before release
     for o in r.orders:

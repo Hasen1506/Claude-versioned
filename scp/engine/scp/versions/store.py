@@ -15,6 +15,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
+from ..dblock import StoreLock
 from ..model import Dataset
 from ..model.common import Out
 
@@ -111,10 +112,14 @@ class Store:
             self.db = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
             self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
-        self.db.executescript(SCHEMA)
-        if "scope" not in {r["name"] for r in self.db.execute("PRAGMA table_info(versions)")}:
-            self.db.execute("ALTER TABLE versions ADD COLUMN scope TEXT NOT NULL DEFAULT ''")
-        self.lock = threading.RLock()
+        if self.backend == "sqlite" and self.path != ":memory:":
+            self.db.execute("PRAGMA busy_timeout = 30000")    # another process's backup or schema change: wait
+        # held across server processes on the same database (scp.dblock): the schema is set up by one at a time
+        self.lock = StoreLock(self.db, self.path)
+        with self.lock:
+            self.db.executescript(SCHEMA)
+            if "scope" not in {r["name"] for r in self.db.execute("PRAGMA table_info(versions)")}:
+                self.db.execute("ALTER TABLE versions ADD COLUMN scope TEXT NOT NULL DEFAULT ''")
 
     # ---- helpers ------------------------------------------------------------------------------------
     def _row(self, vid: str, scope: str | None = None) -> sqlite3.Row:

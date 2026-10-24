@@ -12,7 +12,7 @@ from enum import Enum
 
 from pydantic import Field, model_validator
 
-from .common import Id, Model, Ref, Unit
+from .common import Id, Model, PriceControl, Ref, Unit
 
 
 class MovementType(str, Enum):
@@ -79,6 +79,9 @@ class GoodsMovement(Model):
     note: str = Field("", max_length=200)
     batch: str | None = Field(None, max_length=40, description="The batch moved (batch-managed products)")
     stock_type: StockType = Field(StockType.UNRESTRICTED, description="The stock the quantity comes from or goes to")
+    sales_order: str | None = Field(None, max_length=64,
+                                    description="Stock held for this sales order (S/4 sales-order stock): received "
+                                                "for it, issued only to it")
     doc: str | None = Field(None, max_length=20, description="Material document: the movements posted together")
     reversal_of: str | None = Field(None, max_length=64, description="The movement this one takes back: its "
                                                                         "quantity counts with the opposite sign")
@@ -86,6 +89,8 @@ class GoodsMovement(Model):
                                description="Serial numbers moved (serialised products: one per unit)")
     erp_ref: str | None = Field(None, max_length=64, description="The ERP's document it came with: an ERP posting is "
                                                                  "taken once")
+    bin: str | None = Field(None, max_length=40, description="The storage bin the quantity comes from or goes to "
+                                                             "(places with bins; empty: goods in or staged to ship)")
 
     @model_validator(mode="after")
     def _qty(self) -> GoodsMovement:
@@ -177,6 +182,28 @@ class InventoryDoc(Model):
     posted_doc: str | None = Field(None, max_length=20, description="The material document of the differences")
 
 
+class CycleCounting(Model):
+    """Cycle counting by ABC class (≈ S/4 cycle counting indicator, MARC-ABCIN): each place's products are classed
+    by the value they used up over the look-back, and each class is counted so many times a year."""
+
+    a_share: float = Unit("fraction", gt=0, le=1, default=0.8, description="Share of the value used up that closes A")
+    b_share: float = Unit("fraction", gt=0, le=1, default=0.95, description="Share that closes B")
+    counts_a: int = Field(12, ge=0, le=366, description="Counts a year of an A item")
+    counts_b: int = Field(4, ge=0, le=366, description="Counts a year of a B item")
+    counts_c: int = Field(1, ge=0, le=366, description="Counts a year of a C item")
+    lookback_days: int = Field(365, ge=7, le=1830, description="The days of issues and sales the classes are made of")
+    block: bool = Field(False, description="Cycle count documents hold the postings of what they count until posted")
+
+    @model_validator(mode="after")
+    def _shares(self) -> CycleCounting:
+        if self.a_share >= self.b_share:
+            raise ValueError("the A share must be below the B share")
+        return self
+
+    def per_year(self, cls: str) -> int:
+        return {"A": self.counts_a, "B": self.counts_b, "C": self.counts_c}.get(cls, 0)
+
+
 class ExecutionSettings(Model):
     firm_zone_days: int = Field(14, ge=0, le=366, description="Firming converts planned orders starting within this "
                                                                "many days of the planning start")
@@ -188,3 +215,6 @@ class ExecutionSettings(Model):
     promise_firms: bool = Field(True, description="Taking or changing an order promised on new production makes that "
                                                   "production (and the transfers bringing it) firm at once, as "
                                                   "capable-to-promise does; off, the planner firms it")
+    price_control: PriceControl = Field(PriceControl.STANDARD, description="How stock is valued in the books unless a "
+                                        "product says otherwise: at the standard (planned) price, or a moving average")
+    cycle_counting: CycleCounting = Field(default_factory=CycleCounting)

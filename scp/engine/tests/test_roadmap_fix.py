@@ -112,3 +112,21 @@ def test_the_api_tries_a_fix_and_records_nothing(slow_stamping):
     assert again["money_at_risk"] == pytest.approx(body["money_at_risk"], abs=0.05)
     bad = c.post("/api/tower/fix", json={"dataset": doc, "key": "NOPE||||"})
     assert bad.status_code == 404
+
+
+def test_an_order_that_comes_early_is_pushed_out_to_the_day_it_is_first_needed():
+    """N366: MO-100455 (500 W grinders at Pune) arrives Wed 30 Sep but nothing needs it before Sat 10 Oct: the plan
+    says push it out by 10 d. One click moves it to the 10th; the message goes, and the stock it held is not."""
+    ds = load_example("kitchenware_network")
+    w = next(x for x in _inbox(ds) if x.code == "RESCHEDULE_OUT" and x.order_id == "MO-100455")
+    assert w.action.kind == "push_out" and w.action.one_click and not w.action.why_not
+    f = try_inbox_fix(ds, w.key)
+    assert [(e.collection, e.id, e.field, e.before, e.value) for e in f.edits][0] == (
+        "receipts", "MO-100455", "due_date", "2026-09-30", "2026-10-10")
+    assert f.after_item is None and f.plan_ok
+    assert next(r for r in ds.receipts if r.id == "MO-100455").due_date.isoformat() == "2026-09-30"   # a copy
+    # a message with nothing to push out says why
+    late = w.model_copy(update={"date": None})
+    with pytest.raises(FixError, match="not early"):
+        from scp.tower.fix import fix_edits
+        fix_edits(ds, None, late)

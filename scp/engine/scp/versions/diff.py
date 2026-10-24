@@ -13,19 +13,24 @@ from ..model.common import Out
 KEYS: dict[str, tuple[str, ...]] = {
     "calendars": ("id",), "locations": ("id",), "products": ("id",), "resources": ("id",),
     "production_sources": ("id",), "purchasing_sources": ("id",), "lanes": ("id",), "receipts": ("id",),
-    "events": ("id",), "allocations": ("id",), "movements": ("id",), "batches": ("product", "id"), "inventory_docs": ("id",),
+    "events": ("id",), "allocations": ("id",), "substitutions": ("product", "substitute"), "movements": ("id",), "batches": ("product", "id"), "inventory_docs": ("id",),
     "location_products": ("location", "product"), "npi": ("location", "product"),
     "history": ("location", "product", "date"), "overrides": ("location", "product", "date"),
+    "family_overrides": ("family", "location", "date"),
+    "forecast_snapshots": ("location", "product", "start"),
     "demand": ("id", "location", "product", "date", "kind"), "confirmations": ("order", "ship_from", "ship_date"),
     "changeovers": ("resource", "from_group", "to_group"), "closed_orders": ("kind", "id"),
     "accuracy": ("location", "product", "start"), "customer_prices": ("customer", "product"), "vendors": ("supplier",),
-    "purchase_orders": ("id",), "stock_targets": ("location", "product", "date"), "rolled_weeks": ("start",),
+    "purchase_orders": ("id",), "stock_targets": ("location", "product", "date"), "budgets": ("month", "product", "family"), "rolled_weeks": ("start",),
     "customers": ("customer",), "payment_terms": ("id",), "sales_orders": ("id",), "quotations": ("id",),
     "deliveries": ("id",), "invoices": ("id",), "returns": ("id",), "contracts": ("id",), "supplier_invoices": ("id",),
-    "supplier_returns": ("id",),
+    "supplier_returns": ("id",), "storage_types": ("location", "id"), "bins": ("location", "id"),
+    "putaway_rules": ("location", "product"), "warehouse_tasks": ("id",), "waves": ("id",), "carriers": ("id",), "freight_orders": ("id",),
+    "third_party_orders": ("id",), "challans": ("id",), "shipping_notices": ("id",),
+    "entities": ("id",), "transfer_prices": ("id",), "intercompany_invoices": ("id",),
 }
 SINGLE = ("settings", "forecasting", "inventory", "sop", "scheduling", "promising", "execution", "purchasing", "finance",
-          "tower", "sales")
+          "tower", "sales", "transport", "job_work")
 MAX_FIELDS = 12
 
 

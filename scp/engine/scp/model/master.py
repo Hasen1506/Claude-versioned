@@ -5,13 +5,14 @@ small and mid-sized organisations. Object-local invariants are enforced here; cr
 from __future__ import annotations
 
 import math
-from datetime import date
+from datetime import date, timedelta
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
 from .common import (
-    COUNT_UNITS, BucketSize, Id, LocationType, LotSizePolicy, Model, MrpType, ProcurementType, ProductType, Ref, ResourceKind,
+    COUNT_UNITS, BucketSize, Id, LocationType, LotSizePolicy, Model, MrpType, PriceControl, ProcurementType, ProductType, Ref,
+    ResourceKind,
     SafetyStockMethod, Strategy, TransportMode, Unit,
 )
 from .purchasing import PriceScale
@@ -64,6 +65,17 @@ class Settings(Model):
     capacity_max_early_days: int | None = Unit(
         "days", ge=0, le=365, default=None,
         description="Levelling: move an order at most this many days earlier to fit; empty = as far as today")
+    working_day_fences: bool = Field(
+        False, description="Count the planning time fence and goods-receipt time in working days of the place's "
+                           "calendar, as S/4 does (new companies). Off: calendar days, as companies made before 15 "
+                           "October 2026 were planned; switching moves their dates (a 10-day fence becomes two "
+                           "working weeks)")
+    rescheduling_horizon_days: float = Unit(
+        "workdays", le=365, default=0.0,
+        description="Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner. A product or MRP group may set its own")
+    reschedule_out_tolerance_days: float = Unit(
+        "days", le=365, default=3.0,
+        description="Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out. A product or MRP group may set its own")
 
     @property
     def carrying_rate(self) -> float:
@@ -135,12 +147,22 @@ class Location(Model):
                          description="Postal address, a line per row: printed on purchase orders (the supplier's, "
                                      "the place to deliver to)")
     tax_id: str = Field("", max_length=40, description="Tax registration (GSTIN, VAT number), printed on purchase orders")
+    entity: str | None = Ref("entity", default=None,
+                             description="Our places: the company of the group it belongs to (its books and invoices); "
+                                         "empty = the company itself")
     calendar: str | None = Ref("calendar", default=None)
     lat: float | None = Field(None, ge=-90, le=90)
     lon: float | None = Field(None, ge=-180, le=180)
     storage_capacity_m3: float | None = Unit("m3", default=None)
     handling_cost_per_unit: float = Unit("money_per_unit", default=0.0,
                                          description="Inbound handling cost per base unit received")
+    pick_pack_workdays: float = Unit(
+        "workdays", le=60, default=0.0,
+        description="Shipping from here: working days to pick and pack once the goods are there (S/4 pick/pack time "
+                    "at the shipping point). Promises check stock this much earlier than the goods leave")
+    loading_workdays: float = Unit(
+        "workdays", le=60, default=0.0,
+        description="Shipping from here: working days to load a shipment before it leaves (goods issue)")
 
 
 class UomConversion(Model):
@@ -157,6 +179,8 @@ class Product(Model):
     family: str = ""
     weight_kg: float | None = Unit("kg", default=None, description="Gross weight per base unit")
     volume_m3: float | None = Unit("m3", default=None, description="Volume per base unit")
+    barcode: str = Field("", max_length=40, description="The code on its label (EAN, GTIN or your own), read by the "
+                                                        "warehouse scanner as well as the product id")
     shelf_life_days: int | None = Field(None, gt=0)
     batches: bool | None = Field(None, description="Stock kept by batch with an expiry date, issued first expiring, "
                                                    "first out. Empty: when the product has a shelf life")
@@ -169,12 +193,28 @@ class Product(Model):
                           "case, tin, pail, bag, drum, bottle, …; fractional for kg, L, m, …")
     standard_cost: float | None = Unit("money_per_unit", default=None,
                                        description="Override for the computed cost roll-up")
+    price_control: PriceControl | None = Field(
+        None, description="How its stock is valued in the books: at the standard (planned) price, or at a moving "
+                          "average of what it cost. Empty: the company's")
     price: float | None = Unit("money_per_unit", default=None, description="Default selling price")
     tax_rate: float | None = Unit("fraction", le=1, default=None,
                                   description="Tax on its sales (0.12 = 12 %); empty = the company's rate. A customer's "
                                               "own rate (an exemption, an export) goes before it")
+    hsn: str = Field("", max_length=8, pattern=r"^(\d{4}|\d{6}|\d{8})?$",
+                     description="HSN code (4, 6 or 8 digits), printed on job-work challans and in ITC-04")
     setup_group: str | None = Field(None, max_length=40,
                                     description="Sequence-dependent setup family (colour, allergen, grade…)")
+    planning_material: str | None = Ref(
+        "product", default=None,
+        description="Planning material (S/4 strategies 60 and 63): this variant is forecast through the base product "
+                    "named here. Its sales count toward the base's forecast, and its orders use up the base's forecast "
+                    "where they are sold")
+    planning_factor: float = Unit("ratio", gt=0, default=1.0,
+                                  description="Units of the planning material one unit of this variant uses up")
+    customer_wait_days: float | None = Unit(
+        "days", le=365, default=None,
+        description="Days customers accept to wait for it, from their order to delivery: the strategy advisor "
+                    "compares them with the lead times to make it, and to make its parts")
 
     @property
     def batch_managed(self) -> bool:
@@ -184,6 +224,12 @@ class Product(Model):
     def whole(self) -> bool:
         """Quantities of this product are whole numbers."""
         return self.whole_units if self.whole_units is not None else self.base_uom.strip().upper() in COUNT_UNITS
+
+    @model_validator(mode="after")
+    def _variant(self) -> Product:
+        if self.planning_material is not None and self.planning_material == self.id:
+            raise ValueError("a product cannot be its own planning material")
+        return self
 
     @field_validator("conversions")
     @classmethod
@@ -242,6 +288,15 @@ class LotSizing(Model):
         return self
 
 
+REVIEW_ANCHOR = date(2024, 1, 1)   # a Monday: reviews fall on it and every R days before and after it
+
+
+def review_days(review_from: date | None, period: float, start: date) -> tuple[date, int]:
+    """The first review day on or after ``start`` and the period in whole days (at least one)."""
+    r = max(1, round(period))
+    return start + timedelta(days=((review_from or REVIEW_ANCHOR) - start).days % r), r
+
+
 class SafetyStockPolicy(Model):
     method: SafetyStockMethod = SafetyStockMethod.NONE
     qty: float | None = Unit("qty", default=None, description="fixed: safety stock quantity")
@@ -250,7 +305,14 @@ class SafetyStockPolicy(Model):
                                        description="service_level / fill_rate target (default: settings)")
     demand_cv: float | None = Unit("fraction", le=5, default=None,
                                    description="Coefficient of variation of WEEKLY demand (forecast error)")
-    review_period_days: float = Unit("days", default=0.0, description="Periodic review interval R")
+    review_period_days: float = Unit("days", default=0.0, description="Periodic review interval R. On a reorder "
+                                     "point it is also the ordering calendar: orders are placed on review days only")
+    review_from: date | None = Field(None, description="A review day; the others fall every R days before and after "
+                                     "it (default: Mondays, counted from 1 January 2024)")
+    distribution: Literal["normal", "gamma", "poisson"] = Field(
+        "normal", description="How demand over the lead time and review is spread when a target sizes the safety "
+        "stock: normal; gamma for lumpy demand (its spread over 0.5 of its mean); Poisson for slow movers sold a "
+        "few at a time")
 
     @model_validator(mode="after")
     def _params(self) -> SafetyStockPolicy:
@@ -260,6 +322,11 @@ class SafetyStockPolicy(Model):
         if m is SafetyStockMethod.DAYS_OF_SUPPLY and not self.days:
             raise ValueError("safety stock in days of cover needs the number of days")
         return self
+
+
+FIRMING = ("Firming type inside the planning time fence (S/4 §8.5): 1 = new orders move to the fence end, and those "
+           "inside it are firmed when the week rolls; 2 = no new orders inside the fence (the shortage is reported), "
+           "firmed when the week rolls; 3 = as 1, firmed by hand; 4 = as 2, firmed by hand")
 
 
 class MrpGroup(Model):
@@ -274,6 +341,10 @@ class MrpGroup(Model):
                                           description="Safety time: plan receipts this many working days early")
     planning_time_fence_days: float | None = Unit("days", default=None,
                                                   description="No new proposals inside this fence")
+    firming_type: int | None = Field(None, ge=1, le=4, description=FIRMING + " (empty: each product's own)")
+    demand_time_fence_days: float | None = Unit("days", ge=0, le=365, default=None,
+                                                description="Demand time fence: only customer orders count inside it "
+                                                            "(empty: each product's own)")
     consumption_backward_days: float | None = Unit(
         "days", default=None, description="Calendar days a sales order may reach back to consume forecast (empty: "
                                           "each product's own)")
@@ -281,12 +352,25 @@ class MrpGroup(Model):
         "days", default=None, description="Calendar days a sales order may reach forward to consume forecast "
                                           "(empty: each product's own)")
     mrp_controller: str | None = Field(None, max_length=40, description="Who plans the group's products")
+    rescheduling_horizon_days: float | None = Unit(
+        "workdays", le=365, default=None,
+        description="Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner (empty: each product's own, else the company's)")
+    reschedule_out_tolerance_days: float | None = Unit(
+        "days", le=365, default=None, description="Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out (empty: each product's own, else the company's)")
 
     def overrides(self) -> dict:
         """The fields of a product at a place that the group sets."""
         keys = ("strategy", "lot_sizing", "safety_time_days", "planning_time_fence_days", "consumption_backward_days",
-                "consumption_forward_days", "mrp_controller")
+                "consumption_forward_days", "mrp_controller", "rescheduling_horizon_days",
+                "reschedule_out_tolerance_days", "firming_type", "demand_time_fence_days")
         return {k: getattr(self, k) for k in keys if getattr(self, k) is not None}
+
+
+class OrderStock(Model):
+    """Stock held for one sales order (S/4 sales-order stock, special stock E): only that order may use it."""
+
+    order: str = Field(min_length=1, max_length=64, description="The sales order it is held for")
+    qty: float = Unit("qty", description="Quantity held")
 
 
 class LocationProduct(Model):
@@ -305,7 +389,13 @@ class LocationProduct(Model):
     strategy: Strategy = Strategy.MTS_CONSUME
     mrp_type: MrpType = MrpType.DETERMINISTIC
     on_hand: float = Unit("qty", default=0.0, description="Unrestricted stock at planning start")
+    order_stock: list[OrderStock] = Field(default_factory=list,
+                                          description="Stock at planning start held for one sales order each (not in "
+                                                      "on hand): planned, promised and issued only to that order")
     unit_cost: float | None = Unit("money_per_unit", default=None, description="Valuation override")
+    cycle_count: Literal["A", "B", "C", "none"] | None = Field(
+        None, description="Cycle counting class here, set by hand ('none': never counted by the cycle). Empty: by "
+                          "the value it uses up")
     lot_sizing: LotSizing = Field(default_factory=LotSizing)
     safety_stock: SafetyStockPolicy = Field(default_factory=SafetyStockPolicy)
     safety_time_days: float = Unit("workdays", default=0.0,
@@ -313,16 +403,27 @@ class LocationProduct(Model):
     reorder_point: float | None = Unit("qty", default=None, description="reorder_point MRP type trigger")
     max_stock: float | None = Unit("qty", default=None, description="MIN_MAX target / excess threshold")
     planning_time_fence_days: float = Unit("days", default=0.0,
-                                           description="No new proposals inside this fence (firming type 1)")
-    gr_processing_days: float = Unit("days", default=0.0, description="Goods-receipt / putaway time")
+                                           description="No new proposals inside this fence: see the firming type. "
+                                                       "Working days when the company counts them so")
+    firming_type: int = Field(3, ge=1, le=4, description=FIRMING)
+    demand_time_fence_days: float = Unit("days", ge=0, le=365, default=0.0,
+                                         description="Demand time fence (master scheduling): inside it only customer "
+                                                     "orders count; what is left of the forecast there is not planned. "
+                                                     "Working days when the company counts them so")
+    rescheduling_horizon_days: float | None = Unit(
+        "workdays", le=365, default=None, description="Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner (empty: the company's)")
+    reschedule_out_tolerance_days: float | None = Unit(
+        "days", le=365, default=None, description="Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out (empty: the company's)")
+    gr_processing_days: float = Unit("days", default=0.0, description="Goods-receipt / putaway time (working days "
+                                                                      "when the company counts them so)")
     consumption_backward_days: float = Unit(
         "days", default=7.0,
-        description="Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days before its "
+        description="Forecast consumption (strategies MTS_CONSUME, ATO and ASSEMBLY): how many calendar days before its "
                     "date a sales order may reach back to eat forecast; a forecast for a period counts on every day of "
                     "it. An order consumes backward first, then forward")
     consumption_forward_days: float = Unit(
         "days", default=7.0,
-        description="Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days after its "
+        description="Forecast consumption (strategies MTS_CONSUME, ATO and ASSEMBLY): how many calendar days after its "
                     "date a sales order may reach forward to eat forecast, once nothing is left backward. What no "
                     "forecast in reach covers is planned on top of the forecast")
     holding_rate: float | None = Unit("fraction", le=2, default=None,
@@ -779,6 +880,10 @@ class TransportLane(Model):
     modes: list[LaneMode] = Field(min_length=1)
     priority: int = Field(1, ge=1, le=99)
     quota: float | None = Unit("fraction", default=None, le=1)
+    transport_planning_workdays: float = Unit(
+        "workdays", le=60, default=0.0,
+        description="Working days to book the carrier before loading (S/4 transportation planning time); it runs "
+                    "alongside picking and packing, so the longer of the two counts")
 
     @model_validator(mode="after")
     def _ends(self) -> TransportLane:

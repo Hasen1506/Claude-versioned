@@ -111,7 +111,7 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
       seed.id = `${prefix}-${n}`;
     }
     const start = ds.settings.planning_start;
-    if (ckey === "demand" || ckey === "overrides") seed.date = start;
+    if (ckey === "demand" || ckey === "overrides" || ckey === "family_overrides") seed.date = start;
     if (ckey === "receipts") seed.due_date = start;
     if (ckey === "npi") seed.launch_date = start;
     if (ckey === "events") { seed.start = start; seed.end = start; seed.lift = 0; }   // R21: a new event changes nothing until a lift is typed
@@ -120,7 +120,7 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
       d.setUTCDate(d.getUTCDate() - 7);
       seed.date = d.toISOString().slice(0, 10);
     }
-    if (ckey === "overrides") seed.change = 0;
+    if (ckey === "overrides" || ckey === "family_overrides") seed.change = 0;
     // start valid: a lane needs a transport mode, and a reference with only one sensible choice is filled in
     if (ckey === "lanes") seed.modes = [{ mode: "truck_ftl", transit_days: 1 }];
     const only = (types: string[]) => {

@@ -34,6 +34,18 @@ const acceptInvite = async (p: Page, link: string) => {
   await p.reload();
 };
 
+
+/** Supply → Firm orders, with the plan calculated: a plan out of date offers its recalculation first. */
+async function openFirmZone(page: Page) {
+  await page.goto("/#/plan/firm");
+  await expect(page.getByRole("heading", { name: /^Firm zone:/ })).toBeVisible({ timeout: 45_000 });
+  const calc = page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ });
+  const firm = page.getByRole("button", { name: /^Make \d+ orders? firm$/ });
+  await expect(calc.or(firm).first()).toBeVisible({ timeout: 45_000 });
+  if (await calc.isVisible()) await calc.click();
+  await expect(firm).toBeVisible({ timeout: 45_000 });
+}
+
 test("golden path: example opens planned → home → network → data check → plan → drill-down → edit → out of date → re-plan", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
 
@@ -47,7 +59,7 @@ test("golden path: example opens planned → home → network → data check →
   // the map is a tab of Set up
   await page.locator('.rail a[href="#/setup"]').click();
   await page.locator('.section-tabs a[href="#/network"]').click();
-  await expect(page.locator(".net .node")).toHaveCount(12);
+  await expect(page.locator(".net .node")).toHaveCount(14);   // 1 plant, 2 DCs, 3 customers, 8 suppliers
   await page.selectOption('select[aria-label="Trace product"]', "KT-15");
   await expect(page.locator(".net .node.dim").first()).toBeVisible();
   await page.locator(".net .node", { hasText: "PLT-PUNE" }).click();
@@ -320,8 +332,8 @@ test("scheduling: schedule → select order → resequence → reset → edit se
   await expect(page.locator(".gantt svg g[data-order]").first()).toBeVisible();
 
   // follow an order across resources, then push it one place later on its first resource
-  await page.locator('.gantt svg g[data-order="MO-00024"]').first().dispatchEvent("click");
-  await expect(page.getByText("MO-00024 · Mixer grinder 500 W")).toBeVisible();
+  await page.locator('.gantt svg g[data-order="MO-0017-01"]').first().dispatchEvent("click");
+  await expect(page.getByText("MO-0017-01 · Mixer grinder 500 W")).toBeVisible();
   await page.getByRole("button", { name: "later ▶" }).first().click();
   // exact: the banner's fallback line ("…re-timed with your sequence") can show for a render before the move's own
   // sentence replaces it, and a substring match then finds two elements
@@ -365,8 +377,8 @@ test("scheduling: a step moved while a recalculation is in flight is not overwri
   await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(page.getByRole("button", { name: "Calculating…" })).toBeVisible();
 
-  await page.locator('.gantt svg g[data-order="MO-00024"]').first().dispatchEvent("click");
-  await expect(page.getByText("MO-00024 · Mixer grinder 500 W")).toBeVisible();
+  await page.locator('.gantt svg g[data-order="MO-0017-01"]').first().dispatchEvent("click");
+  await expect(page.getByText("MO-0017-01 · Mixer grinder 500 W")).toBeVisible();
   const moved = page.waitForResponse((r) => r.url().endsWith("/api/schedule") && r.request().method() === "POST");
   await page.getByRole("button", { name: "later ▶" }).first().click();
   await moved;
@@ -392,9 +404,14 @@ test("shop floor methods: compare every method → pick a profile → drag a ste
   const cmp = page.locator("section.panel", { hasText: "Compare the methods" });
   const row = (name: string) => cmp.locator("tr", { has: page.getByText(name, { exact: true }) });
   await expect(row("Optimiser (constraint solver)")).toBeVisible({ timeout: 60_000 });
-  await expect(cmp.locator("tbody tr .badge", { hasText: "best" })).toHaveCount(1);
+  // every method with the lowest score is marked best: a time-limited optimiser may only match the local search
+  await expect(cmp.locator("tbody tr .badge", { hasText: "best" }).first()).toBeVisible();
   const score = async (name: string) => Number(await row(name).locator("td").nth(5).innerText());
   expect(await score("Optimiser (constraint solver)")).toBeLessThanOrEqual(await score("Local search"));
+  const rows = await cmp.locator("tbody tr").evaluateAll((rs) => rs.map((r) => ({
+    score: Number(r.querySelectorAll("td")[5]?.textContent), best: /\bbest\b/.test(r.querySelector("td")?.textContent ?? "") })));
+  const low = Math.min(...rows.map((r) => r.score));
+  expect(rows.filter((r) => r.best).every((r) => r.score === low)).toBe(true);   // only the lowest scores are best
 
   // a profile is one click; the board says how the schedule was found; Undo puts the settings back
   await page.getByRole("button", { name: /Best possible \(optimiser\)/ }).click();
@@ -480,7 +497,7 @@ test("customer orders: check a new order → take it → change it → deliver p
   await page.getByRole("button", { name: "Deliver", exact: true }).click();
   await page.getByLabel("Quantity to deliver").fill("20");
   await page.getByRole("button", { name: "Post the delivery" }).click();
-  await expect(saved).toContainText("SO-88222: 20 delivered");
+  await expect(saved).toContainText("SO-88222: 20 Mixer grinder 500 W delivered");
   await expect(saved).toContainText("30 still open");
 
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -521,12 +538,12 @@ test("execution: journal → stock in sync → ship → roll forward → accurac
   await expect(page.locator(".tile", { hasText: "Forecast accuracy" }).locator(".value")).toContainText("%");
 
   // firm the planned orders inside the firm zone
-  await page.goto("/#/execution/orders");
-  await page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ }).click();
+  await openFirmZone(page);
   await page.getByRole("button", { name: /^Make \d+ orders? firm$/ }).click();
   await expect(page.getByText(/planned orders firmed/)).toBeVisible();
+  await page.goto("/#/execution/orders");
   await expect(page.locator("td b", { hasText: /^PRD-\d{5}$/ }).first()).toBeVisible();
-  await expect(page.getByText(/^was MO-\d{5}$/).first()).toBeVisible();     // the planned number it came from (Q22)
+  await expect(page.getByText(/^was MO-\d{4}-\d{2}$/).first()).toBeVisible();     // the planned number it came from (Q22)
 });
 
 test("posting: count stock → firm → ship and receive a transfer → confirm production with its parts → a late posting is offered", async ({ page }) => {
@@ -542,13 +559,13 @@ test("posting: count stock → firm → ship and receive a transfer → confirm 
   await expect(page.locator(".banner", { hasText: "Saved" })).toContainText(/1 count as of/);
 
   // firm one production order and one transfer
-  await page.goto("/#/execution/orders");
-  await page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ }).click();
+  await openFirmZone(page);
   await page.getByRole("button", { name: "Select none" }).click();
   await page.locator("tr.clickable", { hasText: "production order" }).first().locator("input").check();
   await page.locator("tr.clickable", { hasText: "stock transfer" }).first().locator("input").check();
   await page.getByRole("button", { name: "Make 2 orders firm" }).click();
   await expect(page.getByText(/2 planned orders firmed/)).toBeVisible();
+  await page.goto("/#/execution/orders");
 
   // the transfer ships (in transit), then arrives
   const sto = (await page.locator("td b", { hasText: /^STO-\d{5}$/ }).first().innerText()).trim();
@@ -589,10 +606,10 @@ test("stock you can trace: a short receipt names the order it leaves short → s
   await expect(page.locator(".banner", { hasText: "Saved" })).toContainText("1 count difference");
 
   // firm the zone, then the heater delivery comes in short, in the supplier's batch, and closes the line
-  await page.goto("/#/execution/orders");
-  await page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ }).click();
+  await openFirmZone(page);
   await page.getByRole("button", { name: /Make \d+ orders? firm/ }).click();
   await expect(page.getByText(/planned orders? firmed/)).toBeVisible();
+  await page.goto("/#/execution/orders");
   const line = page.locator("tr", { hasText: "Concealed heating element" }).filter({ hasText: "purchase" }).first();
   const po = (await line.locator("td").first().innerText()).trim().split(/\s+/)[0];
   await page.getByRole("button", { name: `Post part of ${po}` }).click();
@@ -765,7 +782,7 @@ test("control tower: KPIs graded → drill into OTIF → worklist → assign & a
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/tower");
   await page.getByRole("button", { name: "Recalculate", exact: true }).click();
-  await expect(page.locator(".kpi-card")).toHaveCount(18);
+  await expect(page.locator(".kpi-card")).toHaveCount(20);
   // working capital: the example has no goods issues or invoices yet, so no number is shown, and the formula is stated
   const dso = page.getByRole("button", { name: /^Days sales outstanding \(DSO\):/ });
   await expect(dso.locator(".kpi-value")).toHaveText("—");

@@ -14,11 +14,12 @@ Method = Literal["atp", "rlt", "ctp"]
 
 class ScheduleLine(Out):
     ship_from: str
-    ship_date: dt.date
+    ship_date: dt.date               # material availability: the goods are there to pick (the stock is taken)
     date: dt.date                    # delivery at the demand location
     qty: float
     method: Method
     on_time: bool
+    goods_issue: dt.date | None = None   # the goods leave, after picking, packing and loading (None: on ship_date)
 
 
 class CtpStep(Out):
@@ -33,13 +34,34 @@ class CtpStep(Out):
 
 class WhyStep(Out):
     """One link of the chain behind a confirmed date, earliest first ("why this date")."""
-    kind: Literal["asked", "stock", "receipt", "planned", "component", "ctp", "rlt", "ship"]
+    kind: Literal["asked", "stock", "receipt", "planned", "component", "ctp", "rlt", "handling", "ship"]
     date: dt.date | None = None
     location: str = ""
     product: str = ""
     ref: str = ""                    # the receipt, planned order or lane
     qty: float = 0.0
     note: str = ""                   # in plain words, with ids as they are
+
+
+class SafeView(Out):
+    """The order checked again with the forecast's high end kept first: what it gets if the customers still to order
+    before its date order at the top of the forecast's interval (P90 at the default 80 % interval)."""
+    reserved: float                  # high-end forecast still open up to the requested date, promised ahead of it
+    confirmed: float
+    on_time: float
+    status: Literal["on_time", "late", "partial", "unconfirmed"]
+    date: dt.date | None             # the last confirmed delivery (None: nothing confirmed)
+    lines: list[ScheduleLine] = Field(default_factory=list)
+
+
+class SubstituteOffer(Out):
+    """What a substitute product could ship on time for the part of an order that is not (product substitution)."""
+    product: str
+    qty: float                       # free on the requested date at the places that ship it to the customer
+    ship_from: list[str] = Field(default_factory=list)
+    price: float | None = None       # what the customer would pay a unit: the ordered line's net price
+    own_price: float | None = None   # the substitute's own price for the customer
+    note: str = ""                   # the substitution's own note
 
 
 class OrderPromise(Out):
@@ -58,6 +80,7 @@ class OrderPromise(Out):
     unconfirmed: float = 0.0
     status: Literal["on_time", "late", "partial", "unconfirmed"] = "unconfirmed"
     allocation_capped: float = 0.0   # what the allocation withheld on the requested date
+    held: bool = False               # promised (in part) from stock or orders held for this order alone
     ctp: list[CtpStep] = Field(default_factory=list)
     previous: list[ScheduleLine] = Field(default_factory=list)
     change: Literal["new", "kept", "gained", "lost", "changed", "unchanged"] = "new"
@@ -66,6 +89,8 @@ class OrderPromise(Out):
     price: float | None = None       # per unit: the order's own, else the customer's, else the product's
     value: float | None = None       # qty × price (empty without a price)
     why: list[WhyStep] = Field(default_factory=list)   # what sets the latest confirmed date
+    safe: SafeView | None = None     # an order check only, when its product's forecast has a high end
+    substitutes: list[SubstituteOffer] = Field(default_factory=list)   # for the part not on time, in substitution order
     shipped: float = 0.0             # delivered in the journal and not yet booked by starting a new week: the plan
                                      # still counts it as open until then, the Selling page already as delivered
 
@@ -87,7 +112,9 @@ class AtpNode(Out):
 
 class AllocationUse(Out):
     id: str
-    product: str
+    product: str | None
+    family: str | None = None
+    carry_forward: bool = False
     customers: list[str]
     start: dt.date
     end: dt.date

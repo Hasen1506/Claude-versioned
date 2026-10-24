@@ -6,9 +6,12 @@ members (see :mod:`scp.api.companies`); without a company, versions and the work
 """
 from __future__ import annotations
 
+import csv
 import datetime as dt
+import io
 import json
 import os
+import time
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -23,14 +26,19 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from .. import __version__
 from ..actuals import ActualsView, FirmReport, PostingError, RollReport, actuals_view, firm_orders, post, roll_forward
+from ..actuals.cycle import CyclePlan, cycle_plan
+from ..actuals.documents import StockError
 from ..actuals.post import production_usage
-from ..demand import ForecastResult, ReleaseResult, release, run_forecast
+from ..actuals.valuation import ValuationView, value_stock
+from ..demand import ForecastResult, ReleaseResult, ValueAdd, release, run_forecast, value_add
 from ..finance import FinanceResult, run_finance
-from ..tower import FixError, FixResult, TowerResult, WorkItem, get_tracker, run_tower, try_inbox_fix
+from ..tower import FixError, FixResult, TowerResult, WorkItem, get_tracker, open_items, run_tower, try_inbox_fix
+from ..tower.ask import AskAnswer, AskRequest, ask, vocabulary
 from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
 from ..inventory import InventoryResult, PlacementApplied, apply_placement, run_inventory
+from ..inventory.policy import PolicyError, PolicyView, apply_policy, policy_view
 from ..model import Dataset, DemandRecord, ForecastModelId, StockType
 from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
@@ -38,13 +46,30 @@ from ..plan import PlanResult, run_mrp
 from ..plan.mrp import with_kept_plan
 from ..plan.trace import PlanTrace, index as trace_index, trace
 from ..plan.level import LevelPreview, level_preview
+from ..plan.advisor import StrategyAdvisor, strategy_advice
 from ..purchasing import PurchasingError, act as purchasing_act, create_one_off_po, create_purchase_orders, purchasing_view
 from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..sales import SalesError, act as sales_act, sales_view
+from .. import transport as tm
+from ..transport import TransportError, TransportReport, TransportView
+from ..transport import view as transport_view
+from .. import dropship as tp
+from .. import accounting as acct
+from .. import intercompany as ic
+from .. import jobwork as jw
+from ..dropship import DropShipError, DropShipView
+from ..intercompany import IntercompanyError, IntercompanyView
+from ..jobwork import JobWorkError, JobWorkView
+from ..warehouse import (
+    PickList, PutawayProposal, RefillProposal, WarehouseError, WarehouseReport, WarehouseView, cancel_task, confirm_task,
+    create_putaway, create_refill, create_wave, move_task, pick_list, propose_putaway, propose_refill,
+    view as warehouse_view,
+)
 from ..sales.result import SalesReport, SalesView
 from ..promise import PromiseResult, check_lines, check_order, commit, run_bop, run_promise
 from ..promise.orders import (
     OrderError, SalesOrderReport, accept as accept_order, cancel as cancel_order, change as change_order,
+    substitute as substitute_order,
 )
 from ..scenarios import BY_ID as SCENARIOS, EngineClient, ScenarioInfo, ScenarioReport
 from ..schedule import (
@@ -56,16 +81,22 @@ from ..validate import RULES, Issue, validate
 from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, lenient_checked, plain_errors
 from ..validate.setup import SetupItem, checklist
 from ..cases import CASES, CaseInfo
-from ..whatif import KeepRequest, KeepResult, WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios, keep_scenario
+from ..whatif import (
+    KeepRequest, KeepResult, SweepRequest, SweepResult, WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios,
+    keep_scenario, sweep_chip,
+)
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
 from .connect import router as connect_router
+from .cycle import router as cycle_router
+from .portal import router as portal_router
 from .companies import (
     CORS_ORIGINS,
-    Scope, StoredEditScope, StoredScope, company_error, edit_scope, gate, is_company, require_signin,
-    router as companies_router, signup_policy, who_asks,
+    Scope, StoredEditScope, StoredScope, company_error, edit_scope, gate, is_company, production_guard, require_signin,
+    router as companies_router, signup_policy, stored_scope, who_asks,
 )
 from .working import PlanData, answer, is_ref, read as read_ref, respond, send
+from .monitor import STARTED, commit as build_commit, metrics_page, observe, setup_logging
 
 ROOT = Path(__file__).resolve().parents[3]          # scp/
 EXAMPLES = ROOT / "examples"
@@ -84,6 +115,7 @@ async def lifespan(_app: FastAPI):
 
     signup_policy()
     require_signin()
+    production_guard()
     store = get_store()
     start_nightly(store.db, store.lock)
     start_clock()       # scheduled imports and worklist reminders (Phase Q)
@@ -109,10 +141,14 @@ app.add_middleware(CORSMiddleware, allow_origins=list(CORS_ORIGINS), allow_crede
 
 
 app.middleware("http")(gate)
+setup_logging()
+app.middleware("http")(observe)       # outermost: request id, time taken, the log line and the counts (Phase 1.2)
 
 app.add_exception_handler(CompanyError, company_error)  # type: ignore[arg-type]
 app.include_router(companies_router)
 app.include_router(connect_router)
+app.include_router(cycle_router)
+app.include_router(portal_router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -132,8 +168,11 @@ def _version_error(_request, exc: VersionError) -> JSONResponse:
 
 
 class Health(Out):
-    status: str
+    status: str                    # ok | database unreachable
     version: str
+    commit: str                    # the build's commit ("" when the build did not say)
+    database: str                  # sqlite | postgresql
+    up_seconds: int                # since this server process started
 
 
 class ExampleInfo(Out):
@@ -206,9 +245,25 @@ class NetworkView(Out):
     cycles: list[list[tuple[str, str]]]
 
 
-@app.get("/api/health", response_model=Health)
-def health() -> Health:
-    return Health(status="ok", version=__version__)
+@app.get("/api/health", response_model=Health, responses={503: {"model": Health}})
+def health() -> Response:
+    """Whether the server answers and reaches its database (a load balancer or the image's check calls it)."""
+    store = get_store()
+    try:
+        with store.lock:
+            store.db.execute("SELECT 1").fetchone()
+        status = "ok"
+    except Exception:  # noqa: BLE001 - said in the answer, logged by the request line
+        status = "database unreachable"
+    body = Health(status=status, version=__version__, commit=build_commit(), database=store.backend,
+                  up_seconds=int(time.time() - STARTED))
+    return JSONResponse(status_code=200 if status == "ok" else 503, content=body.model_dump())
+
+
+@app.get("/api/metrics", include_in_schema=False)
+def metrics(request: Request) -> Response:
+    """This process's counts in the Prometheus text format (scp.api.monitor); SCP_METRICS_TOKEN guards it."""
+    return metrics_page(request)
 
 
 @app.get("/api/examples", response_model=list[ExampleInfo])
@@ -363,6 +418,20 @@ def post_release(req: ReleaseRequest) -> ReleaseResponse:
     return ReleaseResponse(**answer(req.dataset, new), release=info)
 
 
+@app.post("/api/forecast/value-add", response_model=ValueAdd)
+def post_value_add(ds: PlanData) -> ValueAdd:
+    """Forecast value add: each layer of the kept forecasts (naïve, statistical, events, overrides) against the sales
+    of the periods that have sold, in total, per product family and per planner."""
+    return value_add(ds)
+
+
+@app.post("/api/plan/strategy-advice", response_model=StrategyAdvisor)
+def post_strategy_advice(ds: PlanData) -> StrategyAdvisor:
+    """Strategy advisor (S/4 §5.4): for each product sold, the days customers wait against the time to deliver from
+    stock, to assemble from parts and to make from scratch; the strategy that fits, and whether today's does."""
+    return strategy_advice(ds)
+
+
 @app.post("/api/inventory", response_model=InventoryResult)
 def post_inventory(ds: PlanData) -> Response:
     return respond("inventory", ds, lambda: run_inventory(ds))
@@ -389,6 +458,45 @@ def post_inventory_apply(req: PlacementRequest) -> PlacementResponse:
     except KeyError as e:
         raise HTTPException(404, str(e.args[0])) from None
     return PlacementResponse(**answer(req.dataset, new), applied=info)
+
+
+@app.post("/api/inventory/policy", response_model=PolicyView)
+def post_inventory_policy(ds: PlanData) -> PolicyView:
+    """Inventory policy (Enterprise 8.2): every product kept at a place with its ABC-XYZ class, rule, review, service
+    target beside its class's suggestion, safety stock, reorder point and the one suggested, and the service achieved."""
+    return policy_view(ds)
+
+
+class PolicyApplyRequest(Out):
+    dataset: PlanData
+    keys: list[str]                                  # "location|product"
+    method: Literal["none", "fixed", "days_of_supply", "service_level", "fill_rate"] | None = None
+    service_level: float | Literal["suggested"] | None = None
+    days: float | None = None
+    qty: float | None = None
+    review_period_days: float | None = Field(None, ge=0, le=365)
+    review_from: dt.date | None = None                  # a review day; the others every review period from it
+    rule: Literal["mrp", "reorder_point"] | None = None  # reorder point: s is set to the suggestion with it
+    distribution: Literal["normal", "gamma", "poisson"] | None = None   # how a target reads demand over L + R
+    reorder_point: Literal["suggested"] | None = None
+
+
+class PolicyApplyResponse(Out):
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
+    message: str
+
+
+@app.post("/api/inventory/policy/apply", response_model=PolicyApplyResponse)
+def post_inventory_policy_apply(req: PolicyApplyRequest) -> PolicyApplyResponse:
+    keys = [(k.split("|", 1)[0], k.split("|", 1)[1]) for k in req.keys if "|" in k]
+    try:
+        new, msg = apply_policy(req.dataset, keys, method=req.method, service_level=req.service_level, days=req.days,
+                                qty=req.qty, review_period_days=req.review_period_days, review_from=req.review_from,
+                                rule=req.rule, distribution=req.distribution, reorder_point=req.reorder_point)
+    except PolicyError as e:
+        raise HTTPException(422, str(e)) from None
+    return PolicyApplyResponse(**answer(req.dataset, new), message=msg)
 
 
 @app.post("/api/sop", response_model=SopResult)
@@ -515,12 +623,14 @@ class SalesOrderChange(Out):
 
 class SalesOrderRequest(Out):
     dataset: PlanData
-    action: Literal["accept", "change", "cancel"]
+    action: Literal["accept", "change", "cancel", "substitute"]
     order: DemandRecord | None = None               # accept: the checked order (no number: the next one)
-    id: str | None = None                           # change / cancel: the order
+    id: str | None = None                           # change / cancel / substitute: the order
     changes: SalesOrderChange | None = None
     date: dt.date | None = None                     # cancel: the day (default: the planning start)
     reason: str = ""
+    product: str | None = None                      # substitute: the product to ship in its place
+    qty: float | None = None                        # substitute: how many (default: all that is open)
 
 
 class SalesOrderResponse(Out):
@@ -531,7 +641,8 @@ class SalesOrderResponse(Out):
 
 @app.post("/api/orders/sales", response_model=SalesOrderResponse)
 def post_sales_order(req: SalesOrderRequest) -> SalesOrderResponse:
-    """Take a checked customer order, change one (it is promised again), or cancel what is still open."""
+    """Take a checked customer order, change one (it is promised again), cancel what is still open, or ship part of it
+    as a substitute product."""
     try:
         if req.action == "accept":
             if req.order is None:
@@ -543,6 +654,10 @@ def post_sales_order(req: SalesOrderRequest) -> SalesOrderResponse:
             ch = req.changes or SalesOrderChange()
             given = {k: getattr(ch, k) for k in ch.model_fields_set if getattr(ch, k) is not None or k == "price"}
             new, rep = change_order(req.dataset, req.id, given)
+        elif req.action == "substitute":
+            if not req.product:
+                raise OrderError("say which product ships in its place")
+            new, rep = substitute_order(req.dataset, req.id, req.product, req.qty)
         else:
             new, rep = cancel_order(req.dataset, req.id, req.date, req.reason)
     except (OrderError, ValueError) as e:
@@ -792,6 +907,7 @@ class SalesActionRequest(Out):
     date: dt.date | None = None                     # the day it happens (default: the planning start)
     customer_ref: str = ""
     payment_terms: str | None = None
+    single_delivery: bool = False                   # create_order: ship the whole order together
     note: str = ""
     reason: str = ""
     by: str = ""                                    # released by, signed by
@@ -825,6 +941,285 @@ def post_sales_action(req: SalesActionRequest) -> SalesActionResponse:
     except (SalesError, OrderError) as e:
         raise HTTPException(409, str(e)) from e
     return SalesActionResponse(**answer(req.dataset, new), report=rep)
+
+
+# ------------------------------------------------------------------------------------------------ warehouse (6.1)
+def _wh(make):
+    try:
+        return make()
+    except WarehouseError as e:
+        raise HTTPException(409, str(e)) from e
+
+
+@app.post("/api/valuation", response_model=ValuationView)
+def post_valuation(ds: PlanData, as_of: dt.date | None = None,
+                   books: Literal["entity", "group"] = "entity") -> Response:
+    """Stock in the books: each place's quantity, value and price (standard or moving average), the postings that
+    moved it and the price differences booked aside. With several companies, ``books=group`` values transfers
+    between them at what they cost the group instead of at their transfer prices."""
+    return respond("valuation", ds, lambda: value_stock(ds, as_of, books=books), as_of, books)
+
+
+@app.post("/api/cycle-counts", response_model=CyclePlan)
+def post_cycle_counts(ds: PlanData, location: str | None = None, as_of: dt.date | None = None) -> Response:
+    """Cycle counting: each stocked product's ABC class, its last count and when it is next due."""
+    def make():
+        try:
+            return cycle_plan(ds, location, as_of)
+        except StockError as e:
+            raise HTTPException(409, str(e)) from e
+    return respond("cycle-counts", ds, make, location, as_of)
+
+
+@app.post("/api/warehouse", response_model=WarehouseView)
+def post_warehouse(ds: PlanData, location: str, as_of: dt.date | None = None) -> Response:
+    """A place's bins with what each holds, the stock in no bin (to put away, or staged to ship) and what the journal
+    says about it."""
+    return respond("warehouse", ds, lambda: _wh(lambda: warehouse_view(ds, location, as_of)), location, as_of)
+
+
+@app.post("/api/warehouse/putaway", response_model=PutawayProposal)
+def post_warehouse_putaway(ds: PlanData, location: str, as_of: dt.date | None = None) -> PutawayProposal:
+    """Where the stock in no bin would go, by the place's rules (nothing is changed)."""
+    return _wh(lambda: propose_putaway(ds, location, as_of))
+
+
+@app.post("/api/warehouse/refill", response_model=RefillProposal)
+def post_warehouse_refill(ds: PlanData, location: str, as_of: dt.date | None = None) -> RefillProposal:
+    """Which picking bins are at or below their refill point, and the moves from the reserve that fill them (nothing
+    is changed)."""
+    return _wh(lambda: propose_refill(ds, location, as_of))
+
+
+@app.post("/api/warehouse/picks", response_model=PickList)
+def post_warehouse_picks(ds: PlanData, wave: str) -> PickList:
+    """A wave's pick list in walk order."""
+    return _wh(lambda: pick_list(ds, wave))
+
+
+class WarehouseActionRequest(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
+    dataset: PlanData
+    action: Literal["putaway", "refill", "wave", "confirm", "cancel", "move"]
+    location: str | None = None                     # putaway, refill, wave, move
+    deliveries: list[str] | None = None             # wave: these (default: every one due by the date)
+    task: str | None = None                         # confirm, cancel
+    qty: float | None = None                        # confirm: what was moved (default: all); move: how much
+    bin: str | None = None                          # confirm: the bin read by the scanner
+    product: str | None = None                      # confirm: the code read (id or barcode); move: the product
+    from_bin: str | None = None                     # move
+    to_bin: str | None = None
+    batch: str | None = None
+    stock_type: StockType = StockType.UNRESTRICTED
+    date: dt.date | None = None                     # the day (default: the planning start)
+    by: str = ""
+
+
+class WarehouseActionResponse(Out):
+    dataset: Dataset | None = None
+    patch: dict[str, Any] | None = None
+    report: WarehouseReport
+    picks: PickList | None = None                   # wave: its pick list
+
+
+@app.post("/api/warehouse/act", response_model=WarehouseActionResponse)
+def post_warehouse_action(req: WarehouseActionRequest) -> WarehouseActionResponse:
+    """One warehouse step: make the put-away or refill tasks, a wave of picks, confirm or cancel a task, move between
+    bins."""
+    ds, a = req.dataset, req.action
+
+    def need(v, what):
+        if not v:
+            raise WarehouseError(f"say which {what}")
+        return v
+
+    def run():
+        if a == "putaway":
+            return create_putaway(ds, need(req.location, "place"), req.date)
+        if a == "refill":
+            return create_refill(ds, need(req.location, "place"), req.date)
+        if a == "wave":
+            return create_wave(ds, need(req.location, "place"), req.deliveries, req.date)
+        if a == "confirm":
+            return confirm_task(ds, need(req.task, "task"), req.qty, req.bin, req.product, req.date,
+                                who_asks() or req.by)
+        if a == "cancel":
+            return cancel_task(ds, need(req.task, "task"))
+        return move_task(ds, need(req.location, "place"), need(req.product, "product"), need(req.qty, "quantity"),
+                         need(req.from_bin, "bin to move from"), need(req.to_bin, "bin to move to"), req.batch,
+                         req.stock_type, req.date)
+    new, rep = _wh(run)
+    picks = pick_list(new, rep.wave) if a == "wave" and rep.wave else None
+    return WarehouseActionResponse(**answer(ds, new), report=rep, picks=picks)
+
+
+# ------------------------------------------------------------------------------------------------ transport (6.3)
+@app.post("/api/transport", response_model=TransportView)
+def post_transport(ds: PlanData, as_of: dt.date | None = None) -> Response:
+    """What is waiting to be loaded, in vehicles by lane with the cheapest carrier, and the freight orders with
+    their cost shared over what they carry."""
+    return respond("transport", ds, lambda: transport_view(ds, as_of), as_of)
+
+
+class TransportActionRequest(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
+    dataset: PlanData
+    action: Literal["plan", "tender", "accept", "reject", "ship", "settle", "cancel"]
+    order: str | None = None                        # every action but plan: the freight order
+    lanes: list[str] | None = None                  # plan: only these lanes (default: every one)
+    billed: float | None = Field(None, ge=0)        # settle: what the carrier billed
+    bill: str = Field("", max_length=64)            # settle: their bill number
+    date: dt.date | None = None
+
+
+class TransportActionResponse(Out):
+    dataset: Dataset | None = None
+    patch: dict[str, Any] | None = None
+    report: TransportReport
+
+
+@app.post("/api/transport/act", response_model=TransportActionResponse)
+def post_transport_action(req: TransportActionRequest) -> TransportActionResponse:
+    """One transport step: freight orders for what is waiting, tendered, accepted or rejected, shipped, settled."""
+    ds, a = req.dataset, req.action
+
+    def run():
+        if a == "plan":
+            return tm.create(ds, req.date, req.lanes)
+        if not req.order:
+            raise TransportError("say which freight order")
+        if a == "settle":
+            if req.billed is None:
+                raise TransportError("say what the carrier billed")
+            return tm.settle(ds, req.order, req.billed, req.bill, req.date)
+        if a == "cancel":
+            return tm.cancel(ds, req.order)
+        return {"tender": tm.tender, "accept": tm.accept, "reject": tm.reject, "ship": tm.ship}[a](ds, req.order, req.date)
+    try:
+        new, rep = run()
+    except TransportError as e:
+        raise HTTPException(409, str(e)) from e
+    return TransportActionResponse(**answer(ds, new), report=rep)
+
+
+# ------------------------------------------------------------------------------------------------ outside (7.1)
+class OutsideView(Out):
+    drop_ship: DropShipView
+    job_work: JobWorkView
+
+
+@app.post("/api/outside", response_model=OutsideView)
+def post_outside(ds: PlanData, as_of: dt.date | None = None, period_start: dt.date | None = None,
+                 period_end: dt.date | None = None) -> Response:
+    """Work done by suppliers outside our walls: third-party orders they ship straight to customers, and job-work
+    challans with the parts at job workers, their GST limits and the ITC-04 return."""
+    return respond("outside", ds, lambda: OutsideView(drop_ship=tp.view(ds, as_of),
+                                                      job_work=jw.view(ds, as_of, period_start, period_end)),
+                   as_of, period_start, period_end)
+
+
+class ChallanPartInput(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
+    product: str
+    qty: float = Field(gt=0)
+    capital_goods: bool = False
+
+
+class OutsideActionRequest(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
+    dataset: PlanData
+    action: Literal["order", "send_order", "dispatch", "cancel_order",
+                    "send_parts", "back_processed", "back_unused", "write_off", "cancel_challan"]
+    id: str | None = None                           # the third-party order or the challan
+    customer: str | None = None                     # order
+    supplier: str | None = None                     # order: who ships; send_parts: the job worker
+    product: str | None = None                      # order; back_unused, write_off: the part
+    qty: float | None = Field(None, gt=0)
+    wanted: dt.date | None = None                   # order: the customer's date
+    price: float | None = Field(None, ge=0)         # order: sale price (default: the customer's)
+    cost: float | None = Field(None, ge=0)          # order: purchase price (default: the supplier's)
+    customer_ref: str = Field("", max_length=64)
+    production_order: str | None = None             # send_parts
+    parts: list[ChallanPartInput] | None = None     # send_parts (default: what the bill needs)
+    charge: float | None = Field(None, ge=0)        # send_parts: job charge per unit
+    vehicle: str = Field("", max_length=40)
+    reference: str = Field("", max_length=64)       # their dispatch note, challan or invoice number
+    final: bool = False
+    used: dict[str, float] | None = None            # back_processed: the parts they say they used
+    note: str = Field("", max_length=400)
+    date: dt.date | None = None
+
+
+class OutsideActionResponse(Out):
+    dataset: Dataset | None = None
+    patch: dict[str, Any] | None = None
+    message: str
+    id: str | None = None
+
+
+@app.post("/api/outside/act", response_model=OutsideActionResponse)
+def post_outside_action(req: OutsideActionRequest) -> OutsideActionResponse:
+    """One step of work done outside: a third-party order taken, sent, dispatched or cancelled; parts sent to a job
+    worker, back processed or unused, written off, or the challan cancelled."""
+    ds, a, on = req.dataset, req.action, req.date
+
+    def need(v, what: str):
+        if v is None or v == "":
+            raise DropShipError(f"say {what}")
+        return v
+
+    def run():
+        if a == "order":
+            new, r = tp.create(ds, need(req.customer, "which customer"), need(req.product, "which product"),
+                               need(req.qty, "how many"), need(req.wanted, "when the customer wants it"),
+                               need(req.supplier, "which supplier ships it"), price=req.price, cost=req.cost,
+                               customer_ref=req.customer_ref, note=req.note, on=on)
+            return new, r.message, r.orders[0]
+        if a in ("send_order", "dispatch", "cancel_order"):
+            tid = need(req.id, "which third-party order")
+            if a == "send_order":
+                new, r = tp.send(ds, tid, on)
+            elif a == "dispatch":
+                new, r = tp.dispatch(ds, tid, req.qty, on, req.reference, req.final)
+            else:
+                new, r = tp.cancel(ds, tid)
+            return new, r.message, tid
+        if a == "send_parts":
+            new, r = jw.send(ds, need(req.production_order, "which production order"), req.supplier,
+                             [p.model_dump() for p in req.parts] if req.parts else None, on=on, charge=req.charge,
+                             vehicle=req.vehicle, note=req.note, challan_id=req.id or None)
+            return new, r.message, r.challan
+        cid = need(req.id, "which challan")
+        if a == "back_processed":
+            new, r = jw.receive(ds, cid, need(req.qty, "how many came back"), on=on, reference=req.reference,
+                                final=req.final, used=req.used)
+        elif a == "back_unused":
+            new, r = jw.return_unused(ds, cid, need(req.product, "which part"), req.qty, on=on,
+                                      reference=req.reference)
+        elif a == "write_off":
+            new, r = jw.write_off(ds, cid, need(req.product, "which part"), req.qty, on=on, reference=req.reference)
+        else:
+            new, r = jw.cancel(ds, cid, on)
+        return new, r.message, cid
+    try:
+        new, msg, oid = run()
+    except (DropShipError, JobWorkError) as e:
+        raise HTTPException(409, str(e)) from e
+    return OutsideActionResponse(**answer(ds, new), message=msg, id=oid)
+
+
+class PartsRequest(Out):
+    dataset: PlanData
+    order: str
+
+
+@app.post("/api/outside/parts", response_model=list[dict[str, Any]])
+def post_outside_parts(req: PartsRequest) -> list[dict[str, Any]]:
+    """What a production order's bill needs for what is left to make, less what is at job workers already."""
+    try:
+        return jw.parts_to_send(req.dataset, req.order)
+    except JobWorkError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 class UsageInput(Out):
@@ -869,7 +1264,7 @@ class NodeInput(Out):
 class PostRequest(Out):
     dataset: PlanData
     action: Literal["ship", "receive", "deliver", "count", "move", "scrap", "scrap_expired", "reverse", "shorten",
-                    "count_doc", "count_enter", "count_post", "count_cancel"]
+                    "count_doc", "count_enter", "count_post", "count_cancel", "cycle_count"]
     order: str | None = None                        # the firm order (ship / receive / shorten) or sales order (deliver)
     qty: float | None = None                        # default: everything still open (shorten: the new quantity)
     date: dt.date | None = None                     # posting date (default: the planning start; a count: the day before)
@@ -891,6 +1286,7 @@ class PostRequest(Out):
     nodes: list[NodeInput] | None = None            # count_doc: places and products to count
     block: bool = True                              # count_doc: refuse postings for them until the count is posted
     uncounted_zero: bool = False                    # count_post: lines not counted are posted as zero
+    classes: list[Literal["A", "B", "C"]] | None = None   # cycle_count: only these classes (default: all that are due)
 
 
 @app.post("/api/actuals/post", response_model=PoActionResponse)
@@ -905,10 +1301,86 @@ def post_posting(req: PostRequest) -> PoActionResponse:
                         location=req.location, product=req.product, to_type=req.to_type, movement=req.movement,
                         doc=req.doc, nodes=None if req.nodes is None else [(n.location, n.product) for n in req.nodes],
                         block=req.block, uncounted_zero=req.uncounted_zero,
-                        ship_from=req.ship_from)
+                        ship_from=req.ship_from, classes=req.classes)
     except PostingError as e:
         raise HTTPException(409, str(e)) from e
     return PoActionResponse(**answer(req.dataset, new), report=rep)
+
+
+# ------------------------------------------------------------------------------------------------ companies (7.3)
+@app.post("/api/intercompany", response_model=IntercompanyView)
+def post_intercompany(ds: PlanData, as_of: dt.date | None = None, period_start: dt.date | None = None,
+                      period_end: dt.date | None = None) -> Response:
+    """The companies of the group: transfers between them at their transfer prices, the billing due list, the
+    inter-company invoices and the profit still in stock between them."""
+    return respond("intercompany", ds, lambda: ic.view(ds, as_of, period_start, period_end),
+                   as_of, period_start, period_end)
+
+
+class IntercompanyActionRequest(Out):
+    dataset: PlanData
+    action: Literal["bill", "cancel", "pay"]
+    id: str | None = Field(None, max_length=16)        # bill: the number (one document); cancel, pay: which
+    movements: list[str] | None = Field(None, max_length=500)   # bill: only these shipments
+    date: dt.date | None = None
+    note: str = Field("", max_length=400)
+    amount: float | None = Field(None, gt=0)           # pay: empty = what is open
+    reference: str = Field("", max_length=64)          # pay: the bank reference
+
+
+class IntercompanyActionResponse(Out):
+    dataset: Dataset | None = None
+    patch: dict[str, Any] | None = None
+    message: str
+    invoices: list[str] = []
+
+
+@app.post("/api/intercompany/act", response_model=IntercompanyActionResponse)
+def post_intercompany_action(req: IntercompanyActionRequest) -> IntercompanyActionResponse:
+    """Bill the shipments due between companies (an invoice per pair of places, a credit note for what came back),
+    cancel an invoice, or settle one (the buyer pays the seller)."""
+    ds = req.dataset
+    try:
+        if req.action == "bill":
+            new, r = ic.bill(ds, req.date, req.movements, req.id, req.note)
+        else:
+            if not req.id:
+                raise IntercompanyError("say which invoice")
+            new, r = (ic.cancel(ds, req.id) if req.action == "cancel"
+                      else ic.pay(ds, req.id, req.amount, req.date, req.reference))
+    except IntercompanyError as e:
+        raise HTTPException(409, str(e)) from e
+    return IntercompanyActionResponse(**answer(ds, new), message=r.message, invoices=r.invoices)
+
+
+@app.post("/api/accounting", response_model=acct.AccountingView)
+def post_accounting(ds: PlanData, period_start: dt.date | None = None, period_end: dt.date | None = None) -> Response:
+    """The accounts (Enterprise 7.4): the double-entry journal made from the movements, invoices and payments, each
+    company's balances on the period's last day and its checks against the documents."""
+    return respond("accounting", ds, lambda: acct.view(ds, period_start, period_end), period_start, period_end)
+
+
+class AccountingExport(Out):
+    name: str                              # the file's name
+    text: str
+
+
+@app.post("/api/accounting/export", response_model=AccountingExport)
+def post_accounting_export(ds: PlanData, format: Literal["tally", "csv"] = "tally", company: str = "",
+                           period_start: dt.date | None = None, period_end: dt.date | None = None) -> Response:
+    """One company's vouchers of the period as Tally's import file, or the whole journal as a spreadsheet (CSV)."""
+    def make() -> AccountingExport:
+        v = acct.view(ds, period_start, period_end, limit=10**9)
+        stem = f"journal-{v.period_start.isoformat()}-{v.period_end.isoformat()}"
+        if format == "csv":
+            buf = io.StringIO()
+            csv.writer(buf).writerows(acct.csv_rows(v, ds))
+            return AccountingExport(name=stem + ".csv", text=buf.getvalue())
+        if company and company not in ds.entity_by_id:
+            raise HTTPException(404, f"there is no company {company}")
+        return AccountingExport(name=f"tally-{company or 'main'}-{stem}.xml",
+                                text=acct.tally_xml(ds, company, period_start, period_end))
+    return respond("accounting-export", ds, make, format, company, period_start, period_end)
 
 
 # --- versions & scenarios (P8) -------------------------------------------------------------------
@@ -992,6 +1464,22 @@ def post_tower_fix(req: FixRequest, sc: Scope) -> FixResult:
         raise HTTPException(e.status, str(e)) from None
 
 
+class AskBody(AskRequest):
+    dataset: PlanData
+
+
+@app.post("/api/ask", response_model=AskAnswer)
+def post_ask(req: AskBody, sc: Scope) -> Response:
+    """Ask the plan (enterprise plan 5.2): why something is late, what if something changes, who owns a problem, what
+    is at risk. Answered from the plan and the open worklist, each sentence citing its records; fixes and what-ifs it
+    proposes are tried and kept by a person. Nothing is changed or recorded."""
+    plan = run_mrp(req.dataset)
+    items = open_items(req.dataset, plan, scope=sc or "anon:-") if plan.ok else []
+    ix = with_kept_plan(req.dataset, plan, "trace", lambda: trace_index(plan)) if plan.ok else None
+    vocab = with_kept_plan(req.dataset, plan, "ask", lambda: vocabulary(req.dataset, plan)) if plan.ok else None
+    return send(ask(req.dataset, plan, items, req.question, ix, vocab))
+
+
 class WorkItemUpdate(Out):
     owner: str | None = None        # "" = back to the owner rules
     status: Literal["open", "acknowledged", "resolved"] | None = None
@@ -1033,11 +1521,22 @@ def compare_versions(a: str, b: str, sc: StoredScope) -> Comparison:
 
 
 @app.post("/api/whatif", response_model=WhatIfResult)
-def post_whatif(req: WhatIfRequest) -> WhatIfResult:
-    """Roadmap E: plan 2–4 scenarios (the base with quick-change chips, or whole datasets) and compare them side by
-    side: cost, service, inventory, capacity, late units, their deltas against the first, and cost per service point."""
+def post_whatif(req: WhatIfRequest, request: Request) -> WhatIfResult:
+    """Roadmap E: plan 2–4 scenarios (the base with quick-change chips, whole datasets, or stored versions of the
+    caller's company, read here) and compare them side by side: cost, service, inventory, capacity, late units, their
+    deltas against the first, cost per service point, and money at risk in each period."""
     try:
-        return compare_scenarios(req)
+        return compare_scenarios(req, lambda vid: get_store().dataset(vid, stored_scope(request)))
+    except WhatIfError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@app.post("/api/whatif/sweep", response_model=SweepResult)
+def post_whatif_sweep(req: SweepRequest) -> SweepResult:
+    """Enterprise plan 5.3: one change at 2–8 sizes, each planned in full, read as cost against service (safety stock,
+    against the service expected when demand misses its forecast) or as an exposure (how far before service falls)."""
+    try:
+        return sweep_chip(req)
     except WhatIfError as e:
         raise HTTPException(422, str(e)) from None
 

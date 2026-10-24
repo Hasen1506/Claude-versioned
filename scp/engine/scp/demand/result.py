@@ -14,7 +14,7 @@ Abc = Literal["A", "B", "C"]
 Xyz = Literal["X", "Y", "Z"]
 Pattern = Literal["smooth", "erratic", "intermittent", "lumpy", "none"]
 Lifecycle = Literal["new", "mature", "inactive", "npi"]
-Flag = Literal["event", "outlier"]
+Flag = Literal["event", "outlier", "stockout"]
 
 
 class HistoryPoint(Out):
@@ -59,6 +59,7 @@ class ForecastPoint(Out):
     cannibalised: float = 0.0    # volume taken by an NPI product that follows this one
     override: float | None = None
     override_reason: str = ""
+    override_author: str = ""
     final: float                 # consensus value for the whole period
     lower: float
     upper: float
@@ -113,6 +114,23 @@ class Summary(Out):
     abc: dict[str, int] = {}
     patterns: dict[str, int] = {}
     total_final: float = 0.0
+    total_high: float = 0.0            # what a release writes as the high end (P90 at the default 80 % interval)
+
+
+class FamilyPeriod(Out):
+    start: dt.date
+    end: dt.date
+    label: str
+    statistical: float                 # Σ the series' forecasts after events and new products
+    final: float                       # Σ the consensus
+    overridden: bool = False           # a series or the family was overridden in it
+    override: float | None = None      # the family total a planner set for it (all places)
+
+
+class FamilyPlan(Out):
+    family: str
+    series: int
+    periods: list[FamilyPeriod]
 
 
 class ForecastResult(Out):
@@ -124,6 +142,7 @@ class ForecastResult(Out):
     series: list[Series]
     summary: Summary
     foundation: FoundationStatus
+    families: list[FamilyPlan] | None = None   # each product family's total per period, all places (None: no families)
 
 
 class CvSuggestion(Out):

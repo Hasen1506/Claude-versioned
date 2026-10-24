@@ -14,7 +14,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from ..model import (
-    Dataset, DemandKind, LocationType, SafetyStockMethod, Strategy, TransportMode,
+    Dataset, DemandKind, LocationType, MrpType, SafetyStockMethod, Strategy, TransportMode,
 )
 from ..model.common import PRODUCTION_LOCATION_TYPES, STOCKING_LOCATION_TYPES
 from ..network import build_graph
@@ -51,6 +51,11 @@ RULES: dict[str, tuple[Severity, str]] = {
     "PRODUCTION_NO_LEAD_TIME": ("warning", "Production source with neither routing nor fixed lead time"),
     "PURCHASE_ZERO_LEAD_TIME": ("warning", "Purchasing source with zero lead time"),
     "SS_AND_SAFETY_TIME": ("warning", "Safety stock and safety time both set: double buffering"),
+    "HELD_FOR_UNKNOWN_ORDER": ("warning", "Stock or a firm order held for a sales order that is not open for that "
+                                          "product: no order may use it"),
+    "DDMRP_NOT_A_BUFFER": ("warning", "MRP type ddmrp where no buffer can be held: planned by requirements"),
+    "DDMRP_SAFETY_STOCK": ("warning", "MRP type ddmrp with a safety stock: the red zone is the buffer, the safety stock "
+                                      "is not used"),
     "QUOTA_SUM": ("warning", "Quotas for a node do not add up to 1"),
     "DEMAND_OUTSIDE_HORIZON": ("warning", "Demand outside the planning horizon is ignored"),
     "DEMAND_PAST_DUE": ("warning", "Demand before planning start is treated as backlog"),
@@ -69,11 +74,21 @@ RULES: dict[str, tuple[Severity, str]] = {
     "NPI_DUPLICATE": ("warning", "More than one NPI rule for the same location-product"),
     "OVERRIDE_OUTSIDE_HORIZON": ("warning", "Consensus override outside the forecast horizon is ignored"),
     "OVERRIDE_WITHOUT_FORECAST": ("warning", "Consensus override for a series with no history or NPI rule"),
+    "FAMILY_OVERRIDE_NO_FAMILY": ("warning", "Family override for a family no product belongs to"),
     "CONFIRMATION_ORPHAN": ("warning", "Persisted confirmation for an order that no longer exists"),
     "STOCK_NOT_SYNCED": ("warning", "On-hand differs from the goods-movement journal"),
     "NEGATIVE_STOCK": ("warning", "The movement journal takes stock below zero"),
     "STOCK_EXPIRED": ("warning", "Stock in batches past their expiry date"),
     "BATCH_UNKNOWN": ("warning", "Goods movement in a batch with no batch record"),
+    "WH_MISFIT": ("warning", "Warehouse records that do not fit together (bins, storage types, rules, tasks)"),
+    "TM_MISFIT": ("warning", "Transport records that do not fit together (carriers, rates, freight orders)"),
+    "OUTSIDE_MISFIT": ("warning", "Third-party orders, job-work challans or shipping notices that do not fit the rest "
+                                  "of the data"),
+    "INTERCOMPANY_MISFIT": ("warning", "Companies of the group, transfer prices or inter-company invoices that do not "
+                                       "fit the rest of the data"),
+    "TRANSFER_PRICE_MISSING": ("warning", "Transfer between two companies of the group with no transfer price: it "
+                                          "moves at cost"),
+    "JOBWORK_DUE": ("warning", "Parts at a job worker past the GST limit: they count as supplied, tax is due"),
     "REVERSAL_UNKNOWN": ("warning", "Reversal of a movement that is not in the journal"),
     "SERIALS_COUNT": ("warning", "Serial numbers that do not match the quantity"),
     "COLD_CHAIN_LANE": ("warning", "Chilled product on a route without refrigeration"),
@@ -82,6 +97,10 @@ RULES: dict[str, tuple[Severity, str]] = {
     "PO_LINE_MISMATCH": ("error", "Purchase order line that does not match its order"),
     "FIXED_SOURCE_TWICE": ("warning", "More than one fixed source for a product at a place"),
     "OPEN_PO_BLOCKED_SUPPLIER": ("warning", "Open purchase order with a blocked supplier"),
+    "PLANNING_MATERIAL_CHAIN": ("warning", "A planning material that is itself a variant: nothing is planned "
+                                           "through it"),
+    "VARIANT_FORECAST": ("warning", "Forecast on a variant forecast through its planning material: both are "
+                                    "planned"),
 }
 
 
@@ -110,6 +129,10 @@ def validate(ds: Dataset) -> list[Issue]:
     _forecasting(ds, c)
     _graph(ds, c)
     _movements(ds, c)
+    _warehouse(ds, c)
+    _transport(ds, c)
+    _outside(ds, c)
+    _intercompany(ds, c)
     order = {"error": 0, "warning": 1}
     c.issues.sort(key=lambda i: (order[i.severity], i.code, i.object_type, i.object_id))
     return c.issues
@@ -138,6 +161,10 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "purchasing_source": ds.purchasing_sources, "lane": ds.lanes, "receipt": ds.receipts,
         "movement": ds.movements, "capacity_option": ds.finance.capacity_options,
         "purchase_order": ds.purchase_orders, "inventory_doc": ds.inventory_docs, "mrp_group": ds.mrp_groups,
+        "warehouse_task": ds.warehouse_tasks, "wave": ds.waves, "carrier": ds.carriers,
+        "freight_order": ds.freight_orders, "third_party_order": ds.third_party_orders, "challan": ds.challans,
+        "shipping_notice": ds.shipping_notices, "entity": ds.entities, "transfer_price": ds.transfer_prices,
+        "intercompany_invoice": ds.intercompany_invoices,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
@@ -147,6 +174,15 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         if n > 1:
             c.add("DUP_ID", "batch", f"{prod}/{bid}", f"batch {bid} of {prod} is kept {n} times",
                   "A batch number is unique per product")
+    for typ, items in (("storage_type", ds.storage_types), ("bin", ds.bins)):
+        for (loc, oid), n in Counter((x.location, x.id) for x in items).items():
+            if n > 1:
+                c.add("DUP_ID", typ, f"{loc}/{oid}", f"{typ.replace('_', ' ')} {oid} at {loc} is kept {n} times",
+                      "A code is unique per place")
+    for (loc, prod), n in Counter((r.location, r.product) for r in ds.putaway_rules).items():
+        if n > 1:
+            c.add("DUP_ID", "putaway_rule", f"{loc}/{prod or '*'}",
+                  f"{prod or 'every other product'} has {n} put-away rules at {loc}", "Keep one rule per product")
     for sup, n in Counter(v.supplier for v in ds.vendors).items():
         if n > 1:
             c.add("DUP_ID", "vendor", sup, f"supplier '{sup}' has {n} purchasing records; the first is used",
@@ -159,6 +195,11 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         if n > 1:
             c.add("DUP_ID", "customer_price", f"{cu}/{prod}", f"{prod} has {n} prices for {cu}; the first is used",
                   "Keep one price per customer and product")
+    for (mon, prod, fam), n in Counter((b.month.replace(day=1), b.product, b.family) for b in ds.budgets).items():
+        if n > 1:
+            what = f"{prod}" if prod else f"family {fam}" if fam else "the company"
+            c.add("DUP_ID", "budget", f"{mon:%Y-%m}/{prod or fam or '*'}",
+                  f"{what} has {n} budgets for {mon:%B %Y}", "Keep one budget per month and product, family or company")
     for (loc, prod), n in Counter((lp.location, lp.product) for lp in ds.location_products).items():
         if n > 1:
             c.add("DUP_LOCATION_PRODUCT", "location_product", f"{loc}/{prod}",
@@ -169,10 +210,14 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
 def _ref(ds: Dataset, c: _Collector, kind: str, value: str | None, typ: str, oid: str, field: str) -> bool:
     if value is None:
         return True
-    index = {"location": ds.location_by_id, "product": ds.product_by_id,
-             "calendar": ds.calendar_by_id, "resource": ds.resource_by_id,
-             "mrp_group": {g.id: g for g in ds.mrp_groups},
-             "payment_terms": ds.payment_terms_by_id}[kind]
+    if kind == "mrp_group":
+        index = {g.id for g in ds.mrp_groups}
+    elif kind == "family":
+        index = {p.family for p in ds.products if p.family}
+    else:
+        index = {"location": ds.location_by_id, "product": ds.product_by_id, "calendar": ds.calendar_by_id,
+                 "resource": ds.resource_by_id, "payment_terms": ds.payment_terms_by_id,
+                 "entity": ds.entity_by_id}[kind]
     if value not in index:
         c.add("REF_UNKNOWN", typ, oid, f"{field} refers to unknown {kind} '{value}'",
               f"Create {kind} '{value}' or fix the reference", field)
@@ -208,6 +253,15 @@ def _references(ds: Dataset, c: _Collector) -> None:
             if lp.withdraw_from:
                 _loc_type(ds, c, lp.withdraw_from, STOCKING_LOCATION_TYPES, "location_product", oid, "withdraw_from",
                           "parts are withdrawn from a place that keeps stock")
+    for p in ds.products:
+        if _ref(ds, c, "product", p.planning_material, "product", p.id, "planning_material") and p.planning_material:
+            base = ds.product_by_id[p.planning_material]
+            if base.planning_material is not None:
+                c.add("PLANNING_MATERIAL_CHAIN", "product", p.id,
+                      f"{p.id}'s planning material {base.id} is itself a variant of {base.planning_material}: "
+                      f"{p.id} is forecast and planned on its own",
+                      f"Name {base.planning_material} as {p.id}'s planning material, or clear {base.id}'s",
+                      "planning_material")
     for r in ds.resources:
         if _ref(ds, c, "location", r.location, "resource", r.id, "location"):
             _loc_type(ds, c, r.location, PRODUCTION_LOCATION_TYPES, "resource", r.id, "location",
@@ -290,8 +344,19 @@ def _references(ds: Dataset, c: _Collector) -> None:
     so_ids = {d.id for d in ds.demand if d.kind is DemandKind.SALES_ORDER and d.id}
     for a in ds.allocations:
         _ref(ds, c, "product", a.product, "allocation", a.id, "product")
+        _ref(ds, c, "family", a.family, "allocation", a.id, "family")
         for cu in a.customers:
             _ref(ds, c, "location", cu, "allocation", a.id, "customers")
+    for sb in ds.substitutions:
+        sid = f"{sb.product}/{sb.substitute}"
+        _ref(ds, c, "product", sb.product, "substitution", sid, "product")
+        _ref(ds, c, "product", sb.substitute, "substitution", sid, "substitute")
+        for cu in sb.customers:
+            _ref(ds, c, "location", cu, "substitution", sid, "customers")
+    for b in ds.budgets:
+        bid = f"{b.month:%Y-%m}/{b.product or b.family or '*'}"
+        _ref(ds, c, "product", b.product, "budget", bid, "product")
+        _ref(ds, c, "family", b.family, "budget", bid, "family")
     for i, cf in enumerate(ds.confirmations):
         _ref(ds, c, "location", cf.ship_from, "confirmation", f"#{i}", "ship_from")
         if cf.order not in so_ids:
@@ -579,10 +644,38 @@ def _lanes(ds: Dataset, c: _Collector) -> None:
                       "Enter the volume per base unit", "volume_m3")
 
 
+def _held(ds: Dataset, c: _Collector) -> None:
+    """Stock and firm orders held for a sales order (sales-order stock) must name an open sales order of the product:
+    otherwise nothing may use them, and they sit there."""
+    open_so = {(d.id, d.product) for d in ds.demand if d.kind is DemandKind.SALES_ORDER and d.id}
+    for rc in ds.receipts:
+        if rc.sales_order and (rc.sales_order, rc.product) not in open_so:
+            c.add("HELD_FOR_UNKNOWN_ORDER", "receipt", rc.id,
+                  f"{rc.id} is held for {rc.sales_order}, which is not an open sales order for {rc.product}",
+                  "Correct the sales order, or clear it so the order is free supply", "sales_order")
+    for lp in ds.location_products:
+        for os_ in lp.order_stock:
+            if os_.qty > 0 and (os_.order, lp.product) not in open_so:
+                c.add("HELD_FOR_UNKNOWN_ORDER", "location_product", f"{lp.location}/{lp.product}",
+                      f"{os_.qty:g} held for {os_.order}, which is not an open sales order for {lp.product}",
+                      "Move it to free stock (count it there), or correct the order", "order_stock")
+
+
 def _policies(ds: Dataset, c: _Collector) -> None:
+    _held(ds, c)
     for lp in ds.location_products:
         oid = f"{lp.location}/{lp.product}"
         ss = lp.safety_stock
+        if lp.mrp_type is MrpType.DDMRP:
+            if (lp.strategy is Strategy.MTO or lp.direct_production
+                    or ds.location_type(lp.location) is LocationType.CUSTOMER):
+                c.add("DDMRP_NOT_A_BUFFER", "location_product", oid,
+                      "Made to order (or a customer): there is no stock to buffer, so it is planned by its requirements",
+                      "Use MRP type deterministic, or make it to stock", "mrp_type")
+            elif ss.method is not SafetyStockMethod.NONE:
+                c.add("DDMRP_SAFETY_STOCK", "location_product", oid,
+                      "The buffer's red zone is its safety stock: the safety stock set here is not planned",
+                      "Set the safety stock method to none", "safety_stock.method")
         if ss.method is not SafetyStockMethod.NONE and lp.safety_time_days > 0:
             c.add("SS_AND_SAFETY_TIME", "location_product", oid,
                   "Safety stock and safety time are both set", "Use one buffer mechanism")
@@ -644,6 +737,13 @@ def _demand(ds: Dataset, c: _Collector) -> None:
         c.add("DEMAND_OUTSIDE_HORIZON", "demand", "*", f"{outside} demand records are after the end of the plan",
               "Lengthen the plan (Company settings → horizon days) to plan them")
     _consumption_gaps(ds, c, end)
+    base = ds.planning_base
+    for loc, prod in sorted({(d.location, d.product) for d in ds.demand
+                             if d.kind is DemandKind.FORECAST and d.product in base and d.qty > 0}):
+        c.add("VARIANT_FORECAST", "demand", f"{loc}/{prod}",
+              f"{prod} is forecast through its planning material {base[prod][0]}, and has a forecast of its own at "
+              f"{loc}: its orders use up {base[prod][0]}'s forecast, and its own forecast is planned as well",
+              f"Delete {prod}'s own forecast, or clear its planning material")
     for loc, prod in sorted(mto_fc):
         c.add("MTO_WITH_FORECAST", "location_product", f"{loc}/{prod}",
               "Forecast exists but the strategy is MTO", "Use MTS_CONSUME or ATO to pre-plan")
@@ -690,7 +790,9 @@ def _forecasting(ds: Dataset, c: _Collector) -> None:
     if late:
         c.add("HISTORY_AFTER_START", "history", "*", f"{late} history rows are on or after planning start",
               "History ends the day before planning starts; move planning start or drop those rows")
-    with_history = {(h.location, h.product) for h in ds.history if h.date < s.planning_start and h.qty > 0}
+    base = ds.planning_base
+    with_history = {(h.location, base[h.product][0] if h.product in base else h.product)
+                    for h in ds.history if h.date < s.planning_start and h.qty > 0}
     npi_keys = Counter((n.location, n.product) for n in ds.npi)
     for (loc, prod), k in npi_keys.items():
         if k > 1:
@@ -707,10 +809,24 @@ def _forecasting(ds: Dataset, c: _Collector) -> None:
         if not s.planning_start <= o.date < end:
             c.add("OVERRIDE_OUTSIDE_HORIZON", "override", oid, "The override date is outside the plan's dates",
                   "Move it inside the plan or delete it", "date")
+        elif o.product in base:
+            c.add("OVERRIDE_WITHOUT_FORECAST", "override", oid,
+                  f"{o.product} is forecast through its planning material {base[o.product][0]}, so it has no "
+                  "forecast of its own to adjust", f"Adjust {base[o.product][0]}'s forecast instead")
         elif (o.location, o.product) not in with_history and (o.location, o.product) not in npi_keys:
             c.add("OVERRIDE_WITHOUT_FORECAST", "override", oid,
                   f"No history or NPI rule for {o.product} at {o.location}, so there is no forecast to adjust",
                   "Add history, add an NPI rule, or enter the demand as a forecast record")
+    families = {p.family for p in ds.products if p.family}
+    for f in ds.family_overrides:
+        oid = f"{f.family}{'/' + f.location if f.location else ''}@{f.date.isoformat()}"
+        if not s.planning_start <= f.date < end:
+            c.add("OVERRIDE_OUTSIDE_HORIZON", "family_override", oid, "The override date is outside the plan's dates",
+                  "Move it inside the plan or delete it", "date")
+        elif f.family not in families:
+            c.add("FAMILY_OVERRIDE_NO_FAMILY", "family_override", oid,
+                  f"No product is in the family {f.family}, so the override has nothing to spread over",
+                  "Name a family the products use, or set it on the products", "family")
 
 
 def _graph(ds: Dataset, c: _Collector) -> None:
@@ -804,3 +920,180 @@ def _movements(ds: Dataset, c: _Collector) -> None:
     for mid in unmatched(ds):
         c.add("MOVEMENT_REF_UNKNOWN", "movement", mid, "The reference matches no receipt, sales order or closed order",
               "Fix the reference, or leave it empty for an unplanned movement", "reference")
+
+
+def _transport(ds: Dataset, c: _Collector) -> None:
+    """Carriers and freight orders (Enterprise 6.3): planning never reads them, so what does not fit is a warning."""
+    for k in ds.carriers:
+        for i, r in enumerate(k.rates):
+            if r.lane and r.lane not in ds.lane_by_id:
+                c.add("TM_MISFIT", "carrier", k.id, f"rate {i + 1} is for lane {r.lane}, which does not exist",
+                      "Pick one of the lanes, or leave it empty for every lane of the mode", "rates")
+    deliveries = {d.id for d in ds.deliveries}
+    transfers = {r.id for r in ds.receipts if r.kind.value == "transfer"}
+    for f in ds.freight_orders:
+        if f.lane not in ds.lane_by_id:
+            c.add("TM_MISFIT", "freight_order", f.id, f"lane {f.lane} does not exist", "Cancel the freight order", "lane")
+        if f.carrier and f.carrier not in ds.carrier_by_id:
+            c.add("TM_MISFIT", "freight_order", f.id, f"carrier {f.carrier} does not exist",
+                  "Tender it to one of the carriers", "carrier")
+        if f.status in ("planned", "tendered", "accepted"):
+            gone = [x for x in f.deliveries if x not in deliveries] + [x for x in f.transfers if x not in transfers]
+            if gone:
+                c.add("TM_MISFIT", "freight_order", f.id, f"carries {', '.join(gone[:5])}, no longer open",
+                      "Cancel it and plan the load again", "deliveries")
+
+
+def _outside(ds: Dataset, c: _Collector) -> None:
+    """Third-party orders and job-work challans (Enterprise 7.1): their places and products must exist and be of the
+    right kind (errors, as for any record); what no longer fits the orders and the journal is a warning, and so are
+    parts at a job worker past the GST limit."""
+    for t in ds.third_party_orders:
+        if _ref(ds, c, "location", t.customer, "third_party_order", t.id, "customer"):
+            _loc_type(ds, c, t.customer, {LocationType.CUSTOMER}, "third_party_order", t.id, "customer",
+                      "a third-party order is for a customer")
+        if _ref(ds, c, "location", t.supplier, "third_party_order", t.id, "supplier"):
+            _loc_type(ds, c, t.supplier, {LocationType.SUPPLIER}, "third_party_order", t.id, "supplier",
+                      "a supplier ships a third-party order")
+        _ref(ds, c, "product", t.product, "third_party_order", t.id, "product")
+        if t.shipped > t.qty * (1 + (ds.vendor(t.supplier).over_delivery_tolerance or 0.0)) + 1e-6:
+            c.add("OUTSIDE_MISFIT", "third_party_order", t.id, f"{t.shipped:g} dispatched on an order for {t.qty:g}",
+                  "Put the dispatches right", "shipments")
+    lines = {r.id: ds.purchase_order_by_id.get(r.po or "") for r in ds.receipts if r.kind.value == "purchase"}
+    for n in ds.shipping_notices:
+        if _ref(ds, c, "location", n.supplier, "shipping_notice", n.id, "supplier"):
+            _loc_type(ds, c, n.supplier, {LocationType.SUPPLIER}, "shipping_notice", n.id, "supplier",
+                      "a supplier sends a shipping notice")
+        for ln in n.lines:
+            _ref(ds, c, "product", ln.product, "shipping_notice", n.id, "lines")
+        if n.received_on or n.cancelled:
+            continue
+        stray = [ln.order for ln in n.lines if ln.order not in lines
+                 or (lines[ln.order] is not None and lines[ln.order].supplier != n.supplier)]
+        if stray:
+            c.add("OUTSIDE_MISFIT", "shipping_notice", n.id, f"ships {', '.join(stray[:5])}, not an open order line "
+                  f"of {n.supplier}", "Receive the goods on Buying and cancel the notice", "lines")
+    if not ds.challans:
+        return
+    orders = {r.id for r in ds.receipts if r.kind.value == "production"} | {
+        x.id for x in ds.closed_orders if x.kind == "production"}
+    journal = {m.id for m in ds.movements}
+    day = ds.settings.planning_start
+    for ch in ds.challans:
+        if _ref(ds, c, "location", ch.job_worker, "challan", ch.id, "job_worker"):
+            _loc_type(ds, c, ch.job_worker, {LocationType.SUPPLIER}, "challan", ch.id, "job_worker",
+                      "a job worker is a supplier")
+        _ref(ds, c, "location", ch.ship_from, "challan", ch.id, "ship_from")
+        for ln in ch.lines:
+            _ref(ds, c, "product", ln.product, "challan", ch.id, "lines")
+            _ref(ds, c, "location", ln.location, "challan", ch.id, "lines")
+        if ch.cancelled:
+            continue
+        if ch.order not in orders:
+            c.add("OUTSIDE_MISFIT", "challan", ch.id, f"is for {ch.order}, which is no production order",
+                  "Fix the order, or cancel the challan", "order")
+        gone = [m for ln in ch.lines for m in ln.movements if m not in journal]
+        if gone:
+            c.add("OUTSIDE_MISFIT", "challan", ch.id, f"sent its parts with {', '.join(gone[:5])}, not in the journal",
+                  "Post the issue again, or cancel the challan", "lines")
+        late = []
+        for ln in ch.lines:
+            days = ds.job_work.capital_goods_days if ln.capital_goods else ds.job_work.inputs_days
+            if ch.at_job_worker(ln.product) > 1e-6 and ch.sent_on + timedelta(days=days) < day:
+                late.append(ln.product)
+        if late:
+            c.add("JOBWORK_DUE", "challan", ch.id, f"{', '.join(late[:5])} still at {ch.job_worker} past the "
+                  "limit: they count as supplied on the day they were sent", "Get them back, or pay the tax on "
+                  "them and write them off", "lines")
+
+
+def _intercompany(ds: Dataset, c: _Collector) -> None:
+    """Several companies in one network (Enterprise 7.3): a place's company and a transfer price's companies and
+    product must exist (errors, as for any record); a company on a supplier or a customer, a transfer between
+    companies with no price, and an invoice that no longer fits its shipments are warnings."""
+    from ..actuals.transfer_price import crossing, entity_of, shipments
+    from ..intercompany import missing_prices
+    for lo in ds.locations:
+        if lo.entity is None:
+            continue
+        _ref(ds, c, "entity", lo.entity, "location", lo.id, "entity")
+        if lo.type in (LocationType.SUPPLIER, LocationType.CUSTOMER):
+            c.add("INTERCOMPANY_MISFIT", "location", lo.id, f"is a {lo.type.value} and belongs to {lo.entity}: only "
+                  "our own places belong to a company of the group", "Clear its company", "entity")
+    for r in ds.transfer_prices:
+        _ref(ds, c, "entity", r.seller, "transfer_price", r.id, "seller")
+        _ref(ds, c, "entity", r.buyer, "transfer_price", r.id, "buyer")
+        _ref(ds, c, "product", r.product, "transfer_price", r.id, "product")
+        if r.seller is not None and r.seller == r.buyer:
+            c.add("INTERCOMPANY_MISFIT", "transfer_price", r.id, "sells to the company that sells: it never applies",
+                  "Name another buyer", "buyer")
+    if ds.entities:
+        for oid, seller, buyer, prod in missing_prices(ds):
+            names = {e.id: e.name or e.id for e in ds.entities}
+            c.add("TRANSFER_PRICE_MISSING", "receipt", oid,
+                  f"moves {prod} from {names.get(seller, ds.settings.company_name)} to "
+                  f"{names.get(buyer, ds.settings.company_name)} with no transfer price: at cost, no profit to the "
+                  "seller", "Add a transfer price for the two companies", "source")
+    if not ds.intercompany_invoices:
+        return
+    ship = {m.id: (m, to) for m, to, _q in shipments(ds)}
+    for inv in ds.intercompany_invoices:
+        _ref(ds, c, "location", inv.ship_from, "intercompany_invoice", inv.id, "ship_from")
+        _ref(ds, c, "location", inv.ship_to, "intercompany_invoice", inv.id, "ship_to")
+        for ln in inv.lines:
+            _ref(ds, c, "product", ln.product, "intercompany_invoice", inv.id, "lines")
+        if inv.cancelled:
+            continue
+        gone = [ln.movement for ln in inv.lines if ln.movement not in ship]
+        if gone:
+            c.add("INTERCOMPANY_MISFIT", "intercompany_invoice", inv.id, f"bills {', '.join(gone[:5])}, no shipment "
+                  "between two companies or registrations in the journal", "Cancel the invoice and bill again",
+                  "lines")
+        if (inv.ship_from in ds.location_by_id and inv.ship_to in ds.location_by_id
+                and (entity_of(ds, inv.ship_from), entity_of(ds, inv.ship_to)) != (inv.seller, inv.buyer)):
+            c.add("INTERCOMPANY_MISFIT", "intercompany_invoice", inv.id, "names a seller or buyer that the places no "
+                  "longer belong to", "Cancel the invoice and bill again", "seller")
+        elif inv.ship_from in ds.location_by_id and not crossing(ds, inv.ship_from, inv.ship_to):
+            c.add("INTERCOMPANY_MISFIT", "intercompany_invoice", inv.id, "is between places of one registration: "
+                  "nothing to bill", "Cancel the invoice", "ship_to")
+
+
+def _warehouse(ds: Dataset, c: _Collector) -> None:
+    """Storage types, bins, put-away rules and warehouse tasks (Enterprise 6.1): their places and products must exist
+    (errors, as for any record); what does not fit together inside a warehouse is a warning, for planning never
+    reads it."""
+    types: set[tuple[str, str]] = set()
+    for t in ds.storage_types:
+        oid = f"{t.location}/{t.id}"
+        if _ref(ds, c, "location", t.location, "storage_type", oid, "location"):
+            _loc_type(ds, c, t.location, STOCKING_LOCATION_TYPES, "storage_type", oid, "location",
+                      "bins are inside plants and warehouses")
+        types.add((t.location, t.id))
+    bins = {(b.location, b.id) for b in ds.bins}
+    for b in ds.bins:
+        oid = f"{b.location}/{b.id}"
+        _ref(ds, c, "location", b.location, "bin", oid, "location")
+        _ref(ds, c, "product", b.product, "bin", oid, "product")
+        if (b.location, b.storage_type) not in types:
+            c.add("WH_MISFIT", "bin", oid, f"bin {b.id} is in storage type {b.storage_type}, which {b.location} does "
+                  "not have", "Create the storage type, or pick one of the place's", "storage_type")
+    for r in ds.putaway_rules:
+        oid = f"{r.location}/{r.product or '*'}"
+        _ref(ds, c, "location", r.location, "putaway_rule", oid, "location")
+        _ref(ds, c, "product", r.product or None, "putaway_rule", oid, "product")
+        for st in r.storage_types:
+            if (r.location, st) not in types:
+                c.add("WH_MISFIT", "putaway_rule", oid, f"the rule names storage type {st}, which {r.location} does "
+                      "not have", "Create it, or take it off the rule", "storage_types")
+    for k in ds.warehouse_tasks:
+        _ref(ds, c, "location", k.location, "warehouse_task", k.id, "location")
+        _ref(ds, c, "product", k.product, "warehouse_task", k.id, "product")
+        for f in ("from_bin", "to_bin"):
+            v = getattr(k, f)
+            if v and k.status == "open" and (k.location, v) not in bins:
+                c.add("WH_MISFIT", "warehouse_task", k.id, f"{f.replace('_', ' ')} {v} is not a bin at {k.location}",
+                      "Cancel the task, or create the bin", f)
+    for m in ds.movements:
+        if m.bin and (m.location, m.bin) not in bins:
+            c.add("WH_MISFIT", "movement", m.id, f"bin {m.bin} is not a bin at {m.location}: its stock is shown "
+                  "there all the same", "Create the bin again, or move the stock out of it", "bin")

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy
 import math
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -20,6 +20,7 @@ from scp.model import Dataset, InventorySettings
 from scp.plan import run_mrp
 from scp.promise.run import run_bop, run_promise
 from scp.schedule.core import OpSpec, setup_rule
+from scp import sales
 from scp.validate import validate
 
 from .factory import base, demand as fdemand, ds as make_ds
@@ -181,6 +182,84 @@ def test_reschedule_out_respects_tolerance_and_safety_stock():
     assert not {"RESCHEDULE_OUT", "RECEIPT_NOT_NEEDED"} & set(codes(plan(d)))
 
 
+
+def test_late_firm_order_without_a_horizon_is_duplicated_by_a_new_one():
+    """The defect ENTERPRISE_PLAN 2.1 names, as the plan still behaves with no rescheduling horizon (the company's
+    default, as in S/4 when none is set): a 3-day lead time could bring a new order on time, so a PO due a week late
+    gets a requisition beside it, and the PO itself is reported as not needed."""
+    d = buy()
+    dem(d, "2026-01-12", 50)
+    rec(d, "2026-01-19", 50)
+    res = plan(d)
+    [o] = orders(res)
+    assert (o.qty, o.need_date) == (50, date(2026, 1, 12))
+    assert "RECEIPT_NOT_NEEDED" in codes(res)
+
+
+def test_rescheduling_horizon_brings_a_late_firm_order_in_before_new_supply():
+    """ENTERPRISE_PLAN 2.1, §8.1: within the rescheduling horizon a firm receipt is proposed for 'reschedule in'
+    (exception 10) and no new order is planned; beyond the horizon, new supply. Monday–Friday calendar, need on Monday
+    12 Jan, PO due Monday 19 Jan: five working days later (13, 14, 15, 16, 19 Jan)."""
+    d = buy(workdays=WEEKDAYS)
+    d["settings"]["rescheduling_horizon_days"] = 5
+    dem(d, "2026-01-12", 50)
+    rec(d, "2026-01-19", 50)
+    res = plan(d)
+    assert orders(res) == []
+    [e] = [e for e in res.exceptions if e.code == "RESCHEDULE_IN"]
+    assert (e.order_id, e.date, e.qty) == ("PO1", date(2026, 1, 12), 50)
+    assert "expedite it by 7 d" in e.message and "5-working-day rescheduling horizon" in e.message
+    assert "RECEIPT_NOT_NEEDED" not in codes(res)
+    assert [r.date for r in res.receipts] == [date(2026, 1, 19)]   # advice only: the PO keeps its date
+    # four working days are one short of the PO: a new order on time, and the PO is not needed
+    d["settings"]["rescheduling_horizon_days"] = 4
+    res = plan(d)
+    assert [(o.qty, o.need_date) for o in orders(res)] == [(50, date(2026, 1, 12))]
+    assert "RESCHEDULE_IN" not in codes(res)
+
+
+def test_rescheduling_horizon_takes_only_what_the_shortage_needs():
+    """Two firm orders inside the horizon: the earlier one covers the shortage, the later one keeps its date and is
+    checked the other way as usual."""
+    d = buy()
+    d["settings"]["rescheduling_horizon_days"] = 10
+    dem(d, "2026-01-08", 40)
+    rec(d, "2026-01-10", 40, id="PO-A")
+    rec(d, "2026-01-14", 40, id="PO-B")
+    dem(d, "2026-01-20", 40)
+    res = plan(d)
+    assert orders(res) == []
+    assert [e.order_id for e in res.exceptions if e.code == "RESCHEDULE_IN"] == ["PO-A"]
+    [e] = [e for e in res.exceptions if e.code == "RESCHEDULE_OUT"]
+    assert (e.order_id, e.date) == ("PO-B", date(2026, 1, 20))
+
+
+def test_rescheduling_horizon_and_tolerance_by_product_and_mrp_group():
+    """A product's own horizon and tolerance win over the company's; an MRP group's win over the product's."""
+    d = buy(rescheduling_horizon_days=10)
+    dem(d, "2026-01-12", 50)
+    rec(d, "2026-01-19", 50)
+    assert orders(plan(d)) == []
+    d["location_products"][0]["rescheduling_horizon_days"] = 0       # the product says none, over the company's 10
+    d["settings"]["rescheduling_horizon_days"] = 10
+    assert len(orders(plan(d))) == 1
+    d["mrp_groups"] = [{"id": "G", "rescheduling_horizon_days": 7}]
+    d["location_products"][0]["mrp_group"] = "G"
+    assert orders(plan(d)) == []
+
+    # tolerance: 6 days early is left alone at 7, reported at the company's 3
+    d = buy()
+    rec(d, "2026-01-09", 50)
+    dem(d, "2026-01-15", 50)
+    assert "RESCHEDULE_OUT" in codes(plan(d))
+    d["settings"]["reschedule_out_tolerance_days"] = 7
+    assert "RESCHEDULE_OUT" not in codes(plan(d))
+    d["settings"]["reschedule_out_tolerance_days"] = 3
+    d["mrp_groups"] = [{"id": "G", "reschedule_out_tolerance_days": 6}]
+    d["location_products"][0]["mrp_group"] = "G"
+    assert "RESCHEDULE_OUT" not in codes(plan(d))
+
+
 # ================================================================================================ §8.2 MRP types
 def test_no_planning_type_creates_nothing():
     """§8.2 ND: excluded from MRP; a shortage is projected but never replenished."""
@@ -257,6 +336,51 @@ def test_economic_order_quantity_by_hand():
     assert first.qty == math.ceil(math.sqrt(2 * 3650 * 100 / 2))
 
 
+def lumpy(policy: str, third: float) -> list[tuple[float, date]]:
+    """Weekly buckets; 100 on Mon 12 Jan, 60 on the 19th, ``third`` on the 26th, 100 on Mon 2 Feb. An order costs 10;
+    a unit held a day costs 10 × 0.365 ÷ 365 = 0.01 (0.07 a week)."""
+    d = buy(bucket="week", horizon=42, lot_sizing={"policy": policy, "ordering_cost": 10}, holding_rate=0.365)
+    for day, q in (("2026-01-12", 100), ("2026-01-19", 60), ("2026-01-26", third), ("2026-02-02", 100)):
+        dem(d, day, q)
+    return [(o.qty, o.need_date) for o in orders(plan(d))]
+
+
+@pytest.mark.parametrize("policy,third,lots", [
+    # part-period balancing: holding 60×7×0.01 = 4.2, + 40×14×0.01 = 9.8 ≤ 10, + 100×21×0.01 > 10 → 200, then 100
+    ("PPB", 40, [(200, date(2026, 1, 12)), (100, date(2026, 2, 2))]),
+    # with 45 the third week costs 6.3: 10.5 > 10 → 160; then 45 + 100 (holding 7 ≤ 10) → 145
+    ("PPB", 45, [(160, date(2026, 1, 12)), (145, date(2026, 1, 26))]),
+    # least unit cost: 10/100 = 0.1, 14.2/160 = 0.089, 19.8/200 = 0.099 rises → 160; then 40: 0.25 → 17/140 → 140
+    ("LUC", 40, [(160, date(2026, 1, 12)), (140, date(2026, 1, 26))]),
+    # Groff: a period joins while qty × k × (k+1) ≤ 2 × 10 ÷ 0.07 = 285.7: 60×2 = 120, 45×6 = 270, 100×12 > → 205
+    ("GROFF", 45, [(205, date(2026, 1, 12)), (100, date(2026, 2, 2))]),
+    ("GROFF", 50, [(160, date(2026, 1, 12)), (150, date(2026, 1, 26))]),   # 50×6 = 300 > 285.7
+])
+def test_optimising_lot_sizes_by_hand(policy, third, lots):
+    """§8.3 optimising family beside EOQ, for lumpy demand: part-period balancing (WI), least unit cost (SP) and
+    Groff (GR) decide how many periods one lot covers."""
+    assert lumpy(policy, third) == lots
+
+
+def test_part_period_balancing_holds_each_requirement_from_its_own_date():
+    """60 wanted on Thu 22 Jan, not Mon 19: held 10 days (6.0), + 40 × 14 × 0.01 = 11.6 > 10 → the first lot is 160."""
+    d = buy(bucket="week", horizon=42, lot_sizing={"policy": "PPB", "ordering_cost": 10}, holding_rate=0.365)
+    for day, q in (("2026-01-12", 100), ("2026-01-22", 60), ("2026-01-26", 40), ("2026-02-02", 100)):
+        dem(d, day, q)
+    assert [o.qty for o in orders(plan(d))][0] == 160
+
+
+@pytest.mark.parametrize("cost,price", [(0, 10), (10, 0)])
+def test_optimising_lot_size_without_an_ordering_cost_or_a_value_orders_lot_for_lot_and_says_so(cost, price):
+    d = buy(bucket="week", horizon=42, lot_sizing={"policy": "PPB", "ordering_cost": cost})
+    d["purchasing_sources"][0]["price"] = price
+    for day in ("2026-01-12", "2026-01-19"):
+        dem(d, day, 50)
+    p = plan(d)
+    assert [o.qty for o in orders(p)] == [50, 50]
+    assert any(e.code == "EOQ_FALLBACK" and "PPB lot size undefined" in e.message for e in p.exceptions)
+
+
 def test_minimum_then_rounding():
     """§8.3 modifiers after the base: 32 → minimum 30 keeps 32 → rounding value 25 → 50."""
     d = buy(lot_sizing={"policy": "L4L", "min_qty": 30, "rounding_qty": 25})
@@ -290,14 +414,105 @@ def test_backward_scheduling_and_forward_from_today():
 
 
 def test_planning_time_fence_shifts_new_proposals_to_the_fence_end():
-    """§8.5 firming type 1: inside a 10-day fence no new proposal; the requirement of 8 Jan is covered at the fence end
-    (15 Jan, late) and the move is reported."""
+    """§8.5 firming types 1 and 3 (3 is the default): inside a 10-day fence no new proposal; the requirement of 8 Jan
+    is covered at the fence end (15 Jan, late) and the move is reported."""
     d = buy(lt=1, planning_time_fence_days=10)
     dem(d, "2026-01-08", 10)
     res = plan(d)
     [o] = orders(res)
     assert o.fence_shifted and o.available_date == date(2026, 1, 15)
     assert "FENCE_SHIFT" in codes(res)
+
+
+
+def test_firming_type_2_plans_nothing_inside_the_fence_and_reports_the_shortage():
+    """ENTERPRISE_PLAN 2.3, §8.5 firming types 2 and 4: inside a 10-day fence no order at all, not even one moved to
+    its end; the shortage is reported, and the first check beyond the fence (15 Jan, daily buckets) covers it together
+    with what is needed then."""
+    for ft in (2, 4):
+        d = buy(lt=1, planning_time_fence_days=10, firming_type=ft)
+        dem(d, "2026-01-08", 10)
+        dem(d, "2026-01-20", 5)
+        res = plan(d)
+        assert [(o.qty, o.need_date, o.fence_shifted) for o in orders(res)] == [
+            (10, date(2026, 1, 15), False), (5, date(2026, 1, 20), False)]
+        [e] = [e for e in res.exceptions if e.code == "FENCE_SHORTAGE"]
+        assert (e.date, e.qty) == (date(2026, 1, 8), 10)
+        assert f"firming type {ft} plans no new order there" in e.message
+        assert "FENCE_SHIFT" not in codes(res)
+    # an MRP group can say it for many products
+    d = buy(lt=1, planning_time_fence_days=10, mrp_group="G")
+    d["mrp_groups"] = [{"id": "G", "firming_type": 2}]
+    dem(d, "2026-01-08", 10)
+    assert "FENCE_SHORTAGE" in codes(plan(d))
+
+
+def test_firming_types_1_and_2_firm_the_fence_when_the_week_rolls():
+    """ENTERPRISE_PLAN 2.3, §8.5 automatic firming: rolling to Monday 12 Jan, the planned orders that start inside the
+    product's 7-day fence (to 19 Jan) are firmed as last week's plan had them: the order for 16 Jan (1-day lead time)
+    becomes a purchase order due on the 16th, not one moved to the new fence end; the one for 30 Jan, outside the
+    fence, stays planned. Firming types 3 and 4 leave both to the planner."""
+    from scp.actuals.roll import roll_forward
+
+    def company(ft: int) -> Dataset:
+        d = buy(lt=1, planning_time_fence_days=7, firming_type=ft)
+        dem(d, "2026-01-16", 10, kind="forecast")
+        dem(d, "2026-01-30", 20, kind="forecast")
+        return Dataset.model_validate(d)
+
+    for ft in (1, 2):
+        new, rep = roll_forward(company(ft), date(2026, 1, 12))
+        assert rep.ok
+        assert [(f.kind, f.qty, f.planned_id.startswith("PR-")) for f in rep.firmed] == [("purchase", 10, True)]
+        assert len(rep.purchase_orders) == 1
+        assert [(r.kind.value, r.qty, r.due_date) for r in new.receipts] == [("purchase", 10, date(2026, 1, 16))]
+        assert [(o.qty, o.need_date) for o in orders(run_mrp(new))] == [(20, date(2026, 1, 30))]
+    for ft in (3, 4):
+        new, rep = roll_forward(company(ft), date(2026, 1, 12))
+        assert rep.firmed == [] and new.receipts == []
+
+
+
+def test_fence_and_goods_receipt_time_count_working_days_when_the_company_says_so():
+    """ENTERPRISE_PLAN 2.3: S/4 counts the planning time fence and the goods-receipt time in working days. Monday–Friday
+    plant, planning from Monday 5 Jan. A 5-day fence ends Saturday 10 Jan in calendar days, Monday 12 Jan in working
+    days. Two days of goods receipt after a PO arrives on Friday 9 Jan: Sunday 11 Jan in calendar days, Tuesday 13 Jan
+    in working days. Off (saved companies) nothing moves."""
+    d = buy(lt=1, workdays=WEEKDAYS, planning_time_fence_days=5)
+    dem(d, "2026-01-07", 10)
+    shift = lambda res: [e.message for e in res.exceptions if e.code == "FENCE_SHIFT"]  # noqa: E731
+    assert shift(plan(d)) == ["PR-0001-01 moved to the planning time fence end 2026-01-10"]
+    d["settings"]["working_day_fences"] = True
+    assert shift(plan(d)) == ["PR-0001-01 moved to the planning time fence end 2026-01-12"]
+
+    d = promising(buy(lt=30, workdays=WEEKDAYS, gr_processing_days=2))
+    rec(d, "2026-01-09", 50)
+    dem(d, "2026-01-12", 10)
+    assert [x.ship_date for x in run_promise(Dataset.model_validate(d)).orders[0].lines] == [date(2026, 1, 12)]
+    d["settings"]["working_day_fences"] = True
+    assert [x.ship_date for x in run_promise(Dataset.model_validate(d)).orders[0].lines] == [date(2026, 1, 13)]
+
+    # placed on Friday 9 Jan (the buyers' working day), delivered Saturday 10 Jan: two days of goods receipt make it
+    # Monday 12 Jan in calendar days, Tuesday 13 Jan in working days
+    d = buy(lt=1, workdays=WEEKDAYS, gr_processing_days=2)
+    dem(d, "2026-01-14", 10)
+    [o] = orders(plan(d))
+    assert (o.due_date, o.available_date) == (date(2026, 1, 10), date(2026, 1, 12))
+    d["settings"]["working_day_fences"] = True
+    [o] = orders(plan(d))
+    assert (o.due_date, o.available_date) == (date(2026, 1, 10), date(2026, 1, 13))
+
+
+def test_automatic_firming_keeps_last_weeks_fence_in_working_days():
+    """Rolling a week with a fence of 5 working days (Monday–Friday): last week's fence ended Monday 12 Jan, this
+    week's ends Monday 19 Jan. An order for Wednesday 14 Jan is firmed on its own date, not moved to the 19th."""
+    from scp.actuals.roll import roll_forward
+
+    d = buy(lt=1, workdays=WEEKDAYS, planning_time_fence_days=5, firming_type=1)
+    d["settings"]["working_day_fences"] = True
+    dem(d, "2026-01-14", 10, kind="forecast")
+    new, rep = roll_forward(Dataset.model_validate(d), date(2026, 1, 12))
+    assert [(r.qty, r.due_date) for r in new.receipts] == [(10, date(2026, 1, 14))]
 
 
 # ================================================================================================ §8.6 exceptions
@@ -353,6 +568,178 @@ def test_ddmrp_net_flow_counts_what_released_orders_reserve_regression():
     row = next(r for r in run_inventory(make_ds(d), time_limit=5).ddmrp if r.product == "B")
     assert row.qualified_demand == pytest.approx(40)
     assert row.nfp == pytest.approx(100 + row.open_supply - 40)
+
+
+def steady(on_hand: float, mrp_type: str = "ddmrp") -> dict:
+    """The zone-math case planned: 10 a day for six weeks, a 10-day purchase lead time, weekly CV 0.2, so the buffer is
+    TOR 87.5, TOY 187.5, TOG 257.5 (``test_ddmrp_zone_math_by_hand``)."""
+    d = buy(on_hand=on_hand, lt=10, bucket="week", mrp_type=mrp_type, safety_stock={"demand_cv": 0.2})
+    for i in range(42):
+        dem(d, (date(2026, 1, 5) + timedelta(days=i)).isoformat(), 10)
+    return d
+
+
+def test_ddmrp_mrp_type_lets_the_buffer_place_the_orders():
+    """ENTERPRISE_PLAN 2.4, §8.7: with MRP type ddmrp the net flow position, not the net requirements, decides. 200 on
+    hand: 5 Jan NFP 190 (green, no order); 6 Jan NFP 180 ≤ TOY 187.5 → order TOG − NFP = 77.5 (78 whole) that day,
+    arriving 16 Jan. Supply is now 278: 13 Jan NFP 188 (no order), 14 Jan NFP 178 → 79.5 (80). Planned by its
+    requirements instead, the same stock lasts to 25 Jan and MRP orders 10 at a time from 15 Jan: two signals that
+    disagree, the pitfall the guide names. The red zone stands in for safety stock in the projection."""
+    res = plan(steady(200))
+    o = orders(res)
+    assert [(x.start_date.isoformat(), x.available_date.isoformat(), x.qty) for x in o[:2]] == [
+        ("2026-01-06", "2026-01-16", 78), ("2026-01-14", "2026-01-24", 80)]
+    [node] = [n for n in res.nodes if n.product == "B"]
+    assert node.buckets[0].safety_stock == pytest.approx(87.5)
+    assert "DDMRP buffer: red to 87.5, yellow to 187.5, green to 257.5" in node.safety_stock_note
+    assert not {"BUFFER_RED", "BUFFER_YELLOW"} & set(codes(res))     # green on the first day
+    mrp = orders(plan(steady(200, "deterministic")))
+    assert (mrp[0].start_date.isoformat(), mrp[0].qty) == ("2026-01-15", 10)
+
+
+def test_ddmrp_red_and_yellow_buffers_go_to_the_inbox_and_agree_with_the_inventory_screen():
+    """§8.7 buffer status: 50 on hand, NFP on 5 Jan 40 ≤ TOR 87.5: red, order 217.5 (218) today and expedite; 120 on
+    hand: NFP 110, yellow, order 147.5 (148). The inventory screen's DDMRP row for the same day shows the same zone and
+    the same order, so the advice and the plan are one signal."""
+    for oh, code, zone, qty in ((50, "BUFFER_RED", "red", 218), (120, "BUFFER_YELLOW", "yellow", 148)):
+        d = steady(oh)
+        res = plan(d)
+        first = orders(res)[0]
+        assert (first.start_date.isoformat(), first.qty) == (START, qty)
+        [e] = [e for e in res.exceptions if e.code in ("BUFFER_RED", "BUFFER_YELLOW")]
+        assert (e.code, e.severity, e.order_id, e.qty) == (code, "warning", first.id, qty)
+        assert f"net flow position {oh - 10:,.1f}" in e.message
+        row = next(r for r in run_inventory(Dataset.model_validate(d), time_limit=5).ddmrp if r.product == "B")
+        assert (row.positioned, row.zone, math.ceil(row.order_qty)) == (True, zone, qty)
+    from scp.tower.worklist import CATEGORY
+    assert CATEGORY["BUFFER_RED"] == CATEGORY["BUFFER_YELLOW"] == "orders"
+
+
+def test_ddmrp_a_spike_inside_the_decoupled_lead_time_is_qualified_demand():
+    """§8.7 qualified demand: an order of 150 on 12 Jan is over the spike threshold (0.5 × TOR) and inside the 10-day
+    DLT, so on 5 Jan it already counts: NFP 200 − 10 − 150 = 40, red, and the buffer orders on the first day. The same
+    150 on 25 Jan is outside the DLT on 5 Jan: NFP 190, under this bigger buffer's TOY but over its TOR, so yellow. The
+    buffer itself is the formula's for the
+    ADU these orders make (``ddmrp.size``)."""
+    d = steady(200)
+    dem(d, "2026-01-12", 150)
+    res = plan(d)
+    b = ddmrp.size((280 + 150) / 28, 10, 0.2, 0, InventorySettings())
+    assert 150 > 0.5 * b.tor
+    first = orders(res)[0]
+    assert (first.start_date.isoformat(), first.qty) == (START, math.ceil(b.tog - 40))
+    assert "BUFFER_RED" in codes(res)
+    d["demand"][-1]["date"] = "2026-01-25"
+    later = plan(d)
+    assert b.tor < 190 <= b.toy
+    [e] = [e for e in later.exceptions if e.code in ("BUFFER_RED", "BUFFER_YELLOW")]
+    assert e.code == "BUFFER_YELLOW" and "net flow position 190.0" in e.message
+    assert orders(later)[0].qty == math.ceil(b.tog - 190)
+
+
+def test_ddmrp_where_no_buffer_can_be_held_is_said():
+    """A make-to-order part has no stock to buffer: it is planned by its requirements and the readiness check says so;
+    a safety stock beside the buffer is not planned and is named too."""
+    d = steady(0)
+    d["location_products"][0]["strategy"] = "MTO"
+    assert "DDMRP_NOT_A_BUFFER" in [i.code for i in validate(Dataset.model_validate(d))]
+    d = steady(0)
+    d["location_products"][0]["safety_stock"] = {"method": "fixed", "qty": 30, "demand_cv": 0.2}
+    assert "DDMRP_SAFETY_STOCK" in [i.code for i in validate(Dataset.model_validate(d))]
+    assert plan(d).nodes[0].buckets[0].safety_stock == pytest.approx(87.5)
+
+
+# ================================================================================================ §16.2 sales-order stock
+def made_to_order(assigned: bool) -> dict:
+    """A part bought to order with a 10-day lead time (a new order is there 15 Jan at the earliest). SO-1 wants 50 on
+    20 Jan and PO-1 for 50, due 14 Jan, was bought for it; SO-2 wants 50 on 12 Jan."""
+    d = buy(strategy="MTO", lt=10)
+    dem(d, "2026-01-20", 50, id="SO-1")
+    dem(d, "2026-01-12", 50, id="SO-2")
+    rec(d, "2026-01-14", 50, id="PO-1", **({"sales_order": "SO-1"} if assigned else {}))
+    return d
+
+
+def test_a_firm_order_bought_for_one_sales_order_is_not_taken_by_another():
+    """ENTERPRISE_PLAN 2.5, §16.2: make-to-order supply is that order's (S/4 sales-order segment). Free, PO-1 goes to
+    the earlier order SO-2 (expedite it 2 days) and SO-1 gets a new requisition; bought for SO-1 it stays with SO-1,
+    the plan buys for SO-2 instead, and that requisition is marked for SO-2 so it is firmed for it."""
+    free = plan(made_to_order(False))
+    assert {(p.supply_id, p.requirement_id) for p in free.pegs} == {("PO-1", "D:SO-2"), ("PR-0001-01", "D:SO-1")}
+    assert "RESCHEDULE_IN" in codes(free)
+    held = plan(made_to_order(True))
+    assert {(p.supply_id, p.requirement_id) for p in held.pegs} == {("PO-1", "D:SO-1"), ("PR-0001-01", "D:SO-2")}
+    [o] = orders(held)
+    assert (o.need_date.isoformat(), o.qty, o.sales_order) == ("2026-01-12", 50, "SO-2")
+    assert "RESCHEDULE_IN" not in codes(held)
+    # the projection is the free stock: 20 more held for SO-3 do not soften SO-2's shortage of 50 on the 12th
+    d = made_to_order(True)
+    d["location_products"][0]["order_stock"] = [{"order": "SO-3", "qty": 20}]
+    dem(d, "2026-01-22", 20, id="SO-3")
+    [e] = [e for e in plan(d).exceptions if e.code == "STOCKOUT"]
+    assert e.qty == pytest.approx(50)
+
+
+def test_held_supply_that_comes_late_is_expedited_and_held_supply_not_needed_is_reported():
+    """A held PO due after its order is expedited, with no other supply planned in front of it; when the order is cut
+    to 30 the other 20 stay held, and the plan says so (no other order may use them)."""
+    d = made_to_order(True)
+    d["demand"][0]["date"] = "2026-01-12"           # SO-1 now wanted on the 12th; PO-1 comes on the 14th
+    res = plan(d)
+    [e] = [e for e in res.exceptions if e.code == "RESCHEDULE_IN"]
+    assert (e.order_id, e.date.isoformat()) == ("PO-1", "2026-01-12")
+    assert "SO-1, the sales order it is held for" in e.message and "expedite it by 2 d" in e.message
+    assert all(o.sales_order != "SO-1" for o in orders(res))
+    d = made_to_order(True)
+    d["demand"][0]["qty"] = 30
+    [e] = [e for e in plan(d).exceptions if e.code == "ORDER_STOCK_LEFT"]
+    assert e.qty == pytest.approx(20) and "held for SO-1 (PO-1)" in e.message
+
+
+def test_a_promise_is_made_from_what_is_held_for_the_order_and_never_from_another_orders():
+    """§16.2 / §7: SO-2 now wants its 50 on the 15th, after PO-1 arrives, and was entered first, so it is checked
+    first. Free, it takes PO-1 and SO-1 gets nothing; held for SO-1, SO-1 is confirmed from it and why says so, and SO-2 gets
+    nothing from it."""
+    def promised(assigned: bool) -> dict:
+        d = promising(made_to_order(assigned))
+        d["demand"][1]["date"] = "2026-01-15"
+        d["demand"].reverse()
+        return by_order(run_promise(Dataset.model_validate(d)))
+    free = promised(False)
+    assert (lines(free["SO-2"]), lines(free["SO-1"])) == ([("2026-01-15", 50, "atp")], [])
+    held = promised(True)
+    assert (lines(held["SO-1"]), lines(held["SO-2"])) == ([("2026-01-20", 50, "atp")], [])
+    assert held["SO-1"].held and "firm receipt PO-1 is available, held for this order" in [w.note for w in held["SO-1"].why]
+
+
+def test_sales_order_stock_from_firming_to_receipt_to_delivery():
+    """The whole road: the requisition planned for SO-2 becomes a PO line held for SO-2; PO-1 received on the 14th is
+    held stock for SO-1, not free stock; after the roll the plan covers SO-1 from it and buys nothing more for it,
+    and SO-1's delivery issues it from that stock."""
+    from scp.actuals.firm import firm_orders
+    from scp.actuals.post import post
+    from scp.actuals.roll import roll_forward
+    ds = Dataset.model_validate(made_to_order(True))
+    res = run_mrp(ds)
+    firmed, rep = firm_orders(ds, res, ids=[orders(res)[0].id])
+    [line] = [r for r in firmed.receipts if r.id != "PO-1"]
+    assert line.sales_order == "SO-2"
+    got, _ = post(firmed, "receive", order="PO-1", on=date(2026, 1, 14))
+    [m] = [m for m in got.movements if m.reference == "PO-1"]
+    assert m.sales_order == "SO-1"
+    rolled, _ = roll_forward(got, date(2026, 1, 19))
+    lp = rolled.location_product_by_key[("P", "B")]
+    assert (lp.on_hand, [(x.order, x.qty) for x in lp.order_stock]) == (0, [("SO-1", 50)])
+    after = run_mrp(rolled)
+    assert [(p.supply_id, p.requirement_id) for p in after.pegs if p.requirement_id == "D:SO-1"] == [
+        ("OS:P:B:SO-1", "D:SO-1")]
+    assert all(o.sales_order != "SO-1" for o in after.orders)
+    shipped, msg = post(rolled, "deliver", order="SO-1", on=date(2026, 1, 20))
+    [sale] = [m for m in shipped.movements if m.reference == "SO-1"]
+    assert (sale.sales_order, sale.qty) == ("SO-1", 50)
+    assert "from the stock held for SO-1" in msg.message
+    final, _ = roll_forward(shipped, date(2026, 1, 26))
+    assert final.location_product_by_key[("P", "B")].order_stock == []
 
 
 # ================================================================================================ §7.1 classic ATP
@@ -424,6 +811,129 @@ def test_allocation_without_a_period_confirms_nothing():
     d["allocations"] = [{"id": "MAR", "product": "B", "start": "2026-03-02", "end": "2026-03-09", "qty": 30}]
     [o] = run_promise(Dataset.model_validate(d)).orders
     assert lines(o) == [("2026-03-02", 10, "atp")]
+
+
+def two_pumps() -> dict:
+    """B and B2 are both pumps (family PUMPS), 100 of each in stock; Q is a customer one day away."""
+    d = promising(buy(on_hand=100, lt=60))
+    d["products"][0]["family"] = "PUMPS"
+    d["products"].append({"id": "B2", "type": "RM", "family": "PUMPS"})
+    d["location_products"].append({"location": "P", "product": "B2", "on_hand": 100, "mrp_type": "none"})
+    d["purchasing_sources"].append({"id": "PIR-B2", "supplier": "S", "product": "B2", "location": "P", "price": 10,
+                                    "lead_time_days": 60})
+    d["locations"].append({"id": "Q", "type": "customer"})
+    d["lanes"] = [{"id": "P-Q", "origin": "P", "destination": "Q", "modes": [{"transit_days": 0}]}]
+    return d
+
+
+def test_allocation_hierarchy_checks_the_family_before_the_product():
+    """§7.4 hierarchy: the pump family may confirm 40 in the week of 5 Jan, B alone 30. B's order of 60 gets 30 (its
+    own cap); B2's order of 20 then gets the 10 the family has left, though B2 has no cap of its own."""
+    d = two_pumps()
+    d["allocations"] = [{"id": "FAM", "family": "PUMPS", "start": "2026-01-05", "end": "2026-01-12", "qty": 40,
+                         "fallback": "reject"},
+                        {"id": "B-W1", "product": "B", "start": "2026-01-05", "end": "2026-01-12", "qty": 30,
+                         "fallback": "reject"}]
+    dem(d, "2026-01-07", 60, id="SO-B")
+    d["demand"].append({"location": "P", "product": "B2", "date": "2026-01-08", "qty": 20, "kind": "sales_order",
+                        "id": "SO-B2"})
+    res = run_promise(Dataset.model_validate(d))
+    o = by_order(res)
+    assert (o["SO-B"].confirmed, o["SO-B2"].confirmed) == (30, 10)
+    assert {a.id: a.used for a in res.allocations} == {"FAM": 40, "B-W1": 30}
+
+
+def test_a_customer_with_an_allocation_of_their_own_is_not_held_to_the_catch_all():
+    """§7.4 catch-all: 10 for everyone without an allocation of their own (listed first), 50 for P. P's order of 40 is
+    confirmed in full; Q, with none of its own, gets the catch-all's 10."""
+    d = two_pumps()
+    d["allocations"] = [{"id": "REST", "product": "B", "start": "2026-01-05", "end": "2026-01-12", "qty": 10,
+                         "fallback": "reject"},
+                        {"id": "P-W1", "product": "B", "customers": ["P"], "start": "2026-01-05", "end": "2026-01-12",
+                         "qty": 50, "fallback": "reject"}]
+    dem(d, "2026-01-07", 40, id="SO-P")
+    dem(d, "2026-01-08", 40, id="SO-Q", location="Q")
+    o = by_order(run_promise(Dataset.model_validate(d)))
+    assert (o["SO-P"].confirmed, o["SO-Q"].confirmed) == (40, 10)
+    # the next week only the catch-all has a period: P, which has allocations of its own, is not given it
+    d["allocations"].append({"id": "REST-W2", "product": "B", "start": "2026-01-12", "end": "2026-01-19", "qty": 100,
+                             "fallback": "reject"})
+    dem(d, "2026-01-13", 5, id="SO-P2")
+    o = by_order(run_promise(Dataset.model_validate(d)))
+    assert o["SO-P2"].confirmed == 0
+
+
+@pytest.mark.parametrize("carry,confirmed", [(True, 50), (False, 30)])
+def test_allocation_left_unused_carries_forward_when_the_period_says_so(carry, confirmed):
+    """§7.4 carry-forward: 30 a week. The first week confirms 10 of its 30; an order of 50 in the second week gets its
+    30 and, carried forward, the first week's 20 left — or only 30 without carry-forward."""
+    d = promising(buy(on_hand=100, lt=60))
+    d["allocations"] = [{"id": "W1", "product": "B", "start": "2026-01-05", "end": "2026-01-12", "qty": 30},
+                        {"id": "W2", "product": "B", "start": "2026-01-12", "end": "2026-01-19", "qty": 30,
+                         "carry_forward": carry, "fallback": "reject"}]
+    dem(d, "2026-01-07", 10, id="SO-1")
+    dem(d, "2026-01-13", 50, id="SO-2")
+    o = by_order(run_promise(Dataset.model_validate(d)))
+    assert o["SO-1"].confirmed == 10
+    assert (o["SO-2"].confirmed, lines(o["SO-2"])[0][0]) == (confirmed, "2026-01-13")
+
+
+def test_an_allocation_names_a_product_or_a_family_and_the_family_must_exist():
+    d = two_pumps()
+    d["allocations"] = [{"id": "X", "start": "2026-01-05", "end": "2026-01-12", "qty": 1}]
+    with pytest.raises(ValueError, match="either a product or a product family"):
+        Dataset.model_validate(d)
+    d["allocations"] = [{"id": "X", "family": "VALVES", "start": "2026-01-05", "end": "2026-01-12", "qty": 1}]
+    issues = validate(Dataset.model_validate(d))
+    assert any(i.code == "REF_UNKNOWN" and "unknown family 'VALVES'" in i.message for i in issues)
+
+
+# ================================================================================================ §7.2 one delivery
+def kit() -> dict:
+    """Q orders a kit: 10 B (in stock) and 20 B2 (none in stock, 20 arriving on a PO on Wed 14 Jan)."""
+    d = two_pumps()
+    d["location_products"][-1]["on_hand"] = 0
+    d["receipts"] = [{"id": "PO-7", "kind": "purchase", "location": "P", "product": "B2", "qty": 20,
+                      "due_date": "2026-01-14", "source": "PIR-B2"}]
+    return d
+
+
+@pytest.mark.parametrize("together,dates", [(False, ["2026-01-07", "2026-01-14"]),
+                                            (True, ["2026-01-14", "2026-01-14"])])
+def test_an_order_shipped_as_one_delivery_confirms_every_line_on_the_date_the_last_can_come(together, dates):
+    """§7.2 'multi-item single delivery': line by line, B is confirmed for Wed 7 Jan and B2 for the 14th, when PO-7
+    arrives; as one delivery both lines are confirmed for the 14th, and B's stock stays free until then."""
+    x = Dataset.model_validate(kit())
+    x, rep = sales.create_order(x, "Q", [{"product": "B", "qty": 10, "date": "2026-01-07"},
+                                         {"product": "B2", "qty": 20, "date": "2026-01-07"}], single_delivery=together)
+    got = {c.order: c.date.isoformat() for c in x.confirmations}
+    assert [got[f"{rep.documents[0]}/10"], got[f"{rep.documents[0]}/20"]] == dates
+    assert ("One delivery: every line on Wed 14 Jan" in rep.message) is together
+    # the next promise run keeps it
+    res = run_promise(x)
+    assert sorted({ln.date.isoformat() for o in res.orders for ln in o.lines}) == sorted(set(dates))
+
+
+def test_one_delivery_promises_nothing_until_every_line_can_be_confirmed_in_full():
+    """B2 wants 30 and only 20 come in the horizon: as one delivery no line is promised, B's 10 included."""
+    x = Dataset.model_validate(kit())
+    x, rep = sales.create_order(x, "Q", [{"product": "B", "qty": 10, "date": "2026-01-07"},
+                                         {"product": "B2", "qty": 30, "date": "2026-01-07"}], single_delivery=True)
+    assert x.confirmations == []
+    assert "One delivery: nothing is promised until every line can be" in rep.message
+
+
+def test_a_promise_run_aligns_the_lines_of_an_order_shipped_as_one_delivery():
+    """Lines imported without confirmations: the availability check confirms them together."""
+    d = kit()
+    d["sales_orders"] = [{"id": "SO-K", "customer": "Q", "order_date": "2026-01-05", "single_delivery": True}]
+    d["demand"] = [{"id": "SO-K/10", "order": "SO-K", "location": "Q", "product": "B", "date": "2026-01-07",
+                    "qty": 10, "kind": "sales_order"},
+                   {"id": "SO-K/20", "order": "SO-K", "location": "Q", "product": "B2", "date": "2026-01-07",
+                    "qty": 20, "kind": "sales_order"}]
+    o = by_order(run_promise(Dataset.model_validate(d)))
+    assert [lines(o[k]) for k in ("SO-K/10", "SO-K/20")] == [[("2026-01-14", 10, "atp")], [("2026-01-14", 20, "atp")]]
+    assert "Ships with the rest of its order" in o["SO-K/10"].reason
 
 
 # ================================================================================================ §7.3 BOP
@@ -506,6 +1016,76 @@ def test_forward_scheduling_when_the_date_is_past_and_says_why_regression():
     assert [(x.ship_date, x.date) for x in o.lines] == [(date(2026, 1, 5), date(2026, 1, 8))]
     assert o.status == "late"
     assert "Not a stock shortage" in o.reason and "2026-01-08" in o.reason
+
+
+
+def test_picking_packing_and_loading_check_stock_before_the_goods_leave():
+    """ENTERPRISE_PLAN 2.2, fig. 6.2: delivery 20 Jan, 3 days on the road → goods issue 17 Jan; a day to load after a
+    day to pick and pack → the goods must be there on 15 Jan (material availability date), and stock is checked then.
+    The line says both dates, and why."""
+    d = _customer(promising(buy(on_hand=100, lt=30)))
+    d["locations"][0].update(pick_pack_workdays=1, loading_workdays=1)
+    dem(d, "2026-01-20", 10, location="CU")
+    [o] = run_promise(Dataset.model_validate(d)).orders
+    assert [(x.ship_date, x.goods_issue, x.date) for x in o.lines] == [
+        (date(2026, 1, 15), date(2026, 1, 17), date(2026, 1, 20))]
+    assert o.status == "on_time"
+    assert [(w.kind, w.date) for w in o.why][-2:] == [("handling", date(2026, 1, 17)), ("ship", date(2026, 1, 20))]
+    assert o.why[-2].note == "there to pick 2026-01-15; picking, packing and loading take 2 working days, so it leaves 2026-01-17"
+    assert o.why[-2].qty == 2 and o.why[-1].note == "shipped 2026-01-17 over L1, delivered 2026-01-20"
+
+
+def test_a_warehouse_that_needs_a_day_to_pick_no_longer_confirms_a_day_early():
+    """The defect ENTERPRISE_PLAN 2.2 names: stock arrives 16 Jan for a delivery on 20 Jan with 3 days' transit. With
+    no handling time the order is confirmed on time, shipped the day the goods arrive. A day to pick and pack and a day
+    to load make it there to pick on 16 Jan, leaving 18 Jan, delivered 21 Jan: one day late, and said so."""
+    d = _customer(promising(buy(lt=30)))
+    rec(d, "2026-01-16", 50)
+    dem(d, "2026-01-20", 10, location="CU")
+    [o] = run_promise(Dataset.model_validate(d)).orders
+    assert [(x.ship_date, x.goods_issue, x.date) for x in o.lines] == [(date(2026, 1, 17), None, date(2026, 1, 20))]
+    assert o.status == "on_time"
+    d["locations"][0].update(pick_pack_workdays=1, loading_workdays=1)
+    [o] = run_promise(Dataset.model_validate(d)).orders
+    assert [(x.ship_date, x.goods_issue, x.date) for x in o.lines] == [
+        (date(2026, 1, 16), date(2026, 1, 18), date(2026, 1, 21))]
+    assert o.status == "late"
+
+
+def test_transport_planning_runs_alongside_picking_on_working_days():
+    """Fig. 6.2: booking the carrier (transportation planning, on the route) and picking both end at loading, so the
+    longer counts. Monday–Friday at the warehouse: delivery Tue 20 Jan, 3 days on the road → goods issue Sat 17 is not a
+    working day, so Fri 16; loading 1 → Thu 15; the longer of picking 1 and booking 2 → Tue 13 Jan."""
+    d = _customer(promising(buy(on_hand=100, lt=30, workdays=WEEKDAYS)))
+    d["locations"][0].update(pick_pack_workdays=1, loading_workdays=1)
+    d["lanes"][0]["transport_planning_workdays"] = 2
+    dem(d, "2026-01-20", 10, location="CU")
+    [o] = run_promise(Dataset.model_validate(d)).orders
+    assert [(x.ship_date, x.goods_issue, x.date) for x in o.lines] == [
+        (date(2026, 1, 13), date(2026, 1, 16), date(2026, 1, 20))]   # delivered on the date asked, not early
+
+
+def test_outbound_handling_moves_the_planned_shipment_and_is_kept_on_the_confirmation():
+    """The plan schedules a shipment the same way: the stock leaves the warehouse's requirements on the material
+    availability date, two working days before the goods issue. Promising and keeping the confirmation stores the
+    goods issue with it."""
+    from scp.promise.run import commit
+
+    d = _customer(buy(on_hand=0, lt=1))
+    d["locations"][0].update(pick_pack_workdays=1, loading_workdays=1)
+    dem(d, "2026-01-20", 10, location="CU", kind="forecast")
+    res = plan(d)
+    [t] = [o for o in res.orders if o.kind == "transfer"]
+    assert (t.start_date, t.available_date) == (date(2026, 1, 15), date(2026, 1, 20))
+    [b] = [o for o in res.orders if o.kind == "buy"]
+    assert b.available_date <= date(2026, 1, 15)
+
+    d = _customer(promising(buy(on_hand=100, lt=30)))
+    d["locations"][0].update(pick_pack_workdays=1, loading_workdays=1)
+    dem(d, "2026-01-20", 10, location="CU", id="SO-1")
+    kept, _ = commit(Dataset.model_validate(d))
+    [c] = kept.confirmations
+    assert (c.ship_date, c.goods_issue, c.date) == (date(2026, 1, 15), date(2026, 1, 17), date(2026, 1, 20))
 
 
 # ================================================================================================ §9 PP/DS

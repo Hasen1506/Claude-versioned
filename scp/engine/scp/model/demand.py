@@ -79,6 +79,10 @@ class ForecastSettings(Model):
     service_levels: dict[str, float] | None = Field(
         None, description="Suggested cycle service level per ABC-XYZ cell, keyed AX … CZ (fractions); a cell left out "
                           "keeps the default table (A·X 98 % … C·Z 90 %)")
+    fva_lag: int = Field(
+        1, ge=0, le=26, description="Forecast value add judges each period's forecast as it stood this many periods "
+                                    "before the period began (0 = the forecast made in the period itself); match it to "
+                                    "the time it takes to react, such as the replenishment lead time")
     released_inputs: str | None = Field(
         None, description="Written by a forecast release: a fingerprint of the events, new-product rules, overrides "
                           "and these settings it was made with, so a later change to them is noticed")
@@ -172,3 +176,43 @@ class ForecastOverride(Model):
         if (self.qty is None) == (self.change is None):
             raise ValueError("set exactly one of qty or change")
         return self
+
+
+class FamilyOverride(Model):
+    """A consensus adjustment for a product family's total in one period (top-down): a quantity spread over the
+    family's series in proportion to their own forecast, or a relative change to each. A series with an override of
+    its own keeps it, and the rest of the total is spread over the others."""
+
+    family: str = Field(min_length=1, max_length=64, description="The product family, as products name it")
+    location: str | None = Ref("location", default=None, description="Only its series at this place (empty = all)")
+    date: dt.date = Field(description="Any date inside the forecast period to adjust")
+    qty: float | None = Unit("qty", ge=0, default=None, description="The family's total for the period")
+    change: float | None = Unit("fraction", ge=-1, le=20, default=None,
+                                description="Relative change to each series' forecast, e.g. +10 %")
+    reason: str = Field("", max_length=200)
+    author: str = Field("", max_length=80)
+
+    @model_validator(mode="after")
+    def _one(self) -> FamilyOverride:
+        if (self.qty is None) == (self.change is None):
+            raise ValueError("set exactly one of qty or change")
+        return self
+
+
+class ForecastSnapshot(Model):
+    """What each layer of the forecast said for one period, kept by a release so the forecast can be judged against
+    the sales once the period has sold (forecast value add). A later release replaces a period's row until the period
+    is nearer than the value-add lag of the forecast settings; from then on the row stays as it was kept."""
+
+    location: str = Ref("location")
+    product: str = Ref("product")
+    start: dt.date = Field(description="First day of the forecast period")
+    end: dt.date = Field(description="Day after the period (exclusive)")
+    made: dt.date = Field(description="Planning start of the release that kept it")
+    naive: float = Unit("qty", ge=0, default=0.0, description="Naïve forecast: the last period's sales")
+    statistical: float = Unit("qty", ge=0, default=0.0, description="The champion model's forecast")
+    adjusted: float = Unit("qty", ge=0, default=0.0,
+                           description="After demand events and new-product rules (cannibalisation included)")
+    final: float = Unit("qty", ge=0, default=0.0, description="The consensus: after the planners' overrides")
+    overridden: bool = Field(False, description="A planner's override set the final quantity")
+    author: str = Field("", max_length=80, description="Who overrode it, as the override names them")

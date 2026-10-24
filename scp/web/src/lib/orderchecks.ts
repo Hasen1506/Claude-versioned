@@ -23,3 +23,13 @@ export function orderWarnings(ds: Dataset, o: { product: string; qty: number; da
   if (o.date && o.date < start) out.push(`Wanted on ${day(o.date)}, before the plan starts (${day(start)}): it is planned as overdue.`);
   return out;
 }
+
+/** What stops an order from being checked (N198): the problems that stop planning, named with their fix, instead of a
+ * pointer to Home. Empty when the check ran. */
+export function checkBlocked(res: { ok: boolean; issues?: { severity: string; message: string; hint?: string }[] }): string {
+  if (res.ok) return "";
+  const errs = (res.issues ?? []).filter((i) => i.severity === "error");
+  if (!errs.length) return "The order could not be checked.";
+  const said = errs.slice(0, 2).map((i) => i.message.replace(/\.$/, "") + (i.hint ? ` (${i.hint})` : "")).join("; ");
+  return `The order cannot be checked until this is put right: ${said}${errs.length > 2 ? `; and ${errs.length - 2} more problems (the Data check lists them all)` : ""}.`;
+}

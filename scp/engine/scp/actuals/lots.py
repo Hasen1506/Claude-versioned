@@ -37,20 +37,32 @@ def batch_index(ds: Dataset) -> dict[tuple[str, str], Batch]:
 
 
 def lots(movs: Iterable[GoodsMovement]) -> dict[Node, dict[LotKey, float]]:
-    """Signed quantity per place and product, per (batch, stock type)."""
+    """Signed quantity per place and product, per (batch, stock type): free stock, not what is held for a sales order
+    (:func:`order_stock`)."""
     out: dict[Node, dict[LotKey, float]] = defaultdict(lambda: defaultdict(float))
     for m in movs:
-        out[(m.location, m.product)][(m.batch, m.stock_type)] += m.signed
+        if m.sales_order is None:
+            out[(m.location, m.product)][(m.batch, m.stock_type)] += m.signed
     return out
 
 
-def node_lots(ds: Dataset, movs: Iterable[GoodsMovement], node: Node) -> list[Lot]:
+def order_stock(movs: Iterable[GoodsMovement]) -> dict[Node, dict[str, float]]:
+    """Stock held for sales orders (S/4 sales-order stock), per place and order: received for the order, issued only to
+    it; kept apart from the free stock everything else counts."""
+    out: dict[Node, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for m in movs:
+        if m.sales_order is not None:
+            out[(m.location, m.product)][m.sales_order] += m.signed
+    return out
+
+
+def node_lots(ds: Dataset, movs: Iterable[GoodsMovement], node: Node, order: str | None = None) -> list[Lot]:
     """The lots at one place, with their expiry dates, in the order an issue takes them: stock without a batch first
     (it is the oldest: typed in before the journal began), then by expiry date, then by batch number."""
     bi = batch_index(ds)
     have: dict[LotKey, float] = defaultdict(float)
     for m in movs:
-        if (m.location, m.product) == node:
+        if (m.location, m.product) == node and m.sales_order == order:
             have[(m.batch, m.stock_type)] += m.signed
     out = [Lot(b, t, q, bi[(node[1], b)].expires_on if b and (node[1], b) in bi else None)
            for (b, t), q in have.items() if abs(q) > EPS]
@@ -70,7 +82,8 @@ def usable(ds: Dataset, lot: Lot, on: date) -> bool:
 
 
 def pick(ds: Dataset, movs: list[GoodsMovement], node: Node, qty: float, on: date,
-         batch: str | None = None, stock_type: StockType = StockType.UNRESTRICTED) -> list[tuple[str | None, float]]:
+         batch: str | None = None, stock_type: StockType = StockType.UNRESTRICTED,
+         order: str | None = None) -> list[tuple[str | None, float]]:
     """The lots an issue of ``qty`` on ``on`` takes: the batch asked for, else unrestricted, unexpired stock first
     expiring, first out. What the lots do not cover comes out of stock without a batch (and so shows below zero)."""
     if batch is not None:
@@ -80,7 +93,7 @@ def pick(ds: Dataset, movs: list[GoodsMovement], node: Node, qty: float, on: dat
         return [(None, qty)]
     out: list[tuple[str | None, float]] = []
     left = qty
-    for lot in node_lots(ds, [m for m in movs if m.date <= on], node):
+    for lot in node_lots(ds, [m for m in movs if m.date <= on], node, order):
         if left <= EPS:
             break
         if lot.stock_type is not stock_type or lot.qty <= EPS or lot.expired(on):

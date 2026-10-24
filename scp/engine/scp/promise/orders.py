@@ -115,7 +115,7 @@ def make_supply(ds: Dataset, lines: list[tuple[DemandRecord, OrderPromise]]) -> 
     new_ = [rec for rec, p in lines if _on_new_supply(ds, rec, p)]
     if not new_:
         return ds, [], ""
-    manual = (" It needs new supply that is only planned: make it firm (Stock & actuals → Open orders & firming) after the "
+    manual = (" It needs new supply that is only planned: make it firm (Supply → Firm orders) after the "
               "plan is recalculated, or it is not made.")
     if not ds.execution.promise_firms:
         return ds, [], manual
@@ -142,11 +142,21 @@ def _promise(ds: Dataset, rec: DemandRecord) -> tuple[OrderPromise, list[Confirm
     """Check ``rec`` after every order already promised, and its schedule lines as confirmations to keep."""
     res = check_order(ds, rec)
     if not res.ok or res.checked is None:
-        raise OrderError("the data has problems that stop planning; fix them first (Home lists them)")
+        raise OrderError(blocking(res.issues))
     p = res.checked
     confs = [Confirmation(order=rec.id or "", ship_from=x.ship_from, ship_date=x.ship_date, date=x.date, qty=x.qty,
-                          method=x.method) for x in p.lines]
+                          method=x.method, goods_issue=x.goods_issue) for x in p.lines]
     return p, confs
+
+
+def blocking(issues) -> str:
+    """What stops an order from being checked, named (N198): the first problems that stop planning, each with its fix."""
+    errs = [i for i in issues if i.severity == "error"]
+    if not errs:
+        return "the order could not be checked"
+    said = "; ".join(i.message.rstrip(".") + (f" ({i.hint})" if i.hint else "") for i in errs[:2])
+    more = f"; and {len(errs) - 2} more problems (the Data check lists them all)" if len(errs) > 2 else ""
+    return f"the order cannot be checked until this is put right: {said}{more}"
 
 
 def _check_parties(ds: Dataset, location: str, product: str) -> None:
@@ -177,6 +187,56 @@ def accept(ds: Dataset, order: DemandRecord) -> tuple[Dataset, SalesOrderReport]
     msg = (f"{oid} taken: {_n(rec.qty)} {_name(ds, 'product', rec.product)} for {_name(ds, 'location', rec.location)}, "
            f"asked for {_day(rec.date)}; {_promised(ds, p)}.{note}")
     return new, SalesOrderReport(ok=True, order=oid, message=msg, promise=p, firmed=firmed)
+
+
+def _next_line(ds: Dataset, header: str) -> str:
+    """The next line number on an order header: ten after the highest open or closed line (SO-00001/30)."""
+    n = 0
+    for lid in [d.id for d in ds.demand if d.order == header and d.id] + [c.id for c in ds.closed_orders
+                                                                          if c.kind == "sales"]:
+        m = re.fullmatch(re.escape(header) + r"/(\d+)", lid or "")
+        if m:
+            n = max(n, int(m.group(1)))
+    return f"{header}/{n + 10}"
+
+
+def substitute(ds: Dataset, oid: str, product: str, qty: float | None = None) -> tuple[Dataset, SalesOrderReport]:
+    """Ship part of an order as a substitute product (S/4 aATP product substitution): ``qty`` (default: all that is
+    open) moves to a new line of ``product`` on the same order, at the ordered line's net price, for the same date,
+    and is promised after every other order; the order keeps the rest (or is closed, when it all moves). The new line
+    names the line it stands in for."""
+    d = _open(ds, oid)
+    sub = next((s for s in ds.substitutions if s.product == d.product and s.substitute == product
+                and s.applies(d.location, d.date)), None)
+    if sub is None:
+        raise OrderError(f"{_name(ds, 'product', product)} is not a substitute for {_name(ds, 'product', d.product)} "
+                         f"for {_name(ds, 'location', d.location)} on {_day(d.date)}: add it under Substitutions")
+    q = d.qty if qty is None else float(qty)
+    if q <= EPS:
+        raise OrderError("say how many to ship as the substitute")
+    if q > d.qty + EPS:
+        raise OrderError(f"{oid} has {_n(d.qty)} open; no more than that can ship as a substitute")
+    price = ds.selling_price(d.location, d.product, d.price)
+    word = f"shipped as {_name(ds, 'product', product)} instead"
+    if q < d.qty - EPS:
+        kept, _ = change(ds, oid, {"qty": ordered_now(ds, d) - q})
+        rest = f"{oid} keeps {_n(d.qty - q)}"
+    else:
+        kept, _ = cancel(ds, oid, reason=word)
+        rest = f"{oid} is closed ({word})"
+    nid = _next_line(kept, d.order) if d.order else next_order_id(kept)
+    rec = DemandRecord(id=nid, location=d.location, product=product, date=d.date, qty=round(q, 6),
+                       kind=DemandKind.SALES_ORDER, priority=d.priority, complete_delivery=d.complete_delivery,
+                       price=price, customer_ref=d.customer_ref, order=d.order, discount=d.discount if price else 0.0,
+                       substitute_for=oid)
+    p, confs = _promise(kept, rec)
+    new = kept.model_copy(update={"demand": [*kept.demand, rec], "confirmations": [*kept.confirmations, *confs]})
+    new = Dataset.model_validate(new.model_dump())
+    new, firmed, note = _make_supply(new, rec, p)
+    at = f" at {_n(price)} a unit, the ordered price" if price is not None else ""
+    msg = (f"{nid}: {_n(q)} {_name(ds, 'product', product)} ship in place of {_name(ds, 'product', d.product)}{at}; "
+           f"{_promised(ds, p)}. {rest}.{note}")
+    return new, SalesOrderReport(ok=True, order=nid, message=msg, promise=p, firmed=firmed)
 
 
 CHANGEABLE = ("qty", "date", "priority", "price", "complete_delivery", "customer_ref")

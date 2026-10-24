@@ -326,3 +326,39 @@ def test_a_day_over_capacity_in_a_week_with_room_raises_its_own_exception():
     assert "4 day(s)" in day.message and day.date == D("2026-01-10")
     d["resources"][0]["hours_per_shift"] = 8
     assert "CAPACITY_DAY_OVERLOAD" not in {e.code for e in plan(d).exceptions}
+
+
+def test_inside_the_demand_time_fence_only_customer_orders_count():
+    # C bought at P: 70 forecast a week from Monday 5 January, a customer order of 15 on the 7th, a 5-day demand time
+    # fence (to the 9th). Orders consuming the forecast: the order eats 15 of week 1's 70, leaving 55 over its 7 days
+    # (7.857 a day); the 5 days inside the fence (39.29) are not planned, so week 1 needs 15 + 2 × 7.857 = 30.71. Make to
+    # stock: the forecast's 50 inside the fence is dropped and the order planned instead: 15 + 20 = 35. Week 2 is 70
+    # either way (its order of 9 consumes 9 of week 2's forecast, or under make to stock is served from it).
+    from scp.plan.rates import demand_fence_end
+
+    def week1(strategy: str, dtf: float) -> tuple[float, float, list]:
+        d = base()
+        lp(d, "P", "C").update(strategy=strategy, demand_time_fence_days=dtf)
+        d["demand"] = [demand("P", "C", "2026-01-05", 70, period_days=7),
+                       demand("P", "C", "2026-01-12", 70, period_days=7),
+                       demand("P", "C", "2026-01-07", 15, "sales_order", id="SO-1"),
+                       demand("P", "C", "2026-01-14", 9, "sales_order", id="SO-2")]
+        r = run_mrp(ds(d))
+        node = next(n for n in r.nodes if (n.location, n.product) == ("P", "C"))
+        ex = [e for e in r.exceptions if e.code == "DEMAND_TIME_FENCE"]
+        return node.buckets[0].gross_independent, node.buckets[1].gross_independent, ex
+    g1, g2, ex = week1("MTS_CONSUME", 5)
+    assert (g1, g2) == (pytest.approx(15 + 2 * 55 / 7), pytest.approx(70))
+    assert len(ex) == 1 and ex[0].qty == pytest.approx(5 * 55 / 7) and "before 2026-01-10" in ex[0].message
+    g1, g2, ex = week1("MTS", 5)
+    # outside the fence the strategy plans as before: week 2 is its forecast, the order of 9 on the 14th not added
+    assert (g1, g2) == (pytest.approx(35), pytest.approx(70)) and ex[0].qty == pytest.approx(50)
+    assert week1("MTS", 0)[0] == pytest.approx(70) and week1("MTS_CONSUME", 0)[0] == pytest.approx(70)
+    assert not week1("MTS", 0)[2]
+    # counted in working days when the company counts fences so: on a Monday-to-Friday calendar, 5 working days from
+    # Monday 5 January end on Monday the 12th
+    d = base(workdays=[0, 1, 2, 3, 4])
+    lp(d, "P", "C").update(demand_time_fence_days=5)
+    d["settings"]["working_day_fences"] = True
+    x = ds(d)
+    assert demand_fence_end(x, ("P", "C"), x.demand_lp(("P", "C"))).isoformat() == "2026-01-12"

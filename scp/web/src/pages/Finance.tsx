@@ -1,17 +1,19 @@
 import { useMemo, useState } from "react";
-import type { CapacityAppraisal, Dataset, FinanceResult, ServeRow } from "../api/types";
+import type { CapacityAppraisal, CashView, Dataset, FinanceResult, ServeRow } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
   Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
-import { money, pct, plural, qty, unitMoney } from "../lib/format";
+import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { earnings, listNames } from "../lib/earnings";
 import { useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
+import { Books } from "./Books";
+import { WorkList } from "../components/WorkWaiting";
 import { isStale, store, useFreshResult, useStore } from "../state/store";
 
-type View = "overview" | "serve" | "inventory" | "capacity";
+type View = "overview" | "cash" | "serve" | "inventory" | "books" | "capacity";
 
 // Plan cost categories in a fixed colour order (identity follows the category, never its rank);
 // stock and firm receipts consumed are already committed, so they share one neutral key.
@@ -51,11 +53,15 @@ export function Finance({ route }: { route: string[] }) {
   const nav = (
     <Tabs<View> value={view} onChange={(v) => go("finance", v)} tabs={[
       { id: "overview", label: "Summary" },
+      { id: "cash", label: "Cash by week" },
       { id: "serve", label: "Cost to serve & margin", count: res?.serve.length },
       { id: "inventory", label: "Inventory value", count: res?.inventory?.locations.length },
+      { id: "books", label: "Stock in the books" },
       { id: "capacity", label: "Capacity investments", count: ds.finance?.capacity_options?.length ?? 0 },
     ]} />
   );
+  // the books read the journal, not the plan: no costing needed
+  if (view === "books") return body(<>{nav}<Books ds={ds} /></>);
   if (run.error) return body(<div className="banner error"><Badge sev="error">Could not cost the plan</Badge>{run.error}</div>);
   if (!res) {
     return body(<>
@@ -75,6 +81,7 @@ export function Finance({ route }: { route: string[] }) {
     {stale && <StaleMark what="costing" onRerun={() => store.run("finance")} busy={run.running} />}
     {nav}
     {view === "overview" && <Overview res={res} cur={cur} ds={ds} />}
+    {view === "cash" && res.cash && <Cash c={res.cash} cur={cur} />}
     {view === "serve" && <Serve res={res} cur={cur} />}
     {view === "inventory" && <Inventory res={res} cur={cur} />}
     {view === "capacity" && <Capacity res={res} cur={cur} ds={ds} sel={route[2]} />}
@@ -91,6 +98,39 @@ function MoneyAnswer({ res, cur, days }: { res: FinanceResult; cur: string; days
 }
 
 // ------------------------------------------------------------------------------------------------
+const CASH_KIND: Record<string, string> = {
+  invoices: "customers' invoices", to_bill: "delivered, to bill", orders: "open orders", forecast: "forecast",
+  supplier_invoices: "supplier invoices", purchase_orders: "purchase orders", planned_buying: "planned buying",
+  production: "production", transfers: "transfers", freight: "freight",
+};
+
+/** What comes in and goes out week by week, each on the payment terms of whoever pays or is paid. */
+function Cash({ c, cur }: { c: CashView; cur: string }) {
+  const words = (by: Record<string, number>, out: boolean) => Object.entries(by).filter(([, v]) => (v < 0) === out)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).map(([k, v]) => `${CASH_KIND[k] ?? k} ${money(Math.abs(v), cur)}`).join(" · ");
+  return (<div className="stack">
+    <div className="grid-auto">
+      <StatTile label="Most cash needed" value={c.lowest < 0 ? money(-c.lowest, cur) : "none"} tone={c.lowest < 0 ? "hl" : undefined}
+        sub={c.lowest_week ? `in the week of ${day(c.lowest_week)}, on top of the bank` : "the plan pays its way every week"} />
+      <StatTile label="Coming in" value={money(c.receipts, cur)} sub={`over ${plural(c.weeks.length, "week")}`} />
+      <StatTile label="Going out" value={money(c.payments, cur)} sub={`over ${plural(c.weeks.length, "week")}`} />
+      <StatTile label="Overdue" value={money(c.overdue_in - c.overdue_out, cur)} sub={`${money(c.overdue_in, cur)} owed to us, ${money(c.overdue_out, cur)} by us`} />
+    </div>
+    {c.notes.map((n) => <div key={n} className="banner info" role="note"><span>{n}</span></div>)}
+    <Panel flush title="Cash by week">
+      <div className="table-wrap"><table className="t" aria-label="Cash by week">
+        <thead><tr><th>Week of</th><th className="num">In</th><th className="num">Out</th><th className="num">Net</th><th className="num">Running total</th><th>What</th></tr></thead>
+        <tbody>{c.weeks.map((w) => <tr key={w.start} className={w.cumulative < 0 ? "warn" : ""}>
+          <td>{day(w.start)}</td><td className="num">{money(w.receipts, cur)}</td><td className="num">{money(w.payments, cur)}</td>
+          <td className="num">{money(w.net, cur)}</td><td className="num"><b>{money(w.cumulative, cur)}</b></td>
+          <td className="small">{words(w.by, false) && <div>in: {words(w.by, false)}</div>}{words(w.by, true) && <div className="faint">out: {words(w.by, true)}</div>}</td>
+        </tr>)}</tbody>
+      </table></div>
+      <p className="small muted" style={{ padding: "0 14px 12px", margin: 0 }}>Customers pay on their payment terms after the date they want the goods; suppliers are paid on theirs after the goods arrive; production and transfers when they start; carriers on their terms after loading. After the last week: {money(c.later_in, cur)} in, {money(c.later_out, cur)} out.</p>
+    </Panel>
+  </div>);
+}
+
 function Overview({ res, cur, ds }: { res: FinanceResult; cur: string; ds: Dataset }) {
   const rec = res.reconciliation!;
   const inv = res.inventory!;
@@ -101,6 +141,9 @@ function Overview({ res, cur, ds }: { res: FinanceResult; cur: string; ds: Datas
   const reasons = Object.entries(rec.unabsorbed_reasons).sort((a, b) => b[1] - a[1]);
   return (
     <div className="stack">
+      <Panel title="To collect and pay" actions={<a className="btn sm ghost" href={href("accounts", "parties")}>Who owes what</a>}>
+        <WorkList ds={ds} only={["accounts"]} />
+      </Panel>
       <div className="grid-auto">
         <StatTile label="Plan cost" value={money(rec.total_plan, cur)} sub={`${ds.settings.horizon_days} days`} tone="ink" />
         <StatTile label="Serves demand" value={money(rec.total_served, cur)} sub={`${pct(rec.total_plan ? rec.total_served / rec.total_plan : 0, 1)} of plan cost`} />

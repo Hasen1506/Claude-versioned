@@ -6,6 +6,7 @@ from ..model import Dataset
 from ..plan import PlanResult, run_mrp
 from ..sop import run_sop
 from .capacity import appraise
+from .cash import cash_view
 from .ledger import cost_to_serve, inventory_value
 from .result import FinanceResult
 
@@ -27,6 +28,7 @@ def run_finance(ds: Dataset, plan: PlanResult | None = None) -> FinanceResult:
         return out
     out.inventory = inventory_value(ds, plan)
     out.serve, out.reconciliation = cost_to_serve(ds, plan)
+    out.cash = cash_view(ds, plan)
     if ds.finance.capacity_options:
         base = run_sop(ds)
         out.sop_mode = base.mode.value

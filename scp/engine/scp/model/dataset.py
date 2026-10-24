@@ -16,15 +16,20 @@ from .actuals import AccuracyRecord, Batch, ClosedOrder, ExecutionSettings, Good
 from .common import LocationType, Model
 from .finance import FinanceSettings
 from .tower import TowerSettings
-from .demand import DemandEvent, ForecastOverride, ForecastSettings, NpiRule
+from .warehouse import Bin, PutawayRule, StorageType, Wave, WarehouseTask
+from .transport import Carrier, FreightOrder, TransportSettings
+from .intercompany import IntercompanyInvoice, LegalEntity, TransferPrice
+from .outside import JobWorkChallan, JobWorkSettings, ThirdPartyOrder
+from .portal import ShippingNotice
+from .demand import DemandEvent, FamilyOverride, ForecastOverride, ForecastSettings, ForecastSnapshot, NpiRule
 from .inventory import InventorySettings
 from .purchasing import (
     PurchaseContract, PurchaseOrder, PurchasingSettings, SupplierInvoice, SupplierReturn, Vendor,
 )
 from .sales import Customer, Delivery, Invoice, PaymentTerms, Quotation, ReturnOrder, SalesOrder, SalesSettings
-from .promise import Allocation, Confirmation, PromiseSettings
+from .promise import Allocation, Confirmation, PromiseSettings, Substitution
 from .schedule import Changeover, ScheduleSettings
-from .sop import SopSettings, StockTarget
+from .sop import Budget, SopSettings, StockTarget
 from .master import (
     Calendar, CustomerPrice, Location, LocationProduct, LotSizing, MrpGroup, Product, ProductionSource, PurchasingSource,
     Resource, Settings, TransportLane,
@@ -68,17 +73,36 @@ class Dataset(Model):
     events: list[DemandEvent] = Field(default_factory=list)
     npi: list[NpiRule] = Field(default_factory=list)
     overrides: list[ForecastOverride] = Field(default_factory=list)
+    family_overrides: list[FamilyOverride] = Field(default_factory=list)
+    forecast_snapshots: list[ForecastSnapshot] = Field(default_factory=list)
     inventory: InventorySettings = Field(default_factory=InventorySettings)
     sop: SopSettings = Field(default_factory=SopSettings)
     stock_targets: list[StockTarget] = Field(default_factory=list)
+    budgets: list[Budget] = Field(default_factory=list)
     changeovers: list[Changeover] = Field(default_factory=list)
     scheduling: ScheduleSettings = Field(default_factory=ScheduleSettings)
     allocations: list[Allocation] = Field(default_factory=list)
+    substitutions: list[Substitution] = Field(default_factory=list)
     confirmations: list[Confirmation] = Field(default_factory=list)
     promising: PromiseSettings = Field(default_factory=PromiseSettings)
     movements: list[GoodsMovement] = Field(default_factory=list)
     batches: list[Batch] = Field(default_factory=list)
     inventory_docs: list[InventoryDoc] = Field(default_factory=list)
+    storage_types: list[StorageType] = Field(default_factory=list)
+    bins: list[Bin] = Field(default_factory=list)
+    putaway_rules: list[PutawayRule] = Field(default_factory=list)
+    warehouse_tasks: list[WarehouseTask] = Field(default_factory=list)
+    waves: list[Wave] = Field(default_factory=list)
+    carriers: list[Carrier] = Field(default_factory=list)
+    freight_orders: list[FreightOrder] = Field(default_factory=list)
+    transport: TransportSettings = Field(default_factory=TransportSettings)
+    third_party_orders: list[ThirdPartyOrder] = Field(default_factory=list)
+    challans: list[JobWorkChallan] = Field(default_factory=list)
+    job_work: JobWorkSettings = Field(default_factory=JobWorkSettings)
+    shipping_notices: list[ShippingNotice] = Field(default_factory=list)
+    entities: list[LegalEntity] = Field(default_factory=list)
+    transfer_prices: list[TransferPrice] = Field(default_factory=list)
+    intercompany_invoices: list[IntercompanyInvoice] = Field(default_factory=list)
     closed_orders: list[ClosedOrder] = Field(default_factory=list)
     accuracy: list[AccuracyRecord] = Field(default_factory=list)
     rolled_weeks: list[RolledWeek] = Field(default_factory=list)
@@ -88,11 +112,13 @@ class Dataset(Model):
 
     def forecast_inputs(self) -> str:
         """A fingerprint of what a forecast is made from besides sales history: demand events, new-product rules,
-        consensus overrides and the forecast settings. A release records it; a change after that is not in the plan."""
+        consensus overrides (a family's too) and the forecast settings. A release records it; a change after that is not in the plan."""
         parts = {"events": [e.model_dump(mode="json") for e in self.events],
                  "npi": [n.model_dump(mode="json") for n in self.npi],
                  "overrides": [o.model_dump(mode="json") for o in self.overrides],
-                 "settings": self.forecasting.model_dump(mode="json", exclude={"released_inputs"})}
+                 "settings": self.forecasting.model_dump(mode="json", exclude={"released_inputs", "fva_lag"})}
+        if self.family_overrides:   # only when there are some: a fingerprint kept before they existed stays valid
+            parts["family_overrides"] = [f.model_dump(mode="json") for f in self.family_overrides]
         return hashlib.sha1(json.dumps(parts, sort_keys=True).encode(), usedforsecurity=False).hexdigest()[:16]
 
     def model_copy(self, *, update: dict | None = None, deep: bool = False) -> Dataset:
@@ -107,6 +133,10 @@ class Dataset(Model):
     @cached_property
     def location_by_id(self) -> dict[str, Location]:
         return _index(self.locations)
+
+    @cached_property
+    def entity_by_id(self) -> dict[str, LegalEntity]:
+        return _index(self.entities)
 
     @cached_property
     def product_by_id(self) -> dict[str, Product]:
@@ -165,6 +195,10 @@ class Dataset(Model):
         return _index(self.lanes)
 
     @cached_property
+    def carrier_by_id(self) -> dict[str, Carrier]:
+        return _index(self.carriers)
+
+    @cached_property
     def location_product_by_key(self) -> dict[tuple[str, str], LocationProduct]:
         out: dict[tuple[str, str], LocationProduct] = {}
         for lp in self.location_products:
@@ -175,6 +209,25 @@ class Dataset(Model):
     def demand_nodes(self) -> set[tuple[str, str]]:
         """Every (location, product) with a demand record: forecast or customer order."""
         return {(d.location, d.product) for d in self.demand}
+
+    @cached_property
+    def planning_base(self) -> dict[str, tuple[str, float]]:
+        """Variant → (its planning material, the units of it one unit of the variant uses up) (S/4 strategies 60/63).
+        One level: a planning material that names one of its own, or one that is not a product, plans nothing."""
+        out: dict[str, tuple[str, float]] = {}
+        for p in self.products:
+            base = self.product_by_id.get(p.planning_material or "")
+            if base is not None and base.id != p.id and base.planning_material is None:
+                out[p.id] = (base.id, p.planning_factor)
+        return out
+
+    @cached_property
+    def variants_of(self) -> dict[str, list[tuple[str, float]]]:
+        """Planning material → its variants, each with its factor."""
+        out: dict[str, list[tuple[str, float]]] = {}
+        for v, (base, f) in sorted(self.planning_base.items()):
+            out.setdefault(base, []).append((v, f))
+        return out
 
     def lot_sizing(self, lp: LocationProduct) -> LotSizing:
         """The lot-sizing rule planning uses at a node: its own, or the company default where it leaves it empty."""
@@ -236,10 +289,11 @@ class Dataset(Model):
             hit = self.lp_memo[("d", node)] = self._demand_lp(node)
         return hit
 
-    def _demand_lp(self, node: tuple[str, str]) -> LocationProduct:
-        lp = self.planning_lp(node)
+    def demand_lp_at(self, node: tuple[str, str]) -> str | None:
+        """The place whose record :meth:`demand_lp` reads for demand at ``node``: the node's own place, or for a
+        customer channel without a record the nearest place upstream that has one (None: no such place)."""
         if node in self.location_product_by_key or self.location_type(node[0]) is not LocationType.CUSTOMER:
-            return lp
+            return node[0]
         seen, level = {node[0]}, [node[0]]
         while level:
             nxt: list[str] = []
@@ -248,15 +302,23 @@ class Dataset(Model):
                     if ln.destination != dest or ln.origin in seen or (ln.products and node[1] not in ln.products):
                         continue
                     if (ln.origin, node[1]) in self.location_product_by_key:
-                        # the upstream policy as planning uses it: an MRP group's strategy and windows apply here too
-                        up = self.planning_lp((ln.origin, node[1]))
-                        return lp.model_copy(update={"strategy": up.strategy,
-                                                     "consumption_backward_days": up.consumption_backward_days,
-                                                     "consumption_forward_days": up.consumption_forward_days})
+                        return ln.origin
                     seen.add(ln.origin)
                     nxt.append(ln.origin)
             level = nxt
-        return lp
+        return None
+
+    def _demand_lp(self, node: tuple[str, str]) -> LocationProduct:
+        lp = self.planning_lp(node)
+        at = self.demand_lp_at(node)
+        if at is None or at == node[0]:
+            return lp
+        # the upstream policy as planning uses it: an MRP group's strategy, windows and demand time fence apply too
+        up = self.planning_lp((at, node[1]))
+        return lp.model_copy(update={"strategy": up.strategy,
+                                     "consumption_backward_days": up.consumption_backward_days,
+                                     "consumption_forward_days": up.consumption_forward_days,
+                                     "demand_time_fence_days": up.demand_time_fence_days})
 
     @cached_property
     def customer_price_by_key(self) -> dict[tuple[str, str], CustomerPrice]:

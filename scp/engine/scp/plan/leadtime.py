@@ -52,6 +52,27 @@ def gr_days(lp: LocationProduct | None) -> float:
     return lp.gr_processing_days if lp else 0.0
 
 
+def gr_after(ds: Dataset, loc: str, product: str, d: date) -> date:
+    """When goods received at ``loc`` on ``d`` are available: after the goods-receipt processing time, in working days
+    of the place when the company counts them so (S/4), else calendar days."""
+    gr = gr_days(ds.location_product_by_key.get((loc, product)))
+    if gr <= 0:
+        return d
+    if ds.settings.working_day_fences:
+        return location_calendar(ds, loc).add_workdays(d, gr)
+    return d + _days(gr)
+
+
+def gr_before(ds: Dataset, loc: str, product: str, d: date) -> date:
+    """The latest receipt that is available on ``d`` (the inverse of :func:`gr_after`)."""
+    gr = gr_days(ds.location_product_by_key.get((loc, product)))
+    if gr <= 0:
+        return d
+    if ds.settings.working_day_fences:
+        return location_calendar(ds, loc).add_workdays(d, -gr)
+    return d - _days(gr)
+
+
 def _days(x: float) -> timedelta:
     return timedelta(days=math.ceil(x - 1e-9))
 
@@ -263,7 +284,6 @@ def schedule_make(ds: Dataset, ps: ProductionSource, good_qty: float, *, availab
     operations, then the float after production, then goods-receipt processing. Components are needed when
     the step that consumes them starts."""
     cal = location_calendar(ds, ps.location)
-    gr = gr_days(ds.location_product_by_key.get((ps.location, ps.product)))
     before, after = _margins(ds, ps)
     durs = _op_workdays(ds, ps, good_qty)
     ops_by_seq = {op.seq: op for op in ps.operations}
@@ -271,7 +291,7 @@ def schedule_make(ds: Dataset, ps: ProductionSource, good_qty: float, *, availab
     if ps.fixed_lead_time_workdays is not None or not ps.operations:
         lt = ps.fixed_lead_time_workdays or 0.0
         if available is not None:
-            due = available - _days(gr)
+            due = gr_before(ds, ps.location, ps.product, available)
             end = cal.add_workdays(due, -after) if after else due
             prod = cal.add_workdays(cal.prev_workday(end), -lt) if lt > 0 else end
             st = cal.add_workdays(prod, -before) if before else prod
@@ -290,11 +310,11 @@ def schedule_make(ds: Dataset, ps: ProductionSource, good_qty: float, *, availab
                 op = ops_by_seq[seq]
                 windows.append(OpWindow(seq, op.resource, op.labor_resource, cur, max(nxt, cur), mh, lh, tuple(op.tools)))
                 cur = max(nxt, cur)
-        return Schedule(st, due, due + _days(gr), windows,
+        return Schedule(st, due, gr_after(ds, ps.location, ps.product, due), windows,
                         component_dates=_component_dates(ds, ps, windows, prod))
     overlapped = any(op.send_ahead_qty for op in ps.operations[:-1])
     if available is not None:
-        due = available - _days(gr)
+        due = gr_before(ds, ps.location, ps.product, available)
         end = cal.add_workdays(due, -after) if after else due
         windows = _backward(ds, ps, cal, end, durs)
         if overlapped:
@@ -317,7 +337,8 @@ def schedule_make(ds: Dataset, ps: ProductionSource, good_qty: float, *, availab
         prod = cal.add_workdays(st, before) if before else st
         windows, end = _forward(ds, ps, good_qty, cal, prod, durs)
         due = cal.add_workdays(cal.next_workday(end), after) if after else end
-    return Schedule(st, due, due + _days(gr), windows, component_dates=_component_dates(ds, ps, windows, prod))
+    return Schedule(st, due, gr_after(ds, ps.location, ps.product, due), windows,
+                    component_dates=_component_dates(ds, ps, windows, prod))
 
 
 def _component_dates(ds: Dataset, ps: ProductionSource, windows: list[OpWindow], start: date) -> dict[str, date]:
@@ -339,13 +360,12 @@ def schedule_buy(ds: Dataset, src_id: str, *, available: date | None = None, sta
     (with processing time 0, the day the order is placed). ``requisition`` False: ``start`` is the day a purchase
     order is placed, so the buyers' processing time is already behind it."""
     pu = ds.purchasing_source_by_id[src_id]
-    gr = gr_days(ds.location_product_by_key.get((pu.location, pu.product)))
     lane = supplier_lane(ds, pu.supplier, pu.location, pu.product)
     transit = lane.planning_mode.transit_days if lane else 0.0
     buyer = location_calendar(ds, pu.location)
     proc = processing_workdays(ds) if requisition else 0.0
     if available is not None:
-        latest = available - _days(gr) - _transit(transit) - _days(pu.lead_time_days)
+        latest = gr_before(ds, pu.location, pu.product, available) - _transit(transit) - _days(pu.lead_time_days)
         placed = buyer.prev_workday(latest)
         st = buyer.add_workdays(placed, -proc) if proc > 0 else placed
     else:
@@ -353,21 +373,36 @@ def schedule_buy(ds: Dataset, src_id: str, *, available: date | None = None, sta
         placed = buyer.add_workdays(st, proc) if proc > 0 else st
     ship = placed + _days(pu.lead_time_days)
     due = ship + _transit(transit)
-    return Schedule(st, due, due + _days(gr), [], ship_date=ship)
+    return Schedule(st, due, gr_after(ds, pu.location, pu.product, due), [], ship_date=ship)
+
+
+def outbound_workdays(ds: Dataset, ln) -> float:
+    """Working days at the shipping place between the goods being there and their leaving over the lane (S/4 §6.2
+    delivery scheduling): loading, after the longer of picking and packing and booking the transport."""
+    origin = ds.location_by_id.get(ln.origin)
+    pick = origin.pick_pack_workdays if origin else 0.0
+    load = origin.loading_workdays if origin else 0.0
+    return load + max(pick, ln.transport_planning_workdays)
 
 
 def schedule_transfer(ds: Dataset, lane_id: str, product: str, *, available: date | None = None,
                       start: date | None = None) -> Schedule:
+    """A shipment over a lane (S/4 §6.2, fig. 6.2, backward from the date it is wanted): goods receipt time at the
+    destination, transit, the goods issue on a working day of the shipping place, and before it loading after the
+    longer of picking and packing and booking the transport. ``start_date`` is the material availability date (the
+    day the goods must be there to pick, when stock is checked), ``ship_date`` the goods issue."""
     ln = ds.lane_by_id[lane_id]
-    gr = gr_days(ds.location_product_by_key.get((ln.destination, product)))
     transit = ln.planning_mode.transit_days
     ship_cal = location_calendar(ds, ln.origin)  # goods leave on the origin's working days
+    handling = outbound_workdays(ds, ln)
     if available is not None:
-        st = ship_cal.prev_workday(available - _days(gr) - _transit(transit))
+        gi = ship_cal.prev_workday(gr_before(ds, ln.destination, product, available) - _transit(transit))
+        st = ship_cal.add_workdays(gi, -handling) if handling > 0 else gi
     else:
         st = ship_cal.next_workday(start)
-    due = st + _transit(transit)
-    return Schedule(st, due, due + _days(gr), [], ship_date=st)
+        gi = ship_cal.add_workdays(st, handling) if handling > 0 else st
+    due = gi + _transit(transit)
+    return Schedule(st, due, gr_after(ds, ln.destination, product, due), [], ship_date=gi)
 
 
 def schedule(ds: Dataset, opt: SupplyOption, qty: float, *, available: date | None = None,
@@ -384,6 +419,8 @@ def nominal_lead_time_days(ds: Dataset, opt: SupplyOption, qty: float = 1.0) -> 
     """Calendar-day replenishment lead time of an option (for safety stock and checks)."""
     loc, prod = opt.node
     gr = gr_days(ds.location_product_by_key.get(opt.node))
+    if gr > 0 and ds.settings.working_day_fences:
+        gr = gr * 7.0 / max(1, sum(1 for d in range(7) if d in location_calendar(ds, loc)._workdays))  # noqa: SLF001
     if opt.kind == "buy":
         pu = ds.purchasing_source_by_id.get(opt.source_id)
         if not pu:
@@ -396,7 +433,13 @@ def nominal_lead_time_days(ds: Dataset, opt: SupplyOption, qty: float = 1.0) -> 
         return proc + pu.lead_time_days + (lane.planning_mode.transit_days if lane else 0.0) + gr
     if opt.kind == "transfer":
         ln = ds.lane_by_id.get(opt.source_id)
-        return (ln.planning_mode.transit_days + gr) if ln else None
+        if not ln:
+            return None
+        handling = outbound_workdays(ds, ln)
+        if handling > 0:
+            per_week = max(1, sum(1 for d in range(7) if d in location_calendar(ds, ln.origin)._workdays))  # noqa: SLF001
+            handling = handling * 7.0 / per_week
+        return handling + ln.planning_mode.transit_days + gr
     ps = ds.production_source_by_id.get(opt.source_id)
     if not ps:
         return None

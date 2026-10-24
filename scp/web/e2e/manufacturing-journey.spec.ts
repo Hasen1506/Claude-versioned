@@ -34,13 +34,15 @@ async function exported(page:Page) {
 }
 
 async function firm(page:Page,count:number) {
-  await page.goto('/#/execution/orders');
+  await page.goto('/#/plan/firm');
   const calculate=page.getByRole('button',{name:/^(Recalculate the supply plan|Calculate the supply plan)$/});
   // pages load on demand: wait for the firm zone to be drawn before asking whether the plan needs calculating
   await expect(page.getByRole('heading',{name:/^Firm zone:/})).toBeVisible({timeout:45000});
   if(await calculate.count()) await calculate.click();
   await page.getByRole('button',{name:`Make ${count} order${count===1?'':'s'} firm`,exact:true}).click();
   await expect(page.getByText(new RegExp(`${count} planned order${count===1?'':'s'} firmed`))).toBeVisible();
+  // firming lives with the supply plan (N350); the firm orders are received on Stock & actuals → Goods in & out
+  await page.goto('/#/execution/orders');
 }
 
 test('manufacturing: forecast → finite plan → promise → purchases → partial production → roll → shipment reconciles',async ({page})=>{
@@ -73,7 +75,7 @@ test('manufacturing: forecast → finite plan → promise → purchases → part
   await page.getByRole('button',{name:`Post part of ${prd.id}`}).click();
   await page.getByLabel(`Quantity for ${prd.id}`).fill('8');
   await page.getByRole('button',{name:'Confirm 8',exact:true}).click();
-  await expect(page.locator('.banner.info',{hasText:'Posted'})).toContainText('8 made');
+  await expect(page.locator('.banner.info',{hasText:'Posted'})).toContainText('8 A made');
   await page.goto('/#/execution/roll');
   await page.getByRole('button',{name:'Move the plan to this date'}).click();
   await expect(page.getByText('Rolled from Mon 5 Jan to Mon 12 Jan')).toBeVisible();
@@ -82,9 +84,9 @@ test('manufacturing: forecast → finite plan → promise → purchases → part
   expect(data.receipts.find((r:any)=>r.id===prd.id).qty).toBe(12);
   await page.goto('/#/execution/orders');
   await page.getByRole('button',{name:`Receive ${prd.id}`,exact:true}).click();
-  await expect(page.locator('.banner.info',{hasText:'Posted'})).toContainText('12 made');
+  await expect(page.locator('.banner.info',{hasText:'Posted'})).toContainText('12 A made');
   await page.getByRole('button',{name:'Deliver SO-00001',exact:true}).click();
-  await expect(page.locator('.banner.info',{hasText:'Posted'})).toContainText('20 delivered');
+  await expect(page.locator('.banner.info',{hasText:'Posted'})).toContainText('20 A delivered');
   await page.goto('/#/execution/roll');
   await page.getByLabel('Roll forward to').fill('2026-01-13');
   await page.getByRole('button',{name:'Move the plan to this date'}).click();
@@ -108,7 +110,7 @@ test('production form previews the fixed component once for a partial receipt',a
   await page.getByLabel('Enter the parts actually used').check();
   await expect(page.getByLabel('Used C')).toHaveValue('5.000000');
   await page.getByRole('button',{name:'Confirm 8',exact:true}).click();
-  await expect(page.locator('.banner.info',{hasText:'Posted'})).toContainText('8 made');
+  await expect(page.locator('.banner.info',{hasText:'Posted'})).toContainText('8 A made');
   const data=await exported(page);
   expect(data.movements.filter((r:any)=>r.type==='issue').map((r:any)=>[r.product,r.qty])).toEqual([['B',16],['C',5]]);
   await page.goto('/#/execution/journal');

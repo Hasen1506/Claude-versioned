@@ -19,16 +19,19 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "mrp2", label: "How it is supplied" }, { id: "mrp3", label: "Strategy & buffers" },
   { id: "mrp4", label: "What it is made from" },
 ];
-const MRP1 = ["mrp_group", "mrp_type", "mrp_controller", "reorder_point", "lot_sizing", "max_stock", "planning_time_fence_days"];
+const MRP1 = ["mrp_group", "mrp_type", "mrp_controller", "reorder_point", "lot_sizing", "max_stock", "planning_time_fence_days", "firming_type",
+  "rescheduling_horizon_days", "reschedule_out_tolerance_days"];
 const MRP2 = ["procurement", "phantom", "withdraw_from", "direct_production", "on_hand", "gr_processing_days", "safety_time_days",
   "float_before_workdays", "float_after_workdays", "unit_cost", "discontinued_on", "follow_up"];
-const MRP3 = ["strategy", "consumption_backward_days", "consumption_forward_days", "safety_stock", "holding_rate",
+const MRP3 = ["strategy", "consumption_backward_days", "consumption_forward_days", "demand_time_fence_days", "safety_stock", "holding_rate",
   "ddmrp_buffer", "max_service_days"];
 /** Each order covers…: the lot-size rule in plain words (L4L, POQ and EOQ are glossary terms, not labels). */
 export function orderingLabel(policy?: string | null, periods?: number | null): string {
   if (!policy) return "company default";
   const n = periods ?? 1;
   return ({ L4L: "exactly what's needed", FIXED: "fixed batches", EOQ: "economic batch size", MIN_MAX: "top up to a maximum",
+    PPB: "periods while holding stays within an order's cost", LUC: "periods at the least cost a unit",
+    GROFF: "periods by Groff's rule",
     POQ: n === 1 ? "a period's need" : `${n} periods' need` } as Record<string, string>)[policy] ?? policy.toLowerCase();
 }
 const PROC: Record<string, string> = { any: "made or got from outside", make: "made here only", external: "bought or shipped in only" };
@@ -136,7 +139,7 @@ function MaterialIndex({ ds }: { ds: Dataset }) {
                       <td>{nm.loc(r.loc)}</td>
                       <td>{r.lp?.mrp_controller || <span className="faint">—</span>}</td>
                       <td className="small">{how}{r.lp && r.lp.procurement && r.lp.procurement !== "any" && <div className="faint">{PROC[r.lp.procurement]}</div>}</td>
-                      <td className="small">{r.lp ? (r.lp.mrp_type === "none" ? "not replenished" : r.lp.mrp_type === "reorder_point" ? `reorder at ${qty(r.lp.reorder_point)}` : orderingLabel(r.lp.lot_sizing?.policy, r.lp.lot_sizing?.periods)) : <span className="faint">company defaults</span>}</td>
+                      <td className="small">{r.lp ? (r.lp.mrp_type === "none" ? "not replenished" : r.lp.mrp_type === "reorder_point" ? `reorder at ${qty(r.lp.reorder_point)}` : r.lp.mrp_type === "ddmrp" ? "DDMRP buffer" : orderingLabel(r.lp.lot_sizing?.policy, r.lp.lot_sizing?.periods)) : <span className="faint">company defaults</span>}</td>
                       <td className="small">{!r.lp || r.lp.safety_stock?.method === "none" || !r.lp.safety_stock ? "none" : r.lp.safety_stock.method.replace(/_/g, " ")}</td>
                       <td className="num">{qty(r.lp?.on_hand ?? 0)}</td>
                       <td>{!plan ? <span className="faint small">not planned</span> : x ? <Badge sev={x.error ? "error" : "warning"}>{x.n}</Badge> : <Badge sev="ok">OK</Badge>}</td>
@@ -193,8 +196,9 @@ function MaterialPage({ ds, prod, loc, tab }: { ds: Dataset; prod: string; loc: 
           {(() => {
             const g = (ds.mrp_groups ?? []).find((x) => x.id === lp?.mrp_group);
             const set = g ? Object.entries({ strategy: g.strategy, "lot size": g.lot_sizing?.policy, "safety time": g.safety_time_days,
-              fence: g.planning_time_fence_days, "consumption back": g.consumption_backward_days, "consumption forward": g.consumption_forward_days,
-              controller: g.mrp_controller }).filter(([, v]) => v !== null && v !== undefined) : [];
+              fence: g.planning_time_fence_days, "firming type": g.firming_type, "consumption back": g.consumption_backward_days, "consumption forward": g.consumption_forward_days,
+              "demand time fence": g.demand_time_fence_days, controller: g.mrp_controller,
+              "rescheduling horizon": g.rescheduling_horizon_days, "rescheduling tolerance": g.reschedule_out_tolerance_days }).filter(([, v]) => v !== null && v !== undefined) : [];
             return g ? <div className="banner info" style={{ marginBottom: 10 }}>Planned with MRP group <b>{g.name || g.id}</b>'s values where it sets one,
               instead of the values below: {set.length ? set.map(([k, v]) => `${k} ${v}`).join(", ") : "it sets none yet"}.</div> : null;
           })()}
@@ -211,22 +215,30 @@ function MaterialPage({ ds, prod, loc, tab }: { ds: Dataset; prod: string; loc: 
 }
 
 // ------------------------------------------------------------------------------------------------
-interface Element { date: string; kind: "stock" | "in" | "out"; what: string; detail?: string; qty: number; link?: string[] }
+interface Element { date: string; kind: "stock" | "in" | "out"; what: string; detail?: string; qty: number; link?: string[]; held?: string }
 
 /** Every receipt and requirement of the node, by date (MD04). */
 function elements(ds: Dataset, plan: PlanResult, reqs: Requirement[], prod: string, loc: string, nm: ReturnType<typeof useNames>): Element[] {
   const out: Element[] = [];
   const node = plan.nodes.find((n) => n.location === loc && n.product === prod);
   const start = ds.settings.planning_start;
+  // sales-order stock (S/4 segments): stock and firm orders held for one order, with that order's requirements
+  const heldStock = ((ds.location_products ?? []).find((x) => x.location === loc && x.product === prod)?.order_stock ?? [])
+    .filter((h) => h.qty > 1e-9);
+  const forOrder = new Map((ds.receipts ?? []).filter((x) => x.sales_order && x.location === loc && x.product === prod)
+    .map((x) => [x.id, x.sales_order as string]));
+  const segments = new Set([...heldStock.map((h) => h.order), ...forOrder.values()]);
   if (node && node.on_hand) out.push({ date: start, kind: "stock", what: "On hand today", qty: node.on_hand });
+  for (const h of heldStock) out.push({ date: start, kind: "stock", what: "In stock, held for this order", qty: h.qty, held: h.order });
   for (const r of plan.receipts) if (r.location === loc && r.product === prod)
-    out.push({ date: r.date, kind: "in", what: `Firm ${r.kind} order ${r.id}`, qty: r.qty });
+    out.push({ date: r.date, kind: "in", what: `Firm ${r.kind} order ${r.id}`, qty: r.qty, held: forOrder.get(r.id) });
   const byId = new Map(plan.orders.map((o) => [o.id, o]));
   for (const o of plan.orders) {
     if (o.location === loc && o.product === prod) {
       const from = o.kind === "transfer" && o.origin ? ` from ${nm.loc(o.origin)}` : o.kind === "buy" && o.origin ? ` from ${nm.loc(o.origin)}` : "";
       out.push({ date: o.available_date, kind: "in", what: `Planned ${ORDER_LABEL[o.kind]?.toLowerCase() ?? o.kind} ${o.id}${from}`,
-        detail: `starts ${day(o.start_date)}${o.start_in_past ? " — should already have started" : ""}`, qty: o.qty, link: ["plan", "orders", o.id] });
+        detail: `starts ${day(o.start_date)}${o.start_in_past ? " — should already have started" : ""}${o.sales_order ? ` · for ${o.sales_order}` : ""}`,
+        qty: o.qty, link: ["plan", "orders", o.id], held: o.sales_order && segments.has(o.sales_order) ? o.sales_order : undefined });
     }
     if (o.kind === "make" && o.location === loc && o.product !== prod) {
       const ps = (ds.production_sources ?? []).find((x) => x.id === o.source_id);
@@ -243,8 +255,9 @@ function elements(ds: Dataset, plan: PlanResult, reqs: Requirement[], prod: stri
       : r.kind === "transfer" && parent ? `Shipped to ${nm.loc(parent.location)} (${parent.id})`
       : r.kind === "dependent" || r.kind === "transfer" ? `${KIND[r.kind]} ${r.parent_order ?? ""}`
       : r.kind === "expiry" ? `Batch ${r.id.split(":").pop()} expires unused` : KIND[r.kind] ?? r.kind;
-    out.push({ date: r.date, kind: "out", what, detail: r.past_due ? "overdue: due before today" : undefined, qty: -r.qty,
-      link: parent ? ["plan", "orders", parent.id] : undefined });
+    const so = r.kind === "sales_order" ? r.id.replace(/^D:/, "").split("~")[0] : undefined;
+    out.push({ date: r.date, kind: "out", what: so ? `${what} ${so}` : what, detail: r.past_due ? "overdue: due before today" : undefined, qty: -r.qty,
+      link: parent ? ["plan", "orders", parent.id] : undefined, held: so && segments.has(so) ? so : undefined });
   }
   const rank = { stock: 0, in: 1, out: 2 };
   return out.sort((a, b) => a.date.localeCompare(b.date) || rank[a.kind] - rank[b.kind]);
@@ -267,7 +280,13 @@ function StockList({ ds, plan, prod, loc }: { ds: Dataset; plan: PlanResult | nu
   const ss = node?.buckets[0]?.safety_stock ?? 0;
   const ex = plan.exceptions.filter((e) => e.location === loc && e.product === prod && e.severity !== "info");
   let bal = 0;
-  const rows = els.map((e) => { bal += e.qty; return { ...e, bal }; });
+  const rows = els.filter((e) => !e.held).map((e) => { bal += e.qty; return { ...e, bal }; });
+  const held = new Map<string, (Element & { bal: number })[]>();
+  for (const e of els) if (e.held) {
+    const g = held.get(e.held) ?? [];
+    g.push({ ...e, bal: (g.at(-1)?.bal ?? 0) + e.qty });
+    held.set(e.held, g);
+  }
   const low = rows.find((r) => r.bal < -1e-6);
   return (
     <div className="stack">
@@ -295,6 +314,24 @@ function StockList({ ds, plan, prod, loc }: { ds: Dataset; plan: PlanResult | nu
                 <td className={`num ${r.bal < -1e-6 ? "neg" : r.bal < ss - 1e-6 ? "warnc" : ""}`}><b>{qty(r.bal)}</b></td>
               </tr>
             ))}</tbody>
+          </table>
+        </div>
+      </Panel>}
+      {node && tr.data && held.size > 0 && <Panel flush title={`Held for sales orders (${held.size})`}>
+        <p className="small muted" style={{ margin: "8px 12px" }}>Stock and firm orders made or bought for one customer order are that order's alone:
+          they are not in the free stock above, and nothing else is planned, promised or shipped from them.</p>
+        <div className="table-wrap">
+          <table className="t">
+            <thead><tr><th>Order</th><th>Date</th><th>What</th><th className="num">In / out</th><th className="num">Held after</th></tr></thead>
+            <tbody>{[...held.entries()].flatMap(([so, g]) => g.map((r, i) => (
+              <tr key={`${so}-${i}`}>
+                <td>{i === 0 ? <b>{so}</b> : ""}</td>
+                <td className="nowrap">{day(r.date)}</td>
+                <td>{r.link ? <a href={href(...r.link)}>{r.what}</a> : r.what}{r.detail && <div className="faint small">{r.detail}</div>}</td>
+                <td className={`num ${r.qty < 0 ? "" : "pos"}`}>{r.qty > 0 ? "+" : ""}{qty(r.qty)}</td>
+                <td className={`num ${r.bal < -1e-6 ? "neg" : ""}`}><b>{qty(r.bal)}</b></td>
+              </tr>
+            )))}</tbody>
           </table>
         </div>
       </Panel>}

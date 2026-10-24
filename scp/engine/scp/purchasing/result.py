@@ -6,6 +6,8 @@ from typing import Literal
 
 from ..model import Approval, Payment, PriceScale, ConfirmedDelivery
 from ..model.common import Out
+from .spread import LeadTimeSpread
+from .spend import SpendView
 
 
 class SourceChoice(Out):
@@ -110,6 +112,8 @@ class InfoRecord(Out):
     moq: float
     rounding_qty: float | None
     lead_time_days: float
+    lead_time_std_days: float = 0.0   # the spread planning covers in safety stock
+    measured: LeadTimeSpread | None = None   # the spread its closed lines show (None: too few yet)
     valid_from: dt.date | None
     valid_to: dt.date | None
     fixed: bool
@@ -166,6 +170,7 @@ class PurchasingView(Out):
     orders: list[PoView]
     vendors: list[VendorRow]
     payables: PayablesView | None = None
+    spend: SpendView | None = None     # where the money goes, and which bought products have one source
 
 
 class CreatedPo(Out):

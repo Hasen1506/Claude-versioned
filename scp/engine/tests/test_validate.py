@@ -102,6 +102,19 @@ def _ss_and_time(d):
     x["safety_time_days"] = 2
 
 
+def _held_unknown(d):
+    d["receipts"].append({"id": "PO9", "kind": "purchase", "location": "P", "product": "A", "qty": 5,
+                          "due_date": "2026-01-12", "sales_order": "SO-GONE"})
+
+
+def _ddmrp_mto(d):
+    lp(d, "P", "A").update(strategy="MTO", mrp_type="ddmrp")
+
+
+def _ddmrp_ss(d):
+    lp(d, "P", "A").update(mrp_type="ddmrp", safety_stock={"method": "fixed", "qty": 5})
+
+
 def _quota(d):
     d["locations"].append({"id": "S2", "type": "supplier"})
     d["purchasing_sources"][0]["quota"] = 0.5
@@ -177,6 +190,10 @@ def _override_no_fc(d):
     d["overrides"] = [{"location": "P", "product": "A", "date": "2026-01-12", "change": 0.1}]
 
 
+def _family_override_no_family(d):
+    d["family_overrides"] = [{"family": "Nobody's", "date": "2026-01-12", "qty": 5}]
+
+
 def _confirmation_orphan(d):
     d["confirmations"] = [{"order": "SO-GONE", "ship_from": "P", "ship_date": "2026-01-12", "date": "2026-01-12",
                            "qty": 5}]
@@ -229,6 +246,40 @@ def _batch_unknown(d):
                        "qty": 5, "batch": "NO-RECORD"}]
 
 
+def _wh_misfit(d):
+    d["bins"] = [{"location": "P", "id": "X1", "storage_type": "NONE"}]
+
+
+def _tm_misfit(d):
+    d["carriers"] = [{"id": "CR-1", "rates": [{"lane": "NO-SUCH-LANE", "per_shipment": 1}]}]
+
+
+def _outside_misfit(d):
+    d["challans"] = [{"id": "JW-1", "job_worker": "S", "ship_from": "P", "order": "MO-GONE",
+                      "sent_on": "2026-01-01", "lines": [{"product": "B", "qty": 5, "value": 1, "location": "P"}]}]
+
+
+def _jobwork_due(d):
+    d["receipts"] = [{"id": "MO-1", "kind": "production", "location": "P", "product": "A", "qty": 10,
+                      "due_date": "2026-03-01"}]
+    d["challans"] = [{"id": "JW-1", "job_worker": "S", "ship_from": "P", "order": "MO-1",
+                      "sent_on": "2024-01-01", "lines": [{"product": "B", "qty": 5, "value": 1, "location": "P"}]}]
+
+
+def _intercompany_misfit(d):
+    d["entities"] = [{"id": "E2", "name": "Sister company"}]
+    d["locations"][1]["entity"] = "E2"                         # the supplier S
+
+
+def _transfer_price_missing(d):
+    d["entities"] = [{"id": "E2", "name": "Sister company"}]
+    d["locations"].append({"id": "W", "type": "dc", "entity": "E2"})
+    d["lanes"] = [{"id": "L-PW", "origin": "P", "destination": "W", "modes": [{"mode": "truck_ftl", "transit_days": 1}]}]
+    d["location_products"].append({"location": "W", "product": "A"})
+    d["receipts"] = [{"id": "TR-1", "kind": "transfer", "location": "W", "product": "A", "qty": 5,
+                      "due_date": "2026-01-10", "source": "L-PW"}]
+
+
 def _reversal_unknown(d):
     d["movements"] = [{"id": "GM-1", "date": "2026-01-01", "type": "receipt", "location": "P", "product": "B",
                        "qty": 5, "reversal_of": "GM-0"}]
@@ -246,6 +297,16 @@ def _cold_chain(d):
     d["lanes"] = [{"id": "P-DC", "origin": "P", "destination": "DC", "products": ["A"], "modes": [{"transit_days": 1}]}]
 
 
+def _planning_chain(d):
+    d["products"][1]["planning_material"] = "C"
+    d["products"][2]["planning_material"] = "A"
+
+
+def _variant_forecast(d):
+    d["products"].append({"id": "BASE", "type": "FG"})
+    d["products"][0]["planning_material"] = "BASE"
+
+
 MUTATORS = {
     "DUP_ID": _dup_id, "DUP_LOCATION_PRODUCT": _dup_lp, "REF_UNKNOWN": _ref_unknown,
     "REF_WRONG_TYPE": _ref_wrong_type, "FX_MISSING": _fx_missing, "CALENDAR_NO_WORKDAY_IN_HORIZON": _calendar,
@@ -253,17 +314,22 @@ MUTATORS = {
     "RESOURCE_WRONG_LOCATION": _resource_location, "SS_NO_VARIABILITY": _ss_no_var,
     "SOURCE_NOT_VALID_IN_HORIZON": _validity, "PRODUCTION_NO_OPERATIONS": _no_ops,
     "PRODUCTION_NO_LEAD_TIME": _no_ops, "PURCHASE_ZERO_LEAD_TIME": _zero_lt, "SS_AND_SAFETY_TIME": _ss_and_time,
+    "HELD_FOR_UNKNOWN_ORDER": _held_unknown, "DDMRP_NOT_A_BUFFER": _ddmrp_mto, "DDMRP_SAFETY_STOCK": _ddmrp_ss,
     "QUOTA_SUM": _quota, "DEMAND_OUTSIDE_HORIZON": _outside, "DEMAND_PAST_DUE": _past,
     "MTO_WITH_FORECAST": _mto_fc, "CONSUMPTION_GAP": _consumption_gap, "FORECAST_TWICE": _forecast_twice, "FORECAST_INPUTS_CHANGED": _inputs_changed, "STOCK_AT_CUSTOMER": _stock_at_customer, "RESOURCE_UNUSED": _unused,
     "LOCATION_PRODUCT_DEFAULTED": _defaulted, "SHELF_LIFE_VS_LEAD_TIME": _shelf,
     "HISTORY_AFTER_START": _history_late, "NPI_LIKE_WITHOUT_HISTORY": _npi_like, "NPI_DUPLICATE": _npi_dup,
     "OVERRIDE_OUTSIDE_HORIZON": _override_outside, "OVERRIDE_WITHOUT_FORECAST": _override_no_fc,
+    "FAMILY_OVERRIDE_NO_FAMILY": _family_override_no_family,
     "CONFIRMATION_ORPHAN": _confirmation_orphan, "STOCK_NOT_SYNCED": _stock_not_synced,
     "NEGATIVE_STOCK": _negative_stock, "MOVEMENT_REF_UNKNOWN": _movement_ref,
     "PHANTOM_NOT_MADE": _phantom_not_made, "PO_LINE_MISMATCH": _po_line_mismatch,
     "FIXED_SOURCE_TWICE": _fixed_twice, "OPEN_PO_BLOCKED_SUPPLIER": _open_po_blocked,
     "STOCK_EXPIRED": _stock_expired, "BATCH_UNKNOWN": _batch_unknown, "REVERSAL_UNKNOWN": _reversal_unknown,
     "SERIALS_COUNT": _serials_count, "COLD_CHAIN_LANE": _cold_chain,
+    "PLANNING_MATERIAL_CHAIN": _planning_chain, "VARIANT_FORECAST": _variant_forecast, "WH_MISFIT": _wh_misfit, "TM_MISFIT": _tm_misfit,
+    "OUTSIDE_MISFIT": _outside_misfit, "JOBWORK_DUE": _jobwork_due,
+    "INTERCOMPANY_MISFIT": _intercompany_misfit, "TRANSFER_PRICE_MISSING": _transfer_price_missing,
 }
 
 

@@ -112,7 +112,7 @@ def test_schedule_catalogue_compare_and_holds():
     m = client.post("/api/schedule", json={"dataset": d, "sequence": seqs, "hold": r["holds"]}).json()
     assert abs(m["kpis"]["objective"] - r["kpis"]["objective"]) < 1e-6
     c = client.post("/api/schedule/compare", json=d).json()
-    assert c["ok"] and len(c["rows"]) == 7 and any(x["best"] for x in c["rows"])
+    assert c["ok"] and len(c["rows"]) == 8 and any(x["best"] for x in c["rows"])
 
 
 def test_promise_flow():

@@ -135,6 +135,8 @@ class ToDeliver(Out):
     ship_from: str | None
     ship_date: dt.date
     credit_block: bool = False
+    available: float | None = None        # what can be picked by the goods issue (stock there + firm receipts by then,
+                                          # less open deliveries; first to ship first); empty = no place to ship from
 
 
 class ToBill(Out):
