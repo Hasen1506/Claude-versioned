@@ -38,7 +38,7 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlparse, urlunparse
 from zoneinfo import ZoneInfo
 
 from pydantic import Field
@@ -48,6 +48,11 @@ from ..model.common import Model, Out
 from .erp import (
     ErpOrder, ErpPosting, ErpStock, ItemResult, apply_orders, apply_postings, apply_records, apply_stock, record_lists,
 )
+from . import apps
+from .apps import AppSettings
+from .mapping import Mapping, columns, dig, fields_of, json_items, records, sample
+from .mapping import apply as map_rows
+from .mapping import check as check_mapping
 from .messages import MessageAnswer, MessageRow, log, receive
 
 SCHEMA = """
@@ -83,11 +88,42 @@ def kinds() -> list[str]:
     return ["orders", "stock", "postings", *(f"records:{n}" for n in record_lists())]
 
 
+class Paging(Model):
+    """How a web API gives its records page by page."""
+    mode: Literal["next", "page", "link"] = Field("next", description="next: each answer names the next page's "
+                                                                      "address; page: pages are numbered; link: "
+                                                                      "the answer's Link header names it (rel=next)")
+    next: str = Field("", max_length=200, description="next: the path in the answer to the next page's address "
+                                                      "(links.next, @odata.nextLink); page: the path to a flag that "
+                                                      "more pages follow (page_context.has_more_page); empty: until "
+                                                      "a page has no records")
+    param: str = Field("page", min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_.\-\[\]]+$",
+                       description="page: the parameter that numbers the pages, from 1")
+    max_pages: int = Field(50, ge=1, le=500)
+
+
+SINCE = "{since}"
+
+
 class JobInput(Model):
     name: str = Field(min_length=1, max_length=60)
     kind: str = Field(description="orders, stock, postings or records:<list>")
-    source_type: Literal["url", "folder"]
-    source: str = Field(min_length=1, max_length=500, description="The web address, or the file pattern in the folder")
+    source_type: Literal["url", "folder", "api", "tally", "zoho", "shopify", "odoo"]
+    source: str = Field(min_length=1, max_length=500, description="The web address, or the file pattern in the "
+                                                                  "folder; {since} in an address is the time the last "
+                                                                  "good run started (only what changed since); Tally: "
+                                                                  "its address (http://tally-pc:9000); Zoho: the "
+                                                                  "organisation ID; Shopify: the shop "
+                                                                  "(my-shop.myshopify.com); Odoo: its address")
+    app: AppSettings | None = Field(None, description="Tally, Zoho, Shopify or Odoo: what the connector needs beyond "
+                                                      "its source")
+    secrets: dict[str, str] | None = Field(None, description="Zoho: client_id, client_secret and refresh_token; "
+                                                             "Shopify: access_token; Odoo: login and api_key; "
+                                                             "omitted (or a value left empty) keeps the one kept for "
+                                                             "the same organisation, shop or database")
+    mapping: Mapping | None = Field(None, description="Which column or field there fills each field here; none: "
+                                                      "columns are recognised by their names")
+    paging: Paging | None = Field(None, description="api: how the answer comes page by page")
     headers: dict[str, str] | None = Field(None, description="A web address: headers to send (Authorization); omitted "
                                          "keeps them only for the same origin, {} removes them")
     format: Literal["csv", "json"] = "csv"
@@ -116,6 +152,10 @@ class ImportJob(Out):
     last_run: str | None
     last_status: str
     last_summary: str
+    mapping: Mapping | None = None
+    paging: Paging | None = None
+    since: str | None = None       # {since}: the start of the last good run (only what changed after it is read)
+    app: AppSettings | None = None   # Tally or Zoho: the connector's settings
 
 
 class ImportJobs(Out):
@@ -123,11 +163,25 @@ class ImportJobs(Out):
     folder: str | None             # the company's folder on the server, when the server has one
     timezone: str
     kinds: list[str]
+    fields: dict[str, list[str]] = {}   # the fields a mapping can fill, by kind
+    apps: dict[str, list[str]] = {}     # Tally, Zoho, Shopify, Odoo: the kinds each reads (or, send:…, sends)
+    secrets: dict[str, list[str]] = {}  # the credentials each keeps
+
+
+class Tried(Out):
+    """A dry run: what an import would do now, with nothing saved, no file moved and its schedule as it was."""
+    messages: list[MessageRow]
+    columns: list[str] = []        # the columns (paths) the first records read have: what a mapping can name
+    rows: list[dict[str, Any]] = []   # the first rows as the fields here, after the mapping
 
 
 def _ensure(c: Companies) -> None:
     if not getattr(c, "_imports_ready", False):
         c.db.executescript(SCHEMA)
+        have = {r[1] for r in c.db.execute("PRAGMA table_info(import_jobs)")}
+        for col in ("mapping", "paging", "cursor", "app"):   # ENTERPRISE_PLAN 3.1–3.2: connectors
+            if col not in have:
+                c.db.execute(f"ALTER TABLE import_jobs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
         c._imports_ready = True  # type: ignore[attr-defined]
 
 
@@ -169,14 +223,28 @@ def next_run(every: str, at: str, weekday: int, after: dt.datetime, zone: str | 
 
 
 def _check(c: Companies, cid: str, body: JobInput) -> None:
-    if body.kind not in kinds():
+    if body.source_type in apps.APPS:
+        if body.kind not in apps.kinds(body.source_type):
+            raise CompanyError(f"{apps.NAMES[body.source_type]} gives {', '.join(apps.kinds(body.source_type))}", 422)
+    elif body.kind not in kinds():
         raise CompanyError(f"an import is one of {', '.join(kinds())}", 422)
-    if body.source_type == "url":
-        u = urlparse(body.source)
+    if body.mapping is not None:
+        try:
+            check_mapping(body.kind, body.mapping)
+        except ValueError as e:
+            raise CompanyError(str(e), 422) from None
+    if body.paging is not None and body.source_type != "api":
+        raise CompanyError("pages are read from a web API (from: a web API)", 422)
+    if body.source_type == "api" and body.format != "json":
+        raise CompanyError("a web API answers in JSON", 422)
+    if body.source_type in ("zoho", "shopify"):
+        return
+    if body.source_type in ("url", "api", "tally", "odoo"):
+        u = urlparse(body.source.replace(SINCE, ""))
         if u.scheme not in ("http", "https") or not u.hostname:
             raise CompanyError("a web address starts with https:// (or http://)", 422)
         try:
-            _origin(body.source)
+            _origin(body.source.replace(SINCE, ""))
         except ValueError as e:
             raise CompanyError("the web address has an invalid port", 422) from e
         allowed = _hosts()
@@ -189,12 +257,58 @@ def _check(c: Companies, cid: str, body: JobInput) -> None:
             raise CompanyError("a file pattern names files in the company's folder (stock-*.csv), not other folders", 422)
 
 
+def _check_app(body: JobInput, secrets: dict[str, str]) -> None:
+    """A connector that cannot work with what it was given (its credentials as they will be kept)."""
+    if body.source_type in apps.APPS:
+        try:
+            apps.check(body.source_type, body.kind, body.source, body.app or AppSettings(), secrets, body.mapping)
+        except ValueError as e:
+            raise CompanyError(str(e), 422) from None
+
+
+def _given(body: JobInput) -> dict[str, str] | None:
+    """The headers (a web address, Tally) or the credentials (Zoho) sent with a job."""
+    return body.secrets if apps.keeps_secrets(body.source_type) else body.headers
+
+
+def _kept(old: Any, body: JobInput) -> dict[str, str]:
+    """The headers or credentials a job keeps: those sent, else (or for a value left empty) the ones kept for the
+    same place, the same address or the same Zoho organisation in the same data centre."""
+    given = _given(body)
+    if body.source_type == "folder":
+        return {}
+    same = _same(old, body)
+    before = json.loads(old["headers"]) if same and old is not None else {}
+    if given is None:
+        return before
+    return {k: (v if v.strip() or k not in before else before[k]) for k, v in given.items()
+            if v.strip() or k in before} if apps.keeps_secrets(body.source_type) else given
+
+
+def _same(old: Any, body: JobInput) -> bool:
+    if old is None or old["source_type"] == "folder" or body.source_type == "folder":
+        return False
+    if apps.keeps_secrets(old["source_type"]) or apps.keeps_secrets(body.source_type):
+        if old["source_type"] != body.source_type:
+            return False
+        was = AppSettings.model_validate_json(old["app"]) if old["app"] else AppSettings()
+        return bool(apps.module(body.source_type).same(old["source"], was, body.source, body.app or AppSettings()))
+    return _origin(old["source"]) == _origin(body.source)
+
+
 def _job(c: Companies, r: Any) -> ImportJob:
     return ImportJob(id=r["id"], name=r["name"], kind=r["kind"], source_type=r["source_type"], source=r["source"],
                      header_names=sorted(json.loads(r["headers"])), format=r["format"], day_first=bool(r["day_first"]),
                      every=r["every"], at=r["at"], weekday=r["weekday"], enabled=bool(r["enabled"]),
                      run_as=c._name(r["run_as"]), next_run=r["next_run"], last_run=r["last_run"],
-                     last_status=r["last_status"], last_summary=r["last_summary"])
+                     last_status=r["last_status"], last_summary=r["last_summary"], mapping=_mapping(r),
+                     paging=Paging.model_validate_json(r["paging"]) if r["paging"] else None,
+                     since=r["cursor"] or None,
+                     app=AppSettings.model_validate_json(r["app"]) if r["app"] else None)
+
+
+def _mapping(r: Any) -> Mapping | None:
+    return Mapping.model_validate_json(r["mapping"]) if r["mapping"] else None
 
 
 def folder_of(cid: str) -> Path | None:
@@ -209,7 +323,8 @@ def jobs(c: Companies, user: User, cid: str) -> ImportJobs:
         rows = c.db.execute("SELECT * FROM import_jobs WHERE company_id = ? AND deleted = 0 ORDER BY id", (cid,)).fetchall()
         f = folder_of(cid)
         return ImportJobs(jobs=[_job(c, r) for r in rows], folder=str(f) if f else None, timezone=company_timezone(c, cid),
-                          kinds=kinds())
+                          kinds=kinds(), fields={k: fields_of(k) for k in [*kinds(), *apps.SENDS]},
+                          apps={a: apps.kinds(a) for a in apps.APPS}, secrets={a: apps.secrets_of(a) for a in apps.APPS})
 
 
 def save_job(c: Companies, user: User, cid: str, body: JobInput, jid: str | None = None,
@@ -227,32 +342,41 @@ def save_job(c: Companies, user: User, cid: str, body: JobInput, jid: str | None
             while c.db.execute("SELECT 1 FROM import_jobs WHERE id = ?", (jid,)).fetchone():
                 n += 1
                 jid = f"J{n:04d}"
+            kept = _kept(None, body)
+            _check_app(body, kept)
             c.db.execute("INSERT INTO import_jobs (id, company_id, name, kind, source_type, source, headers, format, "
-                         "day_first, every, at, weekday, enabled, run_as, created_at, next_run) VALUES "
-                         "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (jid, cid, body.name, body.kind, body.source_type, body.source,
-                          json.dumps((body.headers or {}) if body.source_type == "url" else {}),
+                         "day_first, every, at, weekday, enabled, run_as, created_at, next_run, mapping, paging, app) "
+                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (jid, cid, body.name, body.kind, body.source_type, body.source, json.dumps(kept),
                           body.format, int(body.day_first), body.every, body.at, body.weekday, int(body.enabled),
-                          user.id, _iso(now), nxt))
+                          user.id, _iso(now), nxt, *_extras(body)))
             c._log(cid, None, user.id, "member", f"import {jid} “{body.name}” made: {body.kind} every {body.every}")
         else:
             r = c.db.execute("SELECT * FROM import_jobs WHERE id = ? AND company_id = ? AND deleted = 0",
                              (jid, cid)).fetchone()
             if r is None:
                 raise CompanyError(f"no import {jid} in this company", 404)
-            same_origin = (r["source_type"] == body.source_type == "url"
-                           and _origin(r["source"]) == _origin(body.source))
-            headers = body.headers if body.headers is not None else json.loads(r["headers"]) if same_origin else {}
-            if body.source_type != "url":
-                headers = {}
+            headers = _kept(r, body)
+            _check_app(body, headers)
+            # another address or another kind of record: what changed since is read again from the start
+            cursor = r["cursor"] if _same(r, body) and r["kind"] == body.kind else ""
             c.db.execute("UPDATE import_jobs SET name = ?, kind = ?, source_type = ?, source = ?, headers = ?, format = ?, "
-                         "day_first = ?, every = ?, at = ?, weekday = ?, enabled = ?, run_as = ?, next_run = ? "
-                         "WHERE id = ?", (body.name, body.kind, body.source_type, body.source, json.dumps(headers),
-                                          body.format, int(body.day_first), body.every, body.at, body.weekday,
-                                          int(body.enabled), user.id, nxt, jid))
+                         "day_first = ?, every = ?, at = ?, weekday = ?, enabled = ?, run_as = ?, next_run = ?, "
+                         "mapping = ?, paging = ?, app = ?, cursor = ? WHERE id = ?",
+                         (body.name, body.kind, body.source_type, body.source, json.dumps(headers), body.format,
+                          int(body.day_first), body.every, body.at, body.weekday, int(body.enabled), user.id, nxt,
+                          *_extras(body), cursor, jid))
             c._log(cid, None, user.id, "member", f"import {jid} “{body.name}” changed"
                    + ("" if body.enabled else " (switched off)"))
     return jobs(c, user, cid)
+
+
+def _extras(body: JobInput) -> tuple[str, str, str]:
+    """The mapping, the paging and a connector's settings as kept: an empty mapping is none."""
+    m = body.mapping
+    return (m.model_dump_json() if m is not None and (m.fields or m.items) else "",
+            body.paging.model_dump_json() if body.paging is not None and body.source_type == "api" else "",
+            (body.app or AppSettings()).model_dump_json() if body.source_type in apps.APPS else "")
 
 
 def delete_job(c: Companies, user: User, cid: str, jid: str) -> ImportJobs:
@@ -376,23 +500,26 @@ def _rows(grid: list[list[str]], fields: list[str], day_first: bool) -> list[dic
         rec: dict[str, Any] = {}
         for f, i in col.items():
             v = row[i].strip() if i < len(row) else ""
-            if v == "":
-                continue
-            if f in DATES:
-                rec[f] = parse_date(v, day_first) or v
-            elif f in NUMBERS:
-                n = _num(v)
-                rec[f] = n if n is not None else v
-            elif f in FLAGS:
-                rec[f] = v.lower() in ("1", "x", "yes", "y", "true", "ja")
-            elif f == "action":
-                rec[f] = ACTIONS.get(_norm(v), v.lower())
-            elif f in ("stock_type", "to_type"):
-                rec[f] = STOCK_TYPES.get(_norm(v), v.lower())
-            else:
-                rec[f] = v
+            if v != "":
+                rec[f] = convert(f, v, day_first)
         out.append(rec)
     return out
+
+
+def convert(f: str, v: str, day_first: bool) -> Any:
+    """A cell of a file as the field it fills: a date, a number, a yes/no, a movement or stock type by its code."""
+    if f in DATES:
+        return parse_date(v, day_first) or v
+    if f in NUMBERS:
+        n = _num(v)
+        return n if n is not None else v
+    if f in FLAGS:
+        return v.lower() in ("1", "x", "yes", "y", "true", "ja")
+    if f == "action":
+        return ACTIONS.get(_norm(v), v.lower())
+    if f in ("stock_type", "to_type"):
+        return STOCK_TYPES.get(_norm(v), v.lower())
+    return v
 
 
 def _stock_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -431,19 +558,18 @@ def _records(grid: list[list[str]], day_first: bool) -> list[dict[str, Any]]:
     return out
 
 
-def parse(kind: str, fmt: str, raw: bytes, day_first: bool = True) -> list[Any]:
+def parse(kind: str, fmt: str, raw: bytes, day_first: bool = True, mapping: Mapping | None = None) -> list[Any]:
     """The items of a message of ``kind`` read from a file: :class:`pydantic.ValidationError` on a bad row is the
-    caller's to report per item, so rows are returned as dicts for orders, stock and postings."""
+    caller's to report per item, so rows are returned as dicts for orders, stock and postings. With a ``mapping``
+    each field is filled from the column or path it names (:mod:`scp.connect.mapping`)."""
+    if mapping is not None and mapping.fields:
+        rows = map_rows(kind, records(kind, fmt, raw, mapping), mapping, day_first)
+        if kind.startswith("records:"):
+            return rows
+        return _stock_rows(rows) if kind == "stock" else rows if kind == "postings" else _orders(rows)
     text = raw.decode("utf-8-sig", errors="replace")
     if fmt == "json":
-        data = json.loads(text)
-        key = {"orders": "orders", "stock": "stock", "postings": "postings"}.get(kind, "records")
-        items = data.get(key, []) if isinstance(data, dict) else data
-        # CV-M01: a file of another shape (a string, a number, a list of strings) is refused, not crashed on
-        if not isinstance(items, list) or not all(isinstance(x, dict) for x in items):
-            raise ValueError(f"the file is not a list of records (expected a JSON list of objects, or an object "
-                             f"with \"{key}\": [...])")
-        return items
+        return json_items(json.loads(text), mapping.items if mapping else "", kind)
     grid = read_grid(text)
     if kind.startswith("records:"):
         return _records(grid, day_first)
@@ -453,8 +579,12 @@ def parse(kind: str, fmt: str, raw: bytes, day_first: bool = True) -> list[Any]:
     if kind == "postings":
         return _rows(grid, ["ref", "action", "number", "qty", "date", "final", "location", "product", "batch",
                             "expires_on", "supplier_batch", "stock_type", "to_type", "note"], day_first)
-    lines = _rows(grid, ["number", "customer", "order_date", "customer_ref", "payment_terms", "product", "qty", "date",
-                         "price", "cancelled", "note"], day_first)
+    return _orders(_rows(grid, ["number", "customer", "order_date", "customer_ref", "payment_terms", "product", "qty",
+                                "date", "price", "cancelled", "note"], day_first))
+
+
+def _orders(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rows of order lines, an order's header repeated on each, as one order per number."""
     orders: dict[str, dict[str, Any]] = {}
     for ln in lines:
         num = str(ln.get("number") or "")
@@ -487,7 +617,7 @@ def _typed(kind: str, items: list[Any]) -> tuple[list[Any], list[ItemResult]]:
     return good, bad
 
 
-def applier(kind: str, items: list[Any]) -> Callable:
+def applier(kind: str, items: list[Any], add_only: frozenset[str] = frozenset()) -> Callable:
     good, bad = _typed(kind, items)
 
     def change(ds):
@@ -498,7 +628,7 @@ def applier(kind: str, items: list[Any]) -> Callable:
         elif kind == "postings":
             new, res = apply_postings(ds, good)
         else:
-            new, res = apply_records(ds, kind.split(":", 1)[1], good)
+            new, res = apply_records(ds, kind.split(":", 1)[1], good, add_only)
         return new, [*bad, *res]
     return change
 
@@ -631,23 +761,216 @@ def _fetch(url: str, headers: dict[str, str]) -> bytes:
 
 #: tests replace this to serve a file without a network
 fetch: Fetch = _fetch
+Http = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]]
 
 
-def _apply(c: Companies, user: User, cid: str, job: Any, raw: bytes, source: str) -> MessageAnswer:
+class Answer(tuple):
+    """An answer as ``(status, body)``, with its headers (names in lower case)."""
+    headers: dict[str, str]
+
+    def __new__(cls, status: int, body: bytes, headers: dict[str, str] | None = None) -> Answer:
+        t = super().__new__(cls, (status, body))
+        t.headers = {k.lower(): v for k, v in (headers or {}).items()}
+        return t
+
+
+def link_next(answer: Any) -> str | None:
+    """The next page an answer's ``Link`` header names (``<https://…?page_info=x>; rel="next"``)."""
+    header = (getattr(answer, "headers", None) or {}).get("link", "")
+    for part in header.split(","):
+        m = re.match(r'\s*<([^>]+)>\s*;(.*)$', part)
+        if m and re.search(r'rel\s*=\s*"?next"?', m.group(2)):
+            return m.group(1).strip()
+    return None
+
+
+def _http(method: str, url: str, headers: dict[str, str], body: bytes | None = None) -> tuple[int, bytes]:
+    """A request a connector makes (ENTERPRISE_PLAN 3.2): to an address a job may read, as :func:`_fetch` is, and
+    answered with its status and body (an error's body too: Zoho says why in it)."""
+    import urllib.error
+    reachable(url)
+    req = urllib.request.Request(url, data=body, method=method, headers={"User-Agent": "scp-connector/1"})
+    for k, v in headers.items():
+        req.add_unredirected_header(k, v)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _PinnedHTTPHandler, _PinnedHTTPSHandler,
+                                         _Redirect)
+    try:
+        with opener.open(req, timeout=60) as r:
+            status, data, got = r.status, r.read(MAX_BYTES + 1), dict(r.headers.items())
+    except urllib.error.HTTPError as e:
+        status, data, got = e.code, e.read(MAX_BYTES + 1), dict(e.headers.items()) if e.headers else {}
+    if len(data) > MAX_BYTES:
+        raise ValueError(f"the answer is larger than {MAX_BYTES // (1024 * 1024)} MB")
+    return Answer(status, data, got)
+
+
+#: tests replace this to answer as Tally or Zoho would
+http: Http = _http
+
+
+def _apply(c: Companies, user: User, cid: str, job: dict, raw: bytes, source: str, dry: bool = False) -> MessageAnswer:
     fingerprint = hashlib.sha256(raw).hexdigest()[:24]
-    items = parse(job["kind"], job["format"], raw, bool(job["day_first"]))
-    return receive(c, user, cid, job["kind"], f"{job['id']}:{fingerprint}", applier(job["kind"], items),
-                   source=f"{job['id']} {job['name']}: {source}")
+    if job["source_type"] in apps.APPS:
+        items = apps.items(job, raw, _mapping_of(job), bool(job["day_first"]))
+    else:
+        items = parse(job["kind"], job["format"], raw, bool(job["day_first"]), _mapping_of(job))
+    return receive(c, user, cid, job["kind"], f"{job['id']}:{fingerprint}",
+                   applier(job["kind"], items, apps.ADD_ONLY.get(job["kind"], frozenset()) if job["source_type"]
+                           in apps.APPS else frozenset()),
+                   source=f"{job['id']} {job['name']}: {source}", sample=sample(raw), dry_run=dry)
 
 
-def _failed(c: Companies, job: Any, source: str, why: str) -> MessageRow:
+def _mapping_of(job: dict) -> Mapping | None:
+    """The job's mapping; pages read from a web API are already the list of records (``items`` was followed)."""
+    m = _mapping(job)
+    if m is not None and job["source_type"] == "api":
+        m = m.model_copy(update={"items": ""})
+    return m
+
+
+def _failed(c: Companies, job: dict, source: str, why: str, dry: bool = False, raw: bytes = b"") -> MessageRow:
     return log(c, job["company_id"], job["run_as"], "in", job["kind"], "", "failed", f"could not read {source}: {why}",
-               None, [], source=f"{job['id']} {job['name']}: {source}")
+               None, [], source=f"{job['id']} {job['name']}: {source}", sample=sample(raw) if raw else "",
+               dry_run=dry)
+
+
+def since(url: str, cursor: str | None) -> str:
+    """The address with ``{since}`` as the time the last good run started (the first run: everything)."""
+    return url.replace(SINCE, quote(cursor or "1970-01-01T00:00:00+00:00", safe=""))
+
+
+def _numbered(url: str, param: str, n: int) -> str:
+    u = urlparse(url)
+    q = [(k, v) for k, v in parse_qsl(u.query, keep_blank_values=True) if k != param] + [(param, str(n))]
+    return urlunparse(u._replace(query=urlencode(q)))
+
+
+def read_api(job: dict) -> bytes:
+    """Every page of a web API's answer, as one JSON list of its records. The job's headers go only to its own
+    address's host (a next page elsewhere gets none); more pages than the job allows is a failure, not a part."""
+    headers = json.loads(job["headers"])
+    paging = Paging.model_validate_json(job["paging"]) if job["paging"] else None
+    m = _mapping(job)
+    url: str | None = since(job["source"], job["cursor"])
+    first = url
+    origin = _origin(url)
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    size = 0
+    for n in range(1, (paging.max_pages if paging else 1) + 1):
+        assert url is not None
+        seen.add(url)
+        sent = headers if _origin(url) == origin else {}
+        if paging is not None and paging.mode == "link":
+            answer = http("GET", url, sent, None)
+            status, raw = answer
+            if status >= 400:
+                raise ValueError(f"{url} answered {status}")
+        else:
+            raw = fetch(url, sent)
+        size += len(raw)
+        if size > MAX_BYTES:
+            raise ValueError(f"the pages are larger than {MAX_BYTES // (1024 * 1024)} MB together: read only what "
+                             "changed ({since} in the address)")
+        data = json.loads(raw.decode("utf-8-sig", errors="replace"))
+        got = json_items(data, m.items if m else "", job["kind"])
+        out += got
+        if paging is None:
+            return json.dumps(out).encode()
+        if paging.mode == "link":
+            nxt = link_next(answer)
+            url = urljoin(url, nxt) if nxt else None
+            if url in seen:
+                url = None
+        elif paging.mode == "next":
+            nxt = dig(data, paging.next)
+            url = urljoin(url, nxt) if isinstance(nxt, str) and nxt.strip() else None
+            if url in seen:
+                url = None
+        else:
+            more = dig(data, paging.next) if paging.next else bool(got)
+            url = _numbered(first, paging.param, n + 1) if got and more not in (None, False, 0, "", "false") else None
+        if url is None:
+            return json.dumps(out).encode()
+    raise ValueError(f"the answer has more than {paging.max_pages} pages: allow more pages, or read only what "
+                     "changed ({since} in the address)")
+
+
+def _read(job: dict) -> bytes:
+    if job["source_type"] in apps.APPS:
+        kept = json.loads(job["headers"])
+        own = apps.keeps_secrets(job["source_type"])
+        return apps.module(job["source_type"]).read(job, apps.settings_of(job), kept if own else {},
+                                                    {} if own else kept)
+    if job["source_type"] == "api":
+        return read_api(job)
+    return fetch(since(job["source"], job["cursor"]), json.loads(job["headers"]))
+
+
+def _runner(c: Companies, job: dict) -> User | None:
+    try:
+        runner = c._user(job["run_as"])
+        c._need(runner, job["company_id"], "owner", "planner", two_step=False)   # a schedule, not a sign-in
+        return runner
+    except CompanyError:
+        return None
+
+
+def _run(c: Companies, job: dict, runner: User, dry: bool = False) -> list[tuple[MessageRow, bytes]]:
+    """Read what the job names and apply it (``dry``: say what would become of it, move no file): each message
+    with what was read."""
+    cid = job["company_id"]
+    out: list[tuple[MessageRow, bytes]] = []
+    if job["kind"].startswith("send:"):
+        from .apps import send
+        return send.run(c, job, runner, dry)
+    if job["source_type"] in ("url", "api", *apps.APPS):
+        try:
+            raw = _read(job)
+        except Exception as e:  # noqa: BLE001 - the log says what went wrong
+            out.append((_failed(c, job, job["source"], str(e) or type(e).__name__, dry), b""))
+        else:
+            out.append((_message(c, runner, cid, job, raw, job["source"], dry), raw))
+        return out
+    folder = folder_of(cid)
+    files = sorted(p for p in folder.glob(job["source"]) if p.is_file()) if folder and folder.is_dir() else []
+    for p in files:
+        raw = b""
+        try:
+            raw = p.read_bytes()
+            row = _message(c, runner, cid, job, raw, p.name, dry)
+            dest = "failed" if row.status == "failed" else "done"
+        except Exception as e:  # noqa: BLE001
+            row, dest = _failed(c, job, p.name, str(e) or type(e).__name__, dry, raw), "failed"
+        out.append((row, raw))
+        if not dry:
+            (folder / dest).mkdir(exist_ok=True)
+            shutil.move(str(p), str(folder / dest / p.name))
+    return out
 
 
 def run_job(c: Companies, jid: str, user: User | None = None, now: dt.datetime | None = None) -> list[MessageRow]:
     """Run one job now (as its owner, or ``user`` when asked from the Connections page): what it read, logged."""
     now = now or dt.datetime.now(dt.UTC)
+    job = _saved(c, jid, user)
+    runner = _runner(c, job)
+    if runner is None:
+        out = [_failed(c, job, job["source"], f"{c._name(job['run_as'])}, who made it, may no longer change this "
+                                              "company: an owner should save the import again")]
+    else:
+        out = [row for row, _raw in _run(c, job, runner)]
+    last = out[-1] if out else None
+    good = bool(out) and all(r.status != "failed" for r in out)
+    with c.lock:
+        c.db.execute("UPDATE import_jobs SET last_run = ?, last_status = ?, last_summary = ?, next_run = ?, "
+                     "cursor = ? WHERE id = ?",
+                     (_iso(now), last.status if last else "nothing", last.summary if last else "no file to read",
+                      _iso(next_run(job["every"], job["at"], job["weekday"], now, company_timezone(c, job["company_id"])))
+                      if job["enabled"] else None, _iso(now) if good else job["cursor"], jid))
+    return out
+
+
+def _saved(c: Companies, jid: str, user: User | None) -> dict:
     with c.lock:
         _ensure(c)
         job = c.db.execute("SELECT * FROM import_jobs WHERE id = ? AND deleted = 0", (jid,)).fetchone()
@@ -655,54 +978,92 @@ def run_job(c: Companies, jid: str, user: User | None = None, now: dt.datetime |
             raise CompanyError(f"no import {jid}", 404)
         if user is not None:
             c._need(user, job["company_id"], "owner")
-    cid = job["company_id"]
-    out: list[MessageRow] = []
-    try:
-        runner = c._user(job["run_as"])
-        c._need(runner, cid, "owner", "planner")
-    except CompanyError:
-        out.append(_failed(c, job, job["source"], f"{c._name(job['run_as'])}, who made it, may no longer change this "
-                                                  "company: an owner should save the import again"))
-        runner = None
-    if runner is not None:
-        if job["source_type"] == "url":
-            try:
-                raw = fetch(job["source"], json.loads(job["headers"]))
-            except Exception as e:  # noqa: BLE001 - the log says what went wrong
-                out.append(_failed(c, job, job["source"], str(e) or type(e).__name__))
-            else:
-                out.append(_message(c, runner, cid, job, raw, job["source"]))
-        else:
-            folder = folder_of(cid)
-            files = sorted(p for p in folder.glob(job["source"]) if p.is_file()) if folder and folder.is_dir() else []
-            for p in files:
-                try:
-                    raw = p.read_bytes()
-                    row = _message(c, runner, cid, job, raw, p.name)
-                    dest = "failed" if row.status == "failed" else "done"
-                except Exception as e:  # noqa: BLE001
-                    row, dest = _failed(c, job, p.name, str(e) or type(e).__name__), "failed"
-                out.append(row)
-                (folder / dest).mkdir(exist_ok=True)
-                shutil.move(str(p), str(folder / dest / p.name))
-    last = out[-1] if out else None
-    with c.lock:
-        c.db.execute("UPDATE import_jobs SET last_run = ?, last_status = ?, last_summary = ?, next_run = ? WHERE id = ?",
-                     (_iso(now), last.status if last else "nothing", last.summary if last else "no file to read",
-                      _iso(next_run(job["every"], job["at"], job["weekday"], now, company_timezone(c, job["company_id"])))
-                      if job["enabled"] else None, jid))
-    return out
+        return dict(job)
 
 
-def _message(c: Companies, user: User, cid: str, job: Any, raw: bytes, source: str) -> MessageRow:
+def _message(c: Companies, user: User, cid: str, job: dict, raw: bytes, source: str, dry: bool = False) -> MessageRow:
     try:
-        return _apply(c, user, cid, job, raw, source).message
+        return _apply(c, user, cid, job, raw, source, dry).message
     except CompanyError as e:
-        return _failed(c, job, source, str(e))
+        return _failed(c, job, source, str(e), dry, raw)
     except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        return _failed(c, job, source, str(e))
+        return _failed(c, job, source, str(e), dry, raw)
     except (TypeError, AttributeError, KeyError) as e:     # a file of a shape nobody foresaw (CV-M01)
-        return _failed(c, job, source, f"the file cannot be read as {job['kind']}: {e}")
+        return _failed(c, job, source, f"the file cannot be read as {job['kind']}: {e}", dry, raw)
+
+
+# ------------------------------------------------------------------------------------------------ dry runs
+def _tried(job: dict, rows: list[tuple[MessageRow, bytes]]) -> Tried:
+    raw = next((r for _row, r in rows if r), b"")
+    cols: list[str] = []
+    shown: list[dict[str, Any]] = []
+    if raw and job["kind"].startswith("send:"):
+        pass
+    elif raw:
+        m = _mapping_of(job)
+        try:
+            if job["source_type"] in apps.APPS:
+                cols = apps.columns(job, raw)
+                got = apps.items(job, raw, m, bool(job["day_first"]))
+            else:
+                cols = columns(records(job["kind"], job["format"], raw, m), m.each if m else "")
+                got = parse(job["kind"], job["format"], raw, bool(job["day_first"]), m)
+            shown = [x if isinstance(x, dict) else {"value": x} for x in got[:10]]
+        except Exception:  # noqa: BLE001 - the message already says why it cannot be read
+            pass
+    return Tried(messages=[r for r, _raw in rows], columns=cols, rows=shown)
+
+
+def dry_run(c: Companies, user: User, cid: str, jid: str) -> Tried:
+    """What a saved import would do now: read and checked line by line, nothing saved or moved, its schedule and
+    what it read last as they were."""
+    job = _saved(c, jid, user)
+    if job["company_id"] != cid:
+        raise CompanyError(f"no import {jid} in this company", 404)
+    return _tried(job, _run(c, job, user, dry=True))
+
+
+class TryInput(Model):
+    job: JobInput
+    content: str | None = Field(None, max_length=5_000_000, description="A sample of the file or answer to try the "
+                                                                        "mapping on; none: read the source now")
+    id: str | None = Field(None, description="The saved import this changes: its headers and {since} are used")
+
+
+def try_job(c: Companies, user: User, cid: str, body: TryInput) -> Tried:
+    """An import tried before it is saved: on a sample pasted in, or on what its source gives now. Nothing is saved
+    or logged; only an owner may (it reads from outside)."""
+    j = body.job
+    with c.lock:
+        _ensure(c)
+        c._need(user, cid, "owner")
+    _check(c, cid, j)
+    with c.lock:
+        saved = None
+        if body.id:
+            saved = c.db.execute("SELECT * FROM import_jobs WHERE id = ? AND company_id = ? AND deleted = 0",
+                                 (body.id, cid)).fetchone()
+            if saved is None:
+                raise CompanyError(f"no import {body.id} in this company", 404)
+    same = _same(saved, j)
+    headers = _kept(saved, j)
+    if body.content is None or j.kind.startswith("send:"):
+        _check_app(j, headers)
+    mapping, paging, app = _extras(j)
+    job = {"id": body.id or "new", "company_id": cid, "name": j.name, "kind": j.kind, "source_type": j.source_type,
+           "source": j.source, "headers": json.dumps(headers), "format": j.format,
+           "day_first": int(j.day_first), "run_as": user.id, "mapping": mapping, "paging": paging, "app": app,
+           "cursor": saved["cursor"] if same and saved and saved["kind"] == j.kind else ""}
+    if body.content is None or j.kind.startswith("send:"):
+        return _tried(job, _run(c, job, user, dry=True))
+    raw = body.content.encode()
+    if j.source_type == "api":   # a sample of one page: its records are where the mapping says
+        try:
+            m = _mapping(job)
+            raw = json.dumps(json_items(json.loads(body.content), m.items if m else "", j.kind)).encode()
+        except (ValueError, json.JSONDecodeError) as e:
+            return Tried(messages=[_failed(c, job, "the sample", str(e), True, raw)])
+    return _tried(job, [(_message(c, user, cid, job, raw, "the sample", True), raw)])
 
 
 def due(c: Companies, now: dt.datetime) -> list[str]:

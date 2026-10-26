@@ -87,12 +87,21 @@ class Strategy(str, Enum):
     MTS_CONSUME = "MTS_CONSUME"  # SAP 40: orders consume forecast within the consumption window
     MTO = "MTO"                  # SAP 20: each sales order drives its own supply, forecast ignored
     ATO = "ATO"                  # SAP 50: forecast pre-plans components; final assembly on order
+    ASSEMBLY = "ASSEMBLY"        # SAP 70: forecast on an assembly; its parents' dependent requirements consume it
 
 
 class MrpType(str, Enum):
     DETERMINISTIC = "deterministic"   # SAP PD
     REORDER_POINT = "reorder_point"   # SAP VB
     NONE = "none"                     # SAP ND — projected, never replenished
+    DDMRP = "ddmrp"                   # SAP D1 — a DDMRP buffer: the net flow position decides the orders
+
+
+class PriceControl(str, Enum):
+    """How stock is valued in the books (S/4 price control, MBEW-VPRSV)."""
+
+    STANDARD = "standard"              # S: at the planned unit value; every price difference to price differences
+    MOVING_AVERAGE = "moving_average"  # V: receipts at what they cost; the price follows them and the invoices
 
 
 class ProcurementType(str, Enum):
@@ -119,6 +128,12 @@ class LotSizePolicy(str, Enum):
     EOQ = "EOQ"          # economic order quantity
     POQ = "POQ"          # periodic: cover the next N buckets (SAP WB/MB/PK)
     MIN_MAX = "MIN_MAX"  # replenish up to max stock (SAP HB)
+    PPB = "PPB"          # part-period balancing: periods while holding ≤ ordering cost (SAP WI)
+    LUC = "LUC"          # least unit cost: periods while the cost per unit falls (SAP SP)
+    GROFF = "GROFF"      # Groff's rule: a period joins while its holding cost is below the order cost saved (SAP GR)
+
+
+DYNAMIC_LOTS = frozenset({LotSizePolicy.PPB, LotSizePolicy.LUC, LotSizePolicy.GROFF})
 
 
 class SafetyStockMethod(str, Enum):

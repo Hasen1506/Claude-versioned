@@ -23,6 +23,9 @@ export interface NavGroup {
 
 const supply: NavPage = { id: "plan", label: "Supply plan", question: "What do we make, buy and move, and when?", run: "plan" };
 const promise: NavPage = { id: "promise", label: "Promise dates", question: "What can we promise each customer, and when?", run: "promise" };
+const actuals: NavPage = { id: "execution", label: "Stock & actuals", question: "What actually happened: goods received, used and shipped, and the stock on hand?", run: "actuals" };
+const buying: NavPage = { id: "buying", label: "Buying", question: "What should we order, from whom, and where are our orders?", run: "purchasing" };
+const money: NavPage = { id: "finance", label: "Money", question: "What does the plan cost and earn?", run: "finance" };
 const setup: NavPage = { id: "setup", label: "Guided setup", question: "What is my company made of, and what's still missing?" };
 
 // Nine places to go, one per job: plan, serve customers, buy, run the stock, see the results, set up. A job with
@@ -33,22 +36,35 @@ export const NAV: NavGroup[] = [
     { id: "demand", label: "Demand", question: "What will customers order?", run: "forecast" },
     { ...supply, label: "Supply", tabs: [
       supply,
-      { id: "inventory", label: "Buffers", question: "Where should safety stock sit, and how much?", run: "inventory", optional: true },
+      { id: "policy", label: "Inventory policy", question: "How is each product kept in stock: its class, its rule, its service target, the safety stock and reorder point that target needs, and the service it achieves?" },
+      { id: "inventory", label: "Buffer placement", question: "Where in the network should safety stock sit, and how much?", run: "inventory", optional: true },
       { id: "sop", label: "Capacity plan", question: "Can the plants and suppliers keep up, month by month?", run: "sop", optional: true },
       { id: "capacity", label: "Levelling", question: "Which machines are asked for too much day by day, and what would levelling move?", run: "plan", optional: true },
       { id: "schedule", label: "Shop floor", question: "In what order should each machine run its jobs?", run: "schedule", optional: true },
     ] },
+    { id: "cycle", label: "S&OP cycle", question: "Is this month's plan agreed: the data, the demand review, the supply review, pre-S&OP and the executive meeting, each signed off by its owner?" },
   ] },
   { label: "Run the business", items: [
     { ...promise, label: "Customer orders", tabs: [
       promise,
       { id: "selling", label: "Selling", question: "What do we ship and bill, and who owes us what?", run: "sales" },
     ] },
-    { id: "buying", label: "Buying", question: "What should we order, from whom, and where are our orders?", run: "purchasing" },
-    { id: "execution", label: "Stock & actuals", question: "What actually happened: goods received, used and shipped, and the stock on hand?", run: "actuals" },
+    { ...buying, tabs: [
+      buying,
+      { id: "outside", label: "Job work & drop-ship", question: "What do suppliers make or ship for us outside our walls, and what is at job workers?", optional: true },
+    ] },
+    { ...actuals, tabs: [
+      actuals,
+      { id: "warehouse", label: "Warehouse", question: "In which bin is each product, what goes where, and what do we pick?", optional: true },
+      { id: "transport", label: "Transport", question: "Which vehicle carries what, with which carrier, and what does it cost?", optional: true },
+    ] },
   ] },
   { label: "Results", items: [
-    { id: "finance", label: "Money", question: "What does the plan cost and earn?", run: "finance" },
+    { ...money, tabs: [
+      money,
+      { id: "accounts", label: "Accounts", question: "What do the books say: every posting, each account's balance, and the file for Tally?", optional: true },
+      { id: "group", label: "Group companies", question: "What do the group's companies sell each other, at what price, and what profit is still in stock between them?", optional: true },
+    ] },
     { id: "tower", label: "Performance", question: "Are we hitting our targets, and what needs following up?", run: "tower" },
   ] },
   { label: "Setup", items: [
@@ -70,5 +86,6 @@ export const PAGES: (NavPage & { parent: NavItem })[] = NAV.flatMap((g) => g.ite
 /** The rail item a route belongs to ("settings" is part of master data). */
 export function navItemFor(page: string): NavItem | undefined {
   if (page === "settings") page = "data";
+  if (page === "scan") page = "warehouse";
   return PAGES.find((p) => p.id === page)?.parent;
 }

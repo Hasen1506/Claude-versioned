@@ -3,6 +3,10 @@ audit trail of who changed what.
 
 * **Accounts.** An e-mail and a password (PBKDF2-SHA256, salted); signing in gives a session token, of which only
   the SHA-256 is stored. Sessions last 30 days from their last use.
+* **Two-step sign-in** (ENTERPRISE_PLAN 1.3, :mod:`scp.companies.twostep`). With it on, the password gives only a
+  five-minute ticket and the authenticator app's code (or a one-time recovery code) makes the session. An owner may
+  require it of a company's members. Changing the password, address or second step asks for the password (and code)
+  again. **The account's own data** (1.4): downloaded whole, or deleted after saying what happens to each company.
 * **Members.** Each company has members: an *owner* (changes the data and who may see it), a *planner* (changes the
   data) or a *viewer* (reads it). An owner can invite an e-mail that has no account yet; the invitation becomes a
   membership when that address signs up or signs in. A company always keeps at least one owner.
@@ -38,6 +42,7 @@ from ..versions.store import Store, get_store, sha
 from .guards import ReleaseRefused, check_releases, record_credit_releases
 from .merge import MergeReport, merge
 from .patch import PatchError, apply_patch, make_patch
+from . import twostep
 from .rights import MAX_CHANGE_ROWS, Stale, apply_held, field_changes, out_of_scope, split_master
 
 SCHEMA = """
@@ -107,6 +112,15 @@ CREATE TABLE IF NOT EXISTS email_checks (
   token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, email TEXT NOT NULL COLLATE NOCASE, expires_at TEXT NOT NULL,
   used INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS auth_failures (who TEXT NOT NULL, at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS auth_failures_who ON auth_failures (who, at);
+CREATE INDEX IF NOT EXISTS auth_failures_at ON auth_failures (at);
+CREATE TABLE IF NOT EXISTS recovery_codes (
+  user_id TEXT NOT NULL, code_hash TEXT NOT NULL, made_at TEXT NOT NULL, used_at TEXT, PRIMARY KEY (user_id, code_hash)
+);
+CREATE TABLE IF NOT EXISTS two_step_tickets (
+  token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0
+);
 """
 
 ROLES = ("owner", "planner", "viewer")
@@ -154,9 +168,14 @@ LABELS = {
     "cancelled_purchase_orders": "purchase order cancellations",
     "sales": "sales settings",
     "demand": "orders and forecasts", "receipts": "open orders", "history": "sales history", "events": "events",
-    "npi": "new products", "overrides": "forecast overrides", "stock_targets": "stock targets",
-    "changeovers": "changeovers", "allocations": "allocations", "confirmations": "promises", "movements": "goods movements",
-    "batches": "batches", "inventory_docs": "physical inventory documents",
+    "npi": "new products", "overrides": "forecast overrides", "family_overrides": "family overrides", "forecast_snapshots": "kept forecasts", "stock_targets": "stock targets", "budgets": "budgets",
+    "changeovers": "changeovers", "allocations": "allocations", "substitutions": "substitutions", "confirmations": "promises", "movements": "goods movements",
+    "batches": "batches", "inventory_docs": "physical inventory documents", "storage_types": "storage types",
+    "bins": "storage bins", "putaway_rules": "put-away rules", "warehouse_tasks": "warehouse tasks", "waves": "waves",
+    "carriers": "carriers", "freight_orders": "freight orders", "transport": "transport settings",
+    "third_party_orders": "third-party orders", "challans": "job-work challans", "job_work": "job-work settings",
+    "shipping_notices": "shipping notices", "entities": "companies of the group", "transfer_prices": "transfer prices",
+    "intercompany_invoices": "inter-company invoices",
     "closed_orders": "closed orders", "accuracy": "forecast accuracy", "rolled_weeks": "weeks moved forward",
     "calendars": "calendars", "settings": "company settings", "forecasting": "forecast settings",
     "inventory": "stock settings", "sop": "capacity plan settings", "scheduling": "shop floor settings",
@@ -180,6 +199,7 @@ class User(Out):
     email: str
     name: str
     verified: bool = False        # the account has shown it receives mail at this address (a link, or the sign-on)
+    two_step: bool = False        # signing in with a password also takes a code from an authenticator app
 
 
 class PendingInvite(Out):
@@ -196,6 +216,8 @@ class Session(Out):
     user: User
     expires_at: str
     csrf: str | None = None       # a browser's double-submit token (also in the scp_csrf cookie), roadmap D
+    second_step: str = ""         # the password was right; send this with the app's code to finish signing in (no
+    #                               token yet: ``token`` is empty and ``expires_at`` is when this ticket ends)
 
 
 class CompanyMeta(Out):
@@ -211,6 +233,8 @@ class CompanyMeta(Out):
     pending: int = 0              # changes waiting for approval
     places: list[str] = []        # the asker's rights are limited to these places (empty: all)
     families: list[str] = []      # … and these product groups (empty: all)
+    two_step: bool = False        # its members sign in with two steps (an owner requires it)
+    needs_two_step: bool = False  # … and this account has not turned it on yet: it cannot open the company until then
 
 
 class CompanyDoc(Out):
@@ -356,56 +380,95 @@ def summarise(before: dict | None, after: dict) -> tuple[str, list[ListChange]]:
     return "; ".join(parts), out
 
 
+class Failures:
+    """The sign-in failure counter (CV-M05, CV-H11), kept in the database so that every server process on it counts
+    the same tries (an address limited to ten wrong passwords is not given ten per process). Used under the lock."""
+
+    def __init__(self, db: Any) -> None:
+        self.db = db
+
+    def get(self, key: str, default: Any = None) -> list[dt.datetime]:
+        return [dt.datetime.fromisoformat(r["at"]) for r in
+                self.db.execute("SELECT at FROM auth_failures WHERE who = ? ORDER BY at", (key,))]
+
+    def put(self, key: str, times: list[dt.datetime]) -> None:
+        self.db.execute("DELETE FROM auth_failures WHERE who = ?", (key,))
+        self.db.executemany("INSERT INTO auth_failures (who, at) VALUES (?, ?)", [(key, _iso(t)) for t in times])
+        # every window is an hour at most: a day-old try counts for nothing
+        self.db.execute("DELETE FROM auth_failures WHERE at < ?", (_iso(_now() - dt.timedelta(days=1)),))
+
+    def pop(self, key: str, default: Any = None) -> None:
+        self.db.execute("DELETE FROM auth_failures WHERE who = ?", (key,))
+
+    def trim(self, most: int) -> None:
+        """Keep the ``most`` addresses tried last (the oldest go first)."""
+        over = len(self) - most
+        if over > 0:
+            self.db.execute("DELETE FROM auth_failures WHERE who IN (SELECT who FROM auth_failures GROUP BY who "
+                            "ORDER BY MAX(at), who LIMIT ?)", (over,))
+
+    def __contains__(self, key: object) -> bool:
+        return self.db.execute("SELECT 1 FROM auth_failures WHERE who = ? LIMIT 1", (key,)).fetchone() is not None
+
+    def __len__(self) -> int:
+        return self.db.execute("SELECT COUNT(DISTINCT who) FROM auth_failures").fetchone()[0]
+
+
 class Companies:
     def __init__(self, store: Store) -> None:
         self.store = store
         self.db = store.db
         self.lock = store.lock
-        self.db.executescript(SCHEMA)
-        cols = {r[1] for r in self.db.execute("PRAGMA table_info(company_revisions)")}
-        if "kind" not in cols:        # Phase L: deltas between whole copies, and the window each save came from
-            self.db.execute("ALTER TABLE company_revisions ADD COLUMN kind TEXT NOT NULL DEFAULT 'full'")
-        if "client" not in cols:
-            self.db.execute("ALTER TABLE company_revisions ADD COLUMN client TEXT NOT NULL DEFAULT ''")
-        for table in ("members", "invites"):  # Phase L: rights limited to places and product groups
-            have = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
-            for col in ("places", "families"):
-                if col not in have:
-                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT NOT NULL DEFAULT '[]'")
-        if "approval" not in {r[1] for r in self.db.execute("PRAGMA table_info(companies)")}:
-            self.db.execute("ALTER TABLE companies ADD COLUMN approval INTEGER NOT NULL DEFAULT 0")
-        ucols = {r[1] for r in self.db.execute("PRAGMA table_info(users)")}
-        if "sso_subject" not in ucols:
-            self.db.execute("ALTER TABLE users ADD COLUMN sso_subject TEXT")
-        if "kind" not in ucols:      # Phase Q: an account behind an integration key is not a person
-            self.db.execute("ALTER TABLE users ADD COLUMN kind TEXT NOT NULL DEFAULT 'person'")
-        if "verified_at" not in ucols:   # CV-C01: the address is shown to be the account holder's
-            self.db.execute("ALTER TABLE users ADD COLUMN verified_at TEXT")
-        icols = {r[1] for r in self.db.execute("PRAGMA table_info(invites)")}
-        if "token_hash" not in icols:    # CV-C01: an invitation is accepted with its link, never by e-mail match
-            self.db.execute("ALTER TABLE invites ADD COLUMN token_hash TEXT")
-        if "expires_at" not in icols:
-            self.db.execute("ALTER TABLE invites ADD COLUMN expires_at TEXT")
-        if "generation" not in {r[1] for r in self.db.execute("PRAGMA table_info(erp_withdrawn)")}:
-            self.db.execute("ALTER TABLE erp_withdrawn ADD COLUMN generation TEXT NOT NULL DEFAULT ''")
-        self.failures: dict[str, list[dt.datetime]] = {}
+        with self.lock:      # one server process at a time adds what an older database lacks (scp.dblock)
+            self.db.executescript(SCHEMA)
+            cols = {r[1] for r in self.db.execute("PRAGMA table_info(company_revisions)")}
+            if "kind" not in cols:        # Phase L: deltas between whole copies, and the window each save came from
+                self.db.execute("ALTER TABLE company_revisions ADD COLUMN kind TEXT NOT NULL DEFAULT 'full'")
+            if "client" not in cols:
+                self.db.execute("ALTER TABLE company_revisions ADD COLUMN client TEXT NOT NULL DEFAULT ''")
+            for table in ("members", "invites"):  # Phase L: rights limited to places and product groups
+                have = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
+                for col in ("places", "families"):
+                    if col not in have:
+                        self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT NOT NULL DEFAULT '[]'")
+            ccols = {r[1] for r in self.db.execute("PRAGMA table_info(companies)")}
+            if "approval" not in ccols:
+                self.db.execute("ALTER TABLE companies ADD COLUMN approval INTEGER NOT NULL DEFAULT 0")
+            if "two_step" not in ccols:      # ENTERPRISE_PLAN 1.3: its members sign in with a second step
+                self.db.execute("ALTER TABLE companies ADD COLUMN two_step INTEGER NOT NULL DEFAULT 0")
+            ucols = {r[1] for r in self.db.execute("PRAGMA table_info(users)")}
+            if "sso_subject" not in ucols:
+                self.db.execute("ALTER TABLE users ADD COLUMN sso_subject TEXT")
+            if "kind" not in ucols:      # Phase Q: an account behind an integration key is not a person
+                self.db.execute("ALTER TABLE users ADD COLUMN kind TEXT NOT NULL DEFAULT 'person'")
+            if "verified_at" not in ucols:   # CV-C01: the address is shown to be the account holder's
+                self.db.execute("ALTER TABLE users ADD COLUMN verified_at TEXT")
+            for col, kind in (("totp_secret", "TEXT"), ("totp_pending", "TEXT"),     # ENTERPRISE_PLAN 1.3:
+                              ("totp_step", "INTEGER NOT NULL DEFAULT -1")):           # two-step sign-in
+                if col not in ucols:
+                    self.db.execute(f"ALTER TABLE users ADD COLUMN {col} {kind}")
+            icols = {r[1] for r in self.db.execute("PRAGMA table_info(invites)")}
+            if "token_hash" not in icols:    # CV-C01: an invitation is accepted with its link, never by e-mail match
+                self.db.execute("ALTER TABLE invites ADD COLUMN token_hash TEXT")
+            if "expires_at" not in icols:
+                self.db.execute("ALTER TABLE invites ADD COLUMN expires_at TEXT")
+            if "generation" not in {r[1] for r in self.db.execute("PRAGMA table_info(erp_withdrawn)")}:
+                self.db.execute("ALTER TABLE erp_withdrawn ADD COLUMN generation TEXT NOT NULL DEFAULT ''")
+        self.failures = Failures(self.db)
 
     # ---- accounts ------------------------------------------------------------------------------------------
     def _user(self, uid: str) -> User:
-        r = self.db.execute("SELECT id, email, name, verified_at FROM users WHERE id = ?", (uid,)).fetchone()
+        r = self.db.execute("SELECT id, email, name, verified_at, totp_secret FROM users WHERE id = ?", (uid,)).fetchone()
         if r is None:
             raise CompanyError("that account no longer exists", 401)
-        return User(id=r["id"], email=r["email"], name=r["name"], verified=bool(r["verified_at"]))
+        return User(id=r["id"], email=r["email"], name=r["name"], verified=bool(r["verified_at"]),
+                    two_step=bool(r["totp_secret"]))
 
     def _fail(self, key: str, recent: list[dt.datetime]) -> None:
-        """Remember failures (only real ones) for ``key``, keeping the map bounded (CV-M05; the lock is held)."""
+        """Remember failures (only real ones) for ``key``, keeping the counter bounded (CV-M05; the lock is held)."""
+        self.failures.put(key, recent)
         if recent:
-            self.failures.pop(key, None)
-            self.failures[key] = recent
-            while len(self.failures) > FAILURE_KEYS:
-                self.failures.pop(next(iter(self.failures)))
-        else:
-            self.failures.pop(key, None)
+            self.failures.trim(FAILURE_KEYS)
 
     def auth_rate(self, key: str, per_minute: int) -> bool:
         """Whether one more sign-in, sign-up or reset from ``key`` (a client address) fits ``per_minute`` (CV-H11)."""
@@ -486,10 +549,12 @@ class Companies:
                 recent = [t for t in self.failures.get(email, []) if now - t < dt.timedelta(minutes=15)]
                 self._fail(email, [*recent, now])
                 raise CompanyError("the e-mail or the password is not right", 401)
-            cur = self.db.execute("SELECT pw_hash FROM users WHERE id = ?", (r["id"],)).fetchone()
+            cur = self.db.execute("SELECT pw_hash, totp_secret FROM users WHERE id = ?", (r["id"],)).fetchone()
             if cur is None or cur["pw_hash"] != r["pw_hash"]:      # the password changed meanwhile
                 raise CompanyError("the e-mail or the password is not right", 401)
             self.failures.pop(email, None)
+            if cur["totp_secret"]:          # 1.3: no session until the app's code is given too
+                return self._ticket(r["id"])
             return self._session(r["id"])
 
     def _session(self, uid: str) -> Session:
@@ -724,17 +789,225 @@ class Companies:
             self.db.execute("ROLLBACK")
             raise
 
-    def change_password(self, user: User, old: str, new: str, keep_token: str | None = None) -> None:
+    def change_password(self, user: User, old: str, new: str, keep_token: str | None = None, code: str = "") -> None:
         from . import passwords
         passwords.check(new, user.email)
-        with self.lock:
-            r = self.db.execute("SELECT * FROM users WHERE id = ?", (user.id,)).fetchone()
-        if not hmac.compare_digest(_hash_pw(old, r["pw_salt"]), r["pw_hash"]):
-            raise CompanyError("the current password is not right", 403)
+        self._again(user, old, code, what="the current password")
         salt = secrets.token_hex(16)
         pw_hash = _hash_pw(new, salt)
         with self.lock:
             self._set_password(user.id, new, keep_token, salt=salt, pw_hash=pw_hash)
+
+    def change_email(self, user: User, password: str, new: str, keep_token: str | None = None, code: str = "") -> User:
+        """Move the account to another address, after its password (and the app's code) again (1.3). The new address
+        is not confirmed until a link mailed there is opened; other sessions and open links are ended."""
+        new = new.strip()
+        if not EMAIL.match(new):
+            raise CompanyError("that does not look like an e-mail address", 422)
+        if new.lower() == user.email.lower():
+            raise CompanyError("that is the address the account has already", 422)
+        self._again(user, password, code)
+        with self.lock:
+            if self.db.execute("SELECT 1 FROM users WHERE email = ? AND id != ?", (new, user.id)).fetchone():
+                raise CompanyError("another account has that address", 409)
+            self.db.execute("BEGIN")
+            try:
+                self.db.execute("UPDATE users SET email = ?, verified_at = NULL WHERE id = ?", (new, user.id))
+                self.db.execute("UPDATE password_resets SET used = 1 WHERE user_id = ?", (user.id,))
+                self.db.execute("UPDATE email_checks SET used = 1 WHERE user_id = ?", (user.id,))
+                self.db.execute("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+                                (user.id, _token_hash(keep_token) if keep_token else ""))
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+            self.failures.pop(user.email.lower(), None)
+            return self._user(user.id)
+
+    # ---- two-step sign-in (ENTERPRISE_PLAN 1.3) ---------------------------------------------------------------
+    def _again(self, user: User, password: str, code: str = "", what: str = "the password") -> None:
+        """Ask a signed-in person for their password once more (and the app's code, when two-step is on) before a
+        change to how the account signs in: a session left open on a shared computer is not enough."""
+        if self.is_key(user):
+            raise CompanyError("a key cannot change an account's sign-in", 403)
+        with self.lock:
+            r = self.db.execute("SELECT pw_salt, pw_hash, totp_secret FROM users WHERE id = ?", (user.id,)).fetchone()
+        if r is None:
+            raise CompanyError("that account no longer exists", 401)
+        if not r["pw_hash"]:
+            raise CompanyError("this account signs in with the company's single sign-on, which keeps its own "
+                               "password and second step", 403)
+        key = "again:" + user.id
+        now = _now()
+        with self.lock:
+            recent = [t for t in self.failures.get(key, []) if now - t < dt.timedelta(minutes=15)]
+            if len(recent) >= 10:
+                raise CompanyError("too many wrong tries; try again in 15 minutes", 429)
+        if not hmac.compare_digest(_hash_pw(password, r["pw_salt"]), r["pw_hash"]):
+            with self.lock:
+                self._fail(key, [*recent, now])
+            raise CompanyError(f"{what} is not right", 403)
+        if r["totp_secret"]:
+            self._second(user.id, code)
+
+    def _second(self, uid: str, code: str) -> str:
+        """Take the app's code (or a recovery code) for ``uid``: ``app`` or ``recovery``; else refuse. Five wrong codes
+        in 15 minutes stop the account's codes for the rest of that time."""
+        if not code.strip():
+            raise CompanyError("enter the six-digit code from your authenticator app (or a recovery code)", 401,
+                               {"two_step": True})
+        key = "2step:" + uid
+        now = _now()
+        with self.lock:
+            recent = [t for t in self.failures.get(key, []) if now - t < dt.timedelta(minutes=15)]
+            if len(recent) >= 5:
+                raise CompanyError("too many wrong codes; try again in 15 minutes", 429, {"two_step": True})
+            r = self.db.execute("SELECT totp_secret, totp_step FROM users WHERE id = ?", (uid,)).fetchone()
+            if r is None or not r["totp_secret"]:
+                raise CompanyError("two-step sign-in is not on for this account", 409)
+            step = twostep.check(r["totp_secret"], code, after=r["totp_step"])
+            if step is not None:
+                self.db.execute("UPDATE users SET totp_step = ? WHERE id = ?", (step, uid))
+                self.failures.pop(key, None)
+                return "app"
+            used = self.db.execute("UPDATE recovery_codes SET used_at = ? WHERE user_id = ? AND code_hash = ? "
+                                   "AND used_at IS NULL", (_iso(now), uid, twostep.recovery_hash(code))).rowcount
+            if used == 1:
+                self.failures.pop(key, None)
+                return "recovery"
+            self._fail(key, [*recent, now])
+        raise CompanyError("that code is not right (or was used already): use the one your app shows now", 401,
+                           {"two_step": True})
+
+    def _ticket(self, uid: str, minutes: int = 5) -> Session:
+        """The password was right and the account takes a second step: a short-lived ticket for it (the lock is
+        held)."""
+        ticket = secrets.token_urlsafe(32)
+        now = _now()
+        self.db.execute("DELETE FROM two_step_tickets WHERE expires_at < ?", (_iso(now),))
+        exp = now + dt.timedelta(minutes=minutes)
+        self.db.execute("INSERT INTO two_step_tickets (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                        (_token_hash(ticket), uid, _iso(exp)))
+        return Session(token="", user=self._user(uid), expires_at=_iso(exp), second_step=ticket)
+
+    def signin_second(self, ticket: str, code: str) -> Session:
+        """The second step of signing in: the ticket the password gave and the app's code (or a recovery code)."""
+        with self.lock:
+            r = self.db.execute("SELECT * FROM two_step_tickets WHERE token_hash = ?", (_token_hash(ticket),)).fetchone()
+            if r is None or dt.datetime.fromisoformat(r["expires_at"]) <= _now() or r["tries"] >= 5:
+                raise CompanyError("this sign-in took too long or had too many wrong codes: sign in again", 401)
+            self.db.execute("UPDATE two_step_tickets SET tries = tries + 1 WHERE token_hash = ?", (r["token_hash"],))
+        self._second(r["user_id"], code)
+        with self.lock:
+            gone = self.db.execute("DELETE FROM two_step_tickets WHERE token_hash = ?", (r["token_hash"],)).rowcount
+            if gone != 1:                     # used by another request meanwhile: once only
+                raise CompanyError("this sign-in was finished already: sign in again", 401)
+            return self._session(r["user_id"])
+
+    def two_step_begin(self, user: User, password: str) -> tuple[str, str]:
+        """Start turning two-step sign-in on: a new key for the authenticator app (and its ``otpauth://`` link). It
+        takes effect only once a code from the app is given back (:meth:`two_step_enable`)."""
+        self._again(user, password)
+        with self.lock:
+            on = self.db.execute("SELECT totp_secret FROM users WHERE id = ?", (user.id,)).fetchone()["totp_secret"]
+            if on:
+                raise CompanyError("two-step sign-in is on already; turn it off first to move it to another app", 409)
+            secret = twostep.new_secret()
+            self.db.execute("UPDATE users SET totp_pending = ? WHERE id = ?", (secret, user.id))
+        issuer = os.environ.get("SCP_TWO_STEP_ISSUER", "").strip() or "SCP"
+        return secret, twostep.uri(secret, user.email, issuer)
+
+    def two_step_enable(self, user: User, code: str, keep_token: str | None = None) -> list[str]:
+        """Turn two-step sign-in on with a code from the app just set up. Answers the recovery codes (shown once, kept
+        only as hashes); every other session of the account is signed out."""
+        with self.lock:
+            r = self.db.execute("SELECT totp_pending, totp_secret FROM users WHERE id = ?", (user.id,)).fetchone()
+            if r["totp_secret"]:
+                raise CompanyError("two-step sign-in is on already", 409)
+            if not r["totp_pending"]:
+                raise CompanyError("begin again: ask for a key for your app first", 409)
+            step = twostep.check(r["totp_pending"], code)
+            if step is None:
+                raise CompanyError("that code is not right: check the app shows this account, and the phone's clock",
+                                   422)
+            codes = twostep.recovery_codes()
+            now = _iso(_now())
+            self.db.execute("BEGIN")
+            try:
+                self.db.execute("UPDATE users SET totp_secret = totp_pending, totp_pending = NULL, totp_step = ? "
+                                "WHERE id = ?", (step, user.id))
+                self.db.execute("DELETE FROM recovery_codes WHERE user_id = ?", (user.id,))
+                for c in codes:
+                    self.db.execute("INSERT INTO recovery_codes (user_id, code_hash, made_at) VALUES (?, ?, ?)",
+                                    (user.id, twostep.recovery_hash(c), now))
+                self.db.execute("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+                                (user.id, _token_hash(keep_token) if keep_token else ""))
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+            return codes
+
+    def two_step_disable(self, user: User, password: str, code: str) -> None:
+        """Turn two-step sign-in off (password and a code again): not while a company of the account requires it."""
+        with self.lock:
+            need = self.db.execute("SELECT c.name FROM companies c JOIN members m ON m.company_id = c.id "
+                                   "WHERE m.user_id = ? AND c.two_step = 1 AND c.deleted = 0 ORDER BY c.name",
+                                   (user.id,)).fetchall()
+        if need:
+            raise CompanyError(f"{', '.join(r['name'] for r in need)} require{'s' if len(need) == 1 else ''} two-step "
+                               "sign-in of its members: it stays on (an owner there can stop requiring it)", 409)
+        self._again(user, password, code)
+        with self.lock:
+            self.db.execute("UPDATE users SET totp_secret = NULL, totp_pending = NULL, totp_step = -1 WHERE id = ?",
+                            (user.id,))
+            self.db.execute("DELETE FROM recovery_codes WHERE user_id = ?", (user.id,))
+
+    def recovery_left(self, user: User) -> int:
+        with self.lock:
+            return self.db.execute("SELECT COUNT(*) FROM recovery_codes WHERE user_id = ? AND used_at IS NULL",
+                                   (user.id,)).fetchone()[0]
+
+    def new_recovery_codes(self, user: User, password: str, code: str) -> list[str]:
+        """A new set of recovery codes (the old ones stop working)."""
+        self._again(user, password, code)
+        codes = twostep.recovery_codes()
+        now = _iso(_now())
+        with self.lock:
+            self.db.execute("BEGIN")
+            try:
+                self.db.execute("DELETE FROM recovery_codes WHERE user_id = ?", (user.id,))
+                for c in codes:
+                    self.db.execute("INSERT INTO recovery_codes (user_id, code_hash, made_at) VALUES (?, ?, ?)",
+                                    (user.id, twostep.recovery_hash(c), now))
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+        return codes
+
+    def _lacks_two_step(self, uid: str) -> bool:
+        """An account that signs in with a password but has not turned two-step on (one that signs in only through
+        the company's sign-on, or a key, is the sign-on's or the key's matter)."""
+        r = self.db.execute("SELECT pw_hash, totp_secret, kind FROM users WHERE id = ?", (uid,)).fetchone()
+        return r is not None and r["kind"] == "person" and bool(r["pw_hash"]) and not r["totp_secret"]
+
+    def set_two_step(self, user: User, cid: str, on: bool) -> CompanyMeta:
+        """An owner requires (or stops requiring) two-step sign-in of every member: a member without it cannot open the
+        company until they turn it on. The owner turns it on for themselves first."""
+        with self.lock:
+            self._need(user, cid, "owner")
+            if on and self._lacks_two_step(user.id):
+                raise CompanyError("turn on two-step sign-in for your own account first (Account → Two-step "
+                                   "sign-in), so requiring it does not shut you out", 409)
+            self.db.execute("UPDATE companies SET two_step = ? WHERE id = ?", (1 if on else 0, cid))
+            lacking = [self._name(r["user_id"]) for r in self.db.execute(
+                "SELECT user_id FROM members WHERE company_id = ? ORDER BY added_at", (cid,)) if self._lacks_two_step(r["user_id"])]
+            self._log(cid, None, user.id, "member",
+                      ("two-step sign-in is required of every member" + (
+                          f"; not on yet for {', '.join(lacking)}" if lacking else "")) if on
+                      else "two-step sign-in is no longer required")
+            return self._meta(cid, "owner", user.id)
 
     # ---- a forgotten password and single sign-on (Phase L) ---------------------------------------------------
     def reset_token(self, email: str, made_by: str | None = None, hours: float = 1) -> str | None:
@@ -794,7 +1067,7 @@ class Companies:
             self._log(cid, None, user.id, "member", f"a link to set a new password was made for {self._name(r['id'])}")
             return token or "", _iso(_now() + dt.timedelta(hours=hours))
 
-    def reset_password(self, token: str, new: str) -> Session:
+    def reset_password(self, token: str, new: str, code: str = "") -> Session:
         from . import passwords
         with self.lock:
             r = self.db.execute("SELECT u.email FROM password_resets p JOIN users u ON u.id = p.user_id "
@@ -806,9 +1079,16 @@ class Companies:
             r = self.db.execute("SELECT * FROM password_resets WHERE token_hash = ?", (_token_hash(token),)).fetchone()
             if r is None or r["used"] or dt.datetime.fromisoformat(r["expires_at"]) <= _now():
                 raise CompanyError("this link has expired or was used already: ask for a new one", 410)
-            account = self.db.execute("SELECT pw_hash, kind FROM users WHERE id = ?", (r["user_id"],)).fetchone()
+            account = self.db.execute("SELECT pw_hash, kind, totp_secret FROM users WHERE id = ?",
+                                      (r["user_id"],)).fetchone()
             if account is None or not account["pw_hash"] or account["kind"] != "person":
                 raise CompanyError("this account's credentials are managed by its sign-on service", 410)
+        if account["totp_secret"]:   # 1.3: a link alone (someone else reading the mail) does not take the account
+            self._second(r["user_id"], code)
+        with self.lock:
+            r = self.db.execute("SELECT * FROM password_resets WHERE token_hash = ?", (_token_hash(token),)).fetchone()
+            if r is None or r["used"] or dt.datetime.fromisoformat(r["expires_at"]) <= _now():
+                raise CompanyError("this link has expired or was used already: ask for a new one", 410)
             self._set_password(r["user_id"], new, salt=salt, pw_hash=pw_hash)
             if not r["made_by"]:     # a link the server mailed to the address: whoever opened it receives its mail
                 self.db.execute("UPDATE users SET verified_at = COALESCE(verified_at, ?) WHERE id = ?",
@@ -863,7 +1143,9 @@ class Companies:
             return r["verifier"], r["nonce"], r["next"]
 
     # ---- companies -----------------------------------------------------------------------------------------
-    def role(self, user: User, cid: str) -> str:
+    def role(self, user: User, cid: str, two_step: bool = True) -> str:
+        """The account's role in the company (refused when it is not a member; and, with ``two_step``, when the
+        company requires two-step sign-in and the account has not turned it on)."""
         with self.lock:
             key = None
             if self.is_key(user):
@@ -871,14 +1153,17 @@ class Companies:
                                       (user.id,)).fetchone()
                 if key is None or key["company_id"] != cid:
                     raise CompanyError(f"no company {cid} of yours", 404)
-            r = self.db.execute("SELECT m.role FROM members m JOIN companies c ON c.id = m.company_id "
+            r = self.db.execute("SELECT m.role, c.name, c.two_step FROM members m JOIN companies c ON c.id = m.company_id "
                                 "WHERE m.company_id = ? AND m.user_id = ? AND c.deleted = 0", (cid, user.id)).fetchone()
             if r is None:
                 raise CompanyError(f"no company {cid} of yours", 404)
+            if two_step and key is None and r["two_step"] and self._lacks_two_step(user.id):
+                raise CompanyError(f"{r['name']} requires two-step sign-in: turn it on for your account (Account → "
+                                   "Two-step sign-in), then open the company again", 403, {"two_step_required": True})
             return key["role"] if key is not None else r["role"]
 
-    def _need(self, user: User, cid: str, *roles: str) -> str:
-        role = self.role(user, cid)
+    def _need(self, user: User, cid: str, *roles: str, two_step: bool = True) -> str:
+        role = self.role(user, cid, two_step=two_step)
         if roles and role not in roles:
             what = "change its data" if roles == CAN_EDIT else "manage its members" if roles == ("owner",) else "do that"
             raise CompanyError(f"as a {role} of this company you cannot {what}; ask an owner", 403)
@@ -890,14 +1175,16 @@ class Companies:
         return (json.loads(r["places"]), json.loads(r["families"])) if r else ([], [])
 
     def _meta(self, cid: str, role: str, uid: str | None = None) -> CompanyMeta:
-        r = self.db.execute("SELECT id, name, revision, updated_at, updated_by, created_at, size, approval FROM companies "
-                            "WHERE id = ?", (cid,)).fetchone()
+        r = self.db.execute("SELECT id, name, revision, updated_at, updated_by, created_at, size, approval, two_step "
+                            "FROM companies WHERE id = ?", (cid,)).fetchone()
         pending = self.db.execute("SELECT COUNT(*) FROM change_requests WHERE company_id = ? AND status = 'pending'",
                                   (cid,)).fetchone()[0]
         places, families = self._limits(uid, cid) if uid else ([], [])
         return CompanyMeta(id=r["id"], name=r["name"], role=role, revision=r["revision"], updated_at=r["updated_at"],
                            updated_by=self._name(r["updated_by"]), created_at=r["created_at"], size=r["size"],
-                           approval=bool(r["approval"]), pending=pending, places=places, families=families)
+                           approval=bool(r["approval"]), pending=pending, places=places, families=families,
+                           two_step=bool(r["two_step"]),
+                           needs_two_step=bool(r["two_step"]) and bool(uid) and self._lacks_two_step(uid or ""))
 
     def list(self, user: User) -> list[CompanyMeta]:
         with self.lock:
@@ -907,7 +1194,7 @@ class Companies:
             if self.is_key(user):
                 cid = self.key_company(user)
                 rows = [r for r in rows if r["id"] == cid]
-            return [self._meta(r["id"], self.role(user, r["id"]), user.id) for r in rows]
+            return [self._meta(r["id"], self.role(user, r["id"], two_step=False), user.id) for r in rows]
 
     def create(self, user: User, doc: dict, note: str = "") -> CompanyMeta:
         with self.lock:
@@ -1026,9 +1313,16 @@ class Companies:
             rev = r["revision"] + 1
             self.db.execute("BEGIN")
             try:
-                self.db.execute("UPDATE companies SET name = ?, updated_at = ?, updated_by = ?, revision = ?, sha256 = ?, "
-                                "size = ?, dataset = ? WHERE id = ?",
-                                (_company_name(doc), now, user.id, rev, sha(text), len(text.encode()), text, cid))
+                # compare-and-swap: the row moves on only from the revision this save was checked against, whatever
+                # another server process did meanwhile (the lock across processes makes it the rule, this the proof)
+                moved = self.db.execute("UPDATE companies SET name = ?, updated_at = ?, updated_by = ?, revision = ?, "
+                                        "sha256 = ?, size = ?, dataset = ? WHERE id = ? AND revision = ?",
+                                        (_company_name(doc), now, user.id, rev, sha(text), len(text.encode()), text,
+                                         cid, r["revision"])).rowcount
+                if moved != 1:
+                    raise CompanyError(f"this company was saved by someone else while yours was checked (revision "
+                                       f"{r['revision']} is no longer the latest); open it again", 409,
+                                       {"revision": r["revision"]})
                 self._keep(cid, rev, user.id, action, text, now, current, doc, client)
                 self._log(cid, rev, user.id, action, (note + ": " if note else "") + (summary or "no change"), changes)
                 self._document(cid, rev, user.id, now, current, doc)
@@ -1447,6 +1741,137 @@ class Companies:
             else:
                 raise CompanyError(f"{email} is not a member of this company", 404)
             return self.members(user, cid)
+
+    # ---- the account's own data: download it, delete it (ENTERPRISE_PLAN 1.4) --------------------------------
+    def _confirm(self, user: User, password: str, code: str, confirm: str) -> None:
+        """The password (and code) again; an account that signs in only through single sign-on types its address."""
+        with self.lock:
+            r = self.db.execute("SELECT pw_hash, kind FROM users WHERE id = ?", (user.id,)).fetchone()
+        if r is None or r["kind"] != "person":
+            raise CompanyError("only a person's account can do this", 403)
+        if r["pw_hash"]:
+            self._again(user, password, code)
+        elif confirm.strip().lower() != user.email.lower():
+            raise CompanyError(f"type your address ({user.email}) to confirm", 403)
+
+    def export_account(self, user: User, password: str = "", code: str = "", confirm: str = "") -> dict:
+        """Everything this account holds, as one JSON document: the account, each company it belongs to (its data as
+        last saved, its members, its history, its plan versions), and what the account did there."""
+        self._confirm(user, password, code, confirm)
+        with self.lock:
+            u = self.db.execute("SELECT * FROM users WHERE id = ?", (user.id,)).fetchone()
+            out: dict[str, Any] = {
+                "exported_at": _iso(_now()),
+                "account": {"id": u["id"], "email": u["email"], "name": u["name"], "created_at": u["created_at"],
+                            "last_seen": u["last_seen"], "address_confirmed": bool(u["verified_at"]),
+                            "two_step_sign_in": bool(u["totp_secret"]), "single_sign_on": bool(u["sso_subject"]),
+                            "password": bool(u["pw_hash"])},
+                "companies": [], "invitations_waiting": [], "keys_made": [],
+            }
+            rows = self.db.execute("SELECT c.id, m.role, m.added_at FROM companies c JOIN members m ON m.company_id = c.id "
+                                   "WHERE m.user_id = ? AND c.deleted = 0 ORDER BY c.name, c.id", (user.id,)).fetchall()
+            for r in rows:
+                cid = r["id"]
+                meta = self._meta(cid, r["role"], user.id)
+                one: dict[str, Any] = {"id": cid, "name": meta.name, "role": r["role"], "member_since": r["added_at"],
+                                       "revision": meta.revision, "saved_at": meta.updated_at,
+                                       "limited_to": {"places": meta.places, "product_groups": meta.families}}
+                if meta.needs_two_step:
+                    one["withheld"] = ("this company requires two-step sign-in: turn it on for your account to include "
+                                       "its data")
+                else:
+                    one["dataset"] = json.loads(self.db.execute("SELECT dataset FROM companies WHERE id = ?",
+                                                                (cid,)).fetchone()["dataset"])
+                    one["members"] = [m.model_dump(exclude={"invite_link"}) for m in self.members(user, cid)]
+                    one["history"] = [x.model_dump() for x in self.history(user, cid, limit=100_000)]
+                    one["plan_versions"] = [{"id": v.id, "name": v.name, "kind": v.kind, "created_at": v.created_at}
+                                            for v in self.store.list(cid)]
+                one["your_actions"] = [{"at": x["at"], "revision": x["revision"], "action": x["action"],
+                                        "summary": x["summary"]} for x in self.db.execute(
+                    "SELECT at, revision, action, summary FROM company_log WHERE company_id = ? AND user_id = ? "
+                    "ORDER BY seq", (cid, user.id))]
+                out["companies"].append(one)
+            out["invitations_waiting"] = [{"company": x["name"], "role": x["role"], "at": x["at"]} for x in self.db.execute(
+                "SELECT c.name, i.role, i.at FROM invites i JOIN companies c ON c.id = i.company_id "
+                "WHERE i.email = ? AND c.deleted = 0", (user.email,))]
+            out["keys_made"] = [{"id": k["id"], "company": k["company_id"], "name": k["name"], "role": k["role"],
+                                 "created_at": k["created_at"], "withdrawn_at": k["revoked_at"]}
+                                for k in self.db.execute("SELECT * FROM api_keys WHERE created_by = ? ORDER BY created_at",
+                                                         (user.id,))]
+            return out
+
+    def deletion_plan(self, user: User) -> dict:
+        """What deleting this account would do, said before it is done: companies it alone owns (each handed to
+        another member or deleted, the account holder's choice), companies it owns with others, memberships it leaves."""
+        with self.lock:
+            rows = self.db.execute("SELECT c.id, c.name, m.role FROM companies c JOIN members m ON m.company_id = c.id "
+                                   "WHERE m.user_id = ? AND c.deleted = 0 ORDER BY c.name, c.id", (user.id,)).fetchall()
+            alone, shared, member = [], [], []
+            for r in rows:
+                if r["role"] == "owner" and self._owners(r["id"]) == 1:
+                    others = [{"email": o["email"], "name": o["name"], "role": o["role"]} for o in self.db.execute(
+                        "SELECT u.email, u.name, m.role FROM members m JOIN users u ON u.id = m.user_id "
+                        "WHERE m.company_id = ? AND m.user_id != ? AND u.kind = 'person' ORDER BY m.added_at",
+                        (r["id"], user.id))]
+                    alone.append({"id": r["id"], "name": r["name"], "members": others})
+                elif r["role"] == "owner":
+                    shared.append({"id": r["id"], "name": r["name"]})
+                else:
+                    member.append({"id": r["id"], "name": r["name"], "role": r["role"]})
+            return {"alone": alone, "shared": shared, "member": member}
+
+    def delete_account(self, user: User, choices: dict[str, str], password: str = "", code: str = "",
+                       confirm: str = "") -> dict:
+        """Delete the account. Each company it alone owns is handed to another member (``choices[cid]`` = their
+        address; they become an owner) or deleted (``"delete"``); every membership ends. The account's sign-in, address
+        and name are erased; the companies' histories keep its id under "Deleted account" (what was done stays
+        accountable). Answers what was done."""
+        self._confirm(user, password, code, confirm)
+        with self.lock:
+            plan = self.deletion_plan(user)
+            missing = [c["name"] for c in plan["alone"] if not choices.get(c["id"])]
+            if missing:
+                raise CompanyError(f"you are the only owner of {', '.join(missing)}: hand each to another member or "
+                                   "delete it first", 409, {"plan": plan})
+            done: list[str] = []
+            uid, name, now = user.id, self._name(user.id), _iso(_now())
+            self.db.execute("BEGIN")
+            try:
+                for c in plan["alone"]:
+                    choice = choices[c["id"]].strip()
+                    if choice == "delete":
+                        self.db.execute("UPDATE companies SET deleted = 1 WHERE id = ?", (c["id"],))
+                        self._log(c["id"], None, uid, "deleted", f"company deleted with {name}'s account")
+                        done.append(f"{c['name']} deleted")
+                        continue
+                    to = self.db.execute("SELECT u.id FROM members m JOIN users u ON u.id = m.user_id WHERE m.company_id"
+                                         " = ? AND u.email = ? AND u.kind = 'person' AND u.id != ?",
+                                         (c["id"], choice, uid)).fetchone()
+                    if to is None:
+                        raise CompanyError(f"{choice} is not a member of {c['name']}: hand it to one of its members", 422,
+                                           {"plan": plan})
+                    self.db.execute("UPDATE members SET role = 'owner', places = '[]', families = '[]' "
+                                    "WHERE company_id = ? AND user_id = ?", (c["id"], to["id"]))
+                    self._log(c["id"], None, uid, "member", f"{name} handed the company to {self._name(to['id'])} as "
+                                                            "owner before deleting their account")
+                    done.append(f"{c['name']} handed to {self._name(to['id'])}")
+                for c in plan["shared"] + plan["member"]:
+                    self._log(c["id"], None, uid, "member", f"{name} left: their account was deleted")
+                    done.append(f"left {c['name']}")
+                self.db.execute("DELETE FROM members WHERE user_id = ?", (uid,))
+                self.db.execute("DELETE FROM invites WHERE email = ?", (user.email,))
+                for table in ("sessions", "recovery_codes", "two_step_tickets", "email_checks", "password_resets"):
+                    self.db.execute(f"DELETE FROM {table} WHERE user_id = ?", (uid,))
+                self.db.execute("UPDATE users SET email = ?, name = 'Deleted account', pw_salt = '', pw_hash = '', "
+                                "sso_subject = NULL, verified_at = NULL, last_seen = NULL, totp_secret = NULL, "
+                                "totp_pending = NULL, totp_step = -1, kind = 'deleted' WHERE id = ?",
+                                (f"deleted-{uid.lower()}@deleted.invalid", uid))
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+            self.failures.pop(user.email.lower(), None)
+            return {"deleted_at": now, "done": done}
 
     # ---- audit trail ---------------------------------------------------------------------------------------
     def _log(self, cid: str, rev: int | None, uid: str, action: str, summary: str,

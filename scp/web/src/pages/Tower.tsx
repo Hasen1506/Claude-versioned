@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, FixEdit, FixResult, Kpi, TowerResult, WorkItem, WorkItemEntry } from "../api/types";
 import {
@@ -11,13 +11,14 @@ import { Msg, namesOf } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useReadOnly, useStore } from "../state/store";
+import { Ask } from "./Ask";
 
-type View = "kpis" | "inbox" | "worklist" | "quality" | "settings";
+type View = "kpis" | "inbox" | "worklist" | "ask" | "quality" | "settings";
 
 // The §18.2 set, grouped the way a weekly review reads it.
 const GROUPS: { title: string; ids: string[] }[] = [
   { title: "Demand", ids: ["forecast_accuracy", "forecast_bias"] },
-  { title: "Customer service", ids: ["confirmation_rate", "otif_confirmed", "otif_requested", "perfect_order"] },
+  { title: "Customer service", ids: ["confirmation_rate", "otif_confirmed", "otif_requested", "perfect_order", "fill_rate", "order_cycle_time"] },
   { title: "Supply & production", ids: ["supplier_reliability", "schedule_adherence"] },
   { title: "Inventory", ids: ["days_of_supply", "excess_obsolete"] },
   { title: "Working capital", ids: ["inventory_turns", "dio", "dso", "dpo", "cash_to_cash"] },
@@ -84,6 +85,7 @@ export function Tower({ route }: { route: string[] }) {
     <Tabs<View> value={view === "worklist" ? "inbox" : view} onChange={(v) => go("tower", v)} tabs={[
       { id: "kpis", label: "KPIs", count: res?.kpis.length },
       { id: "inbox", label: "Problems", count: res ? live.length : undefined },
+      { id: "ask", label: "Ask the plan" },
       { id: "quality", label: "Data quality", count: res?.data_quality.reduce((a, r) => a + r.count, 0) },
       { id: "settings", label: "Owners, SLA & targets" },
     ]} />
@@ -97,6 +99,7 @@ export function Tower({ route }: { route: string[] }) {
     </div>
   );
   if (view === "settings") return body(<>{nav}<Settings ds={ds} /></>);
+  if (view === "ask") return body(<>{nav}<Ask ds={ds} /></>);
   if (run.error) return body(<div className="banner error"><Badge sev="error">Could not refresh the tower</Badge>{run.error}</div>);
   if (!res) {
     return body(<>
@@ -253,13 +256,7 @@ function Inbox({ res, ds, cur }: { res: TowerResult; ds: Dataset; cur: string })
       .catch((e) => setTries((m) => ({ ...m, [key]: { busy: false, error: e instanceof Error ? e.message : String(e) } })));
   };
   const keepFix = (key: string, edits: FixEdit[]) => {
-    store.update((d) => {
-      for (const e of edits) {
-        const rows = (d as unknown as Record<string, Array<Record<string, unknown>>>)[e.collection];
-        const row = rows?.find((r) => r.id === e.id);
-        if (row) row[e.field] = e.value as unknown;
-      }
-    });
+    keepEdits(edits);
     setTries((m) => { const { [key]: _, ...rest } = m; return rest; });
     void store.run("tower");
   };
@@ -334,9 +331,20 @@ function Inbox({ res, ds, cur }: { res: TowerResult; ds: Dataset; cur: string })
   );
 }
 
+/** A tried fix kept: its edits applied to the working copy as one change (one undo step). */
+export function keepEdits(edits: FixEdit[]) {
+  store.update((d) => {
+    for (const e of edits) {
+      const rows = (d as unknown as Record<string, Array<Record<string, unknown>>>)[e.collection];
+      const row = rows?.find((r) => r.id === e.id);
+      if (row) row[e.field] = e.value as unknown;
+    }
+  });
+}
+
 /** What the tried action does to the money at risk, planned again on a copy: before → after, the edits, what it clears
  *  and brings. Keeping it applies the edits as one change (one undo step). */
-function FixOutcome({ f, cur, ro, onKeep, onLeave }: { f: FixResult; cur: string; ro: boolean; onKeep: () => void; onLeave: () => void }) {
+export function FixOutcome({ f, cur, ro, onKeep, onLeave }: { f: FixResult; cur: string; ro: boolean; onKeep: () => void; onLeave: () => void }) {
   const delta = f.after_total - f.before_total;
   const gone = f.after_item === null || f.after_item === undefined;
   return <div className="stack" style={{ gap: 8 }} role="region" aria-label="What this change does">
@@ -378,14 +386,23 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
     && (!lateOnly || w.breached));
   const sel = items.find((w) => w.id === selId) ?? null;
 
-  const patch = async (w: WorkItem, p: Parameters<typeof api.towerItem>[1]) => {
+  // one change at a time, each applied to the worklist as it stands when its answer comes: an owner typed and "Seen"
+  // clicked straight after are two changes, and the later answer must not put back the list the earlier one started from
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const patch = (w: WorkItem, p: Parameters<typeof api.towerItem>[1]) => {
     setErr(null);
-    try {
-      const u = await api.towerItem(w.id, { ...p, sla_days: (ds.tower?.sla_days ?? {}) as Record<string, number> });
-      store.put("tower", { ...res, worklist: res.worklist.map((x) => (x.id === u.id ? { ...u, age_days: x.age_days, breached: x.breached } : x)) }, rev);
-    } catch (e) {
-      setErr(String(e));
-    }
+    queue.current = queue.current.then(async () => {
+      try {
+        const u = await api.towerItem(w.id, { ...p, sla_days: (ds.tower?.sla_days ?? {}) as Record<string, number> });
+        const cur = store.get().runs.tower;
+        const now = cur.data ?? res;
+        store.put("tower", { ...now, worklist: now.worklist.map((x) => (x.id === u.id ? { ...u, age_days: x.age_days, breached: x.breached } : x)) },
+          cur.data && cur.revision !== null ? cur.revision : rev);
+      } catch (e) {
+        setErr(String(e));
+      }
+    });
+    return queue.current;
   };
 
   const byOwner = useMemo(() => {

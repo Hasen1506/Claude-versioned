@@ -205,6 +205,20 @@ def remove_import(cid: str, jid: str, user: Signed) -> ImportJobs:
     return imports.delete_job(get_companies(), user, cid, jid)
 
 
+@router.post("/imports/try", response_model=imports.Tried)
+def try_import(cid: str, body: imports.TryInput, user: Signed) -> imports.Tried:
+    """Try an import before saving it, on a sample pasted in or on what its source gives now: what would become of
+    each line, the columns found and the first rows as the fields here. Nothing is saved, moved or logged."""
+    return imports.try_job(get_companies(), user, cid, body)
+
+
+@router.post("/imports/{jid}/dry-run", response_model=imports.Tried)
+def dry_run_import(cid: str, jid: str, user: Signed) -> imports.Tried:
+    """A saved import read now and checked line by line, with nothing saved, no file moved and its schedule as it
+    was."""
+    return imports.dry_run(get_companies(), user, cid, jid)
+
+
 @router.post("/imports/{jid}/run", response_model=list[MessageRow])
 def run_import(cid: str, jid: str, user: Signed) -> list[MessageRow]:
     """Run an import now, whatever its schedule says."""

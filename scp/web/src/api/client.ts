@@ -1,13 +1,18 @@
 import type {
+  Cycle, CycleFigures, CycleSummary, StrategyAdvisor, ValueAdd,
   ProductionUsageInput,
-  Comparison, FinanceResult, FixResult, KeepResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
+  AskAnswer, Comparison, FinanceResult, FixResult, KeepResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   PlanTrace, ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoActionInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
   SalesView, SalesAction, SalesActionInput, SalesActionResponse,
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
-  User,
-  ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings,
-  WhatIfChip, WhatIfResult, CaseInfo,
+  User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
+  ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
+  WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, PolicyView, PolicyApplyResponse, PolicyApplyInput, AccountingView, AccountingExport, IntercompanyView, IntercompanyAction, IntercompanyActionInput, IntercompanyActionResponse, CyclePlan, PutawayProposal, RefillProposal, PickList, WarehouseActionResponse,
+  TransportView, TransportAction, TransportActionResponse,
+  OutsideView, OutsideAction, OutsideActionInput, OutsideActionResponse,
+  PortalView, PortalAction, PortalActionInput, PortalActionResponse, PortalLink,
+  WarehouseAction,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
 import { done } from "../lib/guide";
@@ -254,7 +259,7 @@ export interface PostExtra {
   note?: string; ship_from?: string | null; batch?: string | null; expires_on?: string | null; supplier_batch?: string | null;
   serials?: string[] | null; stock_type?: StockType | null; to_type?: StockType | null; location?: string | null;
   product?: string | null; movement?: string | null; doc?: string | null; nodes?: { location: string; product: string }[] | null;
-  block?: boolean; uncounted_zero?: boolean;
+  block?: boolean; uncounted_zero?: boolean; classes?: ("A" | "B" | "C")[] | null;
 }
 
 /** Sign-in calls ask for the session in the HttpOnly cookie (roadmap D), prove they come from this page with the
@@ -296,6 +301,11 @@ export const api = {
   /** Write the multi-echelon recommendation as fixed policies; keys "location|product", null = every stage that differs. */
   applyPlacement: (dataset: Dataset, keys: string[] | null) =>
     write<PlacementResponse>("/api/inventory/apply", dataset, { keys }),
+  /** Inventory policy (Enterprise 8.2): each product kept at a place with its class, rule, target and service. */
+  inventoryPolicy: (ds: Dataset) => planPost<PolicyView>("/api/inventory/policy", ds),
+  /** One policy for the chosen products at places, keys "location|product". */
+  inventoryPolicyApply: (dataset: Dataset, input: PolicyApplyInput) =>
+    write<PolicyApplyResponse>("/api/inventory/policy/apply", dataset, { ...input }),
   promise: (ds: Dataset) => planPost<PromiseResult>("/api/promise", ds),
   bop: (ds: Dataset) => planPost<PromiseResult>("/api/promise/bop", ds),
   promiseCheck: (dataset: Dataset, order: DemandRecord) =>
@@ -331,16 +341,90 @@ export const api = {
       supplier_batch: extra.supplier_batch ?? null, serials: extra.serials ?? null, stock_type: extra.stock_type ?? null,
       to_type: extra.to_type ?? null, location: extra.location ?? null, product: extra.product ?? null, movement: extra.movement ?? null,
       doc: extra.doc ?? null, nodes: extra.nodes ?? null, block: extra.block ?? true, uncounted_zero: extra.uncounted_zero ?? false }),
-  /** Take a checked customer order (with its promise), change one (promised again), or cancel what is still open. */
-  salesOrder: (dataset: Dataset, action: "accept" | "change" | "cancel",
-    extra: { order?: DemandRecord; id?: string; changes?: Partial<SalesOrderChange>; date?: string; reason?: string }) =>
+  /** Take a checked customer order (with its promise), change one (promised again), cancel what is still open, or ship
+   *  part of one as a substitute product. */
+  salesOrder: (dataset: Dataset, action: "accept" | "change" | "cancel" | "substitute",
+    extra: { order?: DemandRecord; id?: string; changes?: Partial<SalesOrderChange>; date?: string; reason?: string;
+      product?: string; qty?: number }) =>
     write<SalesOrderResponse>("/api/orders/sales", dataset, { action, order: extra.order ?? null, id: extra.id ?? null,
-      changes: extra.changes ?? null, date: extra.date ?? null, reason: extra.reason ?? "" }),
+      changes: extra.changes ?? null, date: extra.date ?? null, reason: extra.reason ?? "",
+      product: extra.product ?? null, qty: extra.qty ?? null }),
   /** Every sales order, quotation, delivery, invoice and return; what is due to deliver and bill; customers' credit. */
   sales: (ds: Dataset) => planPost<SalesView>("/api/sales", ds),
   /** One order-to-cash step: take an order, quote, deliver, invoice, record a payment, take a return back. */
   salesAct: (dataset: Dataset, action: SalesAction, extra: SalesActionInput = {}) =>
     write<SalesActionResponse>("/api/sales/act", dataset, { action, ...extra }),
+  /** Stock in the books: quantity, value and price per place, the postings that moved it, the price differences. */
+  valuation: (ds: Dataset, books: "entity" | "group" = "entity") =>
+    planPost<ValuationView>(`/api/valuation${books === "group" ? "?books=group" : ""}`, ds),
+  /** The companies of the group: transfers between them, billing, invoices and the profit in stock (Enterprise 7.3). */
+  intercompany: (ds: Dataset) => planPost<IntercompanyView>("/api/intercompany", ds),
+  /** The accounts: the journal made from movements, invoices and payments, balances and checks (Enterprise 7.4). */
+  accounting: (ds: Dataset, start?: string, end?: string) => {
+    const q = new URLSearchParams();
+    if (start) q.set("period_start", start);
+    if (end) q.set("period_end", end);
+    return planPost<AccountingView>(`/api/accounting${q.size ? `?${q}` : ""}`, ds);
+  },
+  /** One company's vouchers as Tally's import file, or the journal as a spreadsheet. */
+  accountingExport: (ds: Dataset, format: "tally" | "csv", company = "", start?: string, end?: string) => {
+    const q = new URLSearchParams({ format, company });
+    if (start) q.set("period_start", start);
+    if (end) q.set("period_end", end);
+    return planPost<AccountingExport>(`/api/accounting/export?${q}`, ds);
+  },
+  /** Bill the shipments due between companies, cancel an inter-company invoice, or settle one. */
+  intercompanyAct: (dataset: Dataset, action: IntercompanyAction, extra: Partial<IntercompanyActionInput> = {}) =>
+    write<IntercompanyActionResponse>("/api/intercompany/act", dataset, { action, ...extra }),
+  /** Cycle counting: each stocked product's ABC class, its last count and when it is next due (Enterprise 6.2). */
+  cycleCounts: (ds: Dataset, location?: string) =>
+    planPost<CyclePlan>(`/api/cycle-counts${location ? `?location=${encodeURIComponent(location)}` : ""}`, ds),
+  /** A place's bins with what each holds, and the stock in no bin (Enterprise 6.1). */
+  /** What is waiting to load, in vehicles with the cheapest carrier, and the freight orders (Enterprise 6.3). */
+  transport: (ds: Dataset) => planPost<TransportView>("/api/transport", ds),
+  /** One transport step: freight orders for what is waiting, tender, accept, reject, ship, settle, cancel. */
+  transportAct: (dataset: Dataset, action: TransportAction, extra: {
+    order?: string; lanes?: string[]; billed?: number; bill?: string; date?: string;
+  } = {}) => write<TransportActionResponse>("/api/transport/act", dataset, { action, ...extra }),
+  /** Work done outside: third-party orders suppliers ship to customers, job-work challans and ITC-04 (Enterprise 7.1). */
+  outside: (ds: Dataset, asOf?: string) =>
+    planPost<OutsideView>(`/api/outside${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ""}`, ds),
+  /** One step outside: a third-party order taken, sent, dispatched, cancelled; parts sent, back, written off. */
+  outsideAct: (dataset: Dataset, action: OutsideAction, extra: Partial<OutsideActionInput> = {}) =>
+    write<OutsideActionResponse>("/api/outside/act", dataset, { action, ...extra }),
+  /** What a production order's bill needs for what is left to make, less what is at job workers already. */
+  outsideParts: (dataset: Dataset, order: string) =>
+    withDataset<{ product: string; qty: number; location: string }[]>("/api/outside/parts", dataset, { order }),
+  /** What a supplier sees on their portal link: their sent, open order lines and shipping notices (Enterprise 7.2). */
+  portalView: (ds: Dataset, supplier: string) => withDataset<PortalView>("/api/portal/view", ds, { supplier }),
+  /** A supplier's step recorded by Buying, goods received against a shipping notice, a notice cancelled, a UBL
+   *  message read in. */
+  portalAct: (dataset: Dataset, action: PortalAction, extra: Partial<PortalActionInput> = {}) =>
+    write<PortalActionResponse>("/api/portal/act", dataset, { action, ...extra }),
+  /** A purchase order as a UBL 2.1 Order, as text. */
+  orderXml: async (ds: Dataset, po: string): Promise<string> => {
+    const res = await fetch(`${API_ORIGIN}/api/portal/order-xml`, {
+      method: "POST", credentials: CREDENTIALS, headers: { "Content-Type": "application/json", "X-Browser-Key": BROWSER_KEY },
+      body: JSON.stringify({ dataset: clean(ds), po }),
+    });
+    if (!res.ok) throw new ApiError(((await res.json().catch(() => ({}))) as { detail?: string }).detail || `HTTP ${res.status}`, res.status, {});
+    return res.text();
+  },
+  warehouse: (ds: Dataset, location: string) =>
+    planPost<WarehouseView>(`/api/warehouse?location=${encodeURIComponent(location)}`, ds),
+  /** Where the stock in no bin would be put away, by the place's rules (nothing is changed). */
+  putawayProposal: (ds: Dataset, location: string) =>
+    planPost<PutawayProposal>(`/api/warehouse/putaway?location=${encodeURIComponent(location)}`, ds),
+  /** Which picking bins are at their refill point, and the moves from the reserve that fill them (nothing changes). */
+  refillProposal: (ds: Dataset, location: string) =>
+    planPost<RefillProposal>(`/api/warehouse/refill?location=${encodeURIComponent(location)}`, ds),
+  /** A wave's pick list, in walk order. */
+  pickList: (ds: Dataset, wave: string) => planPost<PickList>(`/api/warehouse/picks?wave=${encodeURIComponent(wave)}`, ds),
+  /** One warehouse step: put-away tasks, a wave, confirm or cancel a task (bin and product as read), a bin move. */
+  warehouseAct: (dataset: Dataset, action: WarehouseAction, extra: {
+    location?: string; deliveries?: string[] | null; task?: string; qty?: number | null; bin?: string | null;
+    product?: string | null; from_bin?: string; to_bin?: string; batch?: string | null; date?: string | null; by?: string;
+  } = {}) => write<WarehouseActionResponse>("/api/warehouse/act", dataset, { action, ...extra }),
   /** Requisitions from the supply plan, every purchase order and the supplier scorecard. */
   purchasing: (ds: Dataset) => planPost<PurchasingView>("/api/purchasing", ds),
   /** Turn requisitions into purchase orders (`lines` = which, on which source; none = everything due now). */
@@ -366,8 +450,30 @@ export const api = {
     cookieSignIn("/api/auth/signin", { email, password }),
   signOut: () => call<{ ok: boolean }>("/api/auth/signout", { method: "POST" }).finally(forgetCsrf),
   me: () => call<Me>("/api/auth/me"),
-  changePassword: (old: string, next: string) =>
-    call<{ ok: boolean }>("/api/auth/password", { method: "POST", body: JSON.stringify({ old, new: next }) }),
+  changePassword: (old: string, next: string, code = "") =>
+    call<{ ok: boolean }>("/api/auth/password", { method: "POST", body: JSON.stringify({ old, new: next, code }) }),
+  /** Move the account to another address (the password, and the app's code with two steps, again). */
+  changeEmail: (password: string, email: string, code = "") =>
+    call<User>("/api/auth/email", { method: "POST", body: JSON.stringify({ password, email, code }) }),
+  /** The second step of signing in: the ticket the password gave and the authenticator app's code. */
+  signInSecond: (ticket: string, code: string) => cookieSignIn("/api/auth/signin/second", { ticket, code }),
+  twoStep: () => call<TwoStepState>("/api/auth/two-step"),
+  twoStepBegin: (password: string) =>
+    call<TwoStepKey>("/api/auth/two-step/begin", { method: "POST", body: JSON.stringify({ password }) }),
+  twoStepEnable: (code: string) =>
+    call<{ codes: string[] }>("/api/auth/two-step/enable", { method: "POST", body: JSON.stringify({ code }) }),
+  twoStepDisable: (password: string, code: string) =>
+    call<{ ok: boolean }>("/api/auth/two-step/disable", { method: "POST", body: JSON.stringify({ password, code }) }),
+  recoveryCodes: (password: string, code: string) =>
+    call<{ codes: string[] }>("/api/auth/two-step/recovery", { method: "POST", body: JSON.stringify({ password, code }) }),
+  /** Everything the account holds, as one JSON document (the password, and the code, again). */
+  exportAccount: (o: { password?: string; code?: string; confirm?: string }) =>
+    call<Record<string, unknown>>("/api/auth/account/export", { method: "POST", body: JSON.stringify(o) }),
+  deletionPlan: () => call<DeletionPlan>("/api/auth/account/delete"),
+  deleteAccount: (o: { password?: string; code?: string; confirm?: string; choices: Record<string, string> }) =>
+    call<Deleted>("/api/auth/account/delete", { method: "POST", body: JSON.stringify(o) }).finally(forgetCsrf),
+  setTwoStep: (id: string, required: boolean) =>
+    call<CompanyMeta>(`/api/companies/${encodeURIComponent(id)}/two-step`, { method: "PUT", body: JSON.stringify({ required }) }),
   companies: () => call<CompanyMeta[]>("/api/companies"),
   createCompany: (dataset: Dataset, note = "") =>
     call<CompanyMeta>("/api/companies", { method: "POST", body: JSON.stringify({ dataset, note }) }),
@@ -403,7 +509,7 @@ export const api = {
   changes: (id: string, q = "", list = "", before?: number) =>
     call<FieldChangeRow[]>(`/api/companies/${encodeURIComponent(id)}/changes?q=${encodeURIComponent(q)}&list=${encodeURIComponent(list)}${before ? `&before=${before}` : ""}`),
   resetRequest: (email: string) => call<{ ok: boolean; mail: boolean }>("/api/auth/reset/request", { method: "POST", body: JSON.stringify({ email }) }),
-  resetPassword: (token: string, password: string) => cookieSignIn("/api/auth/reset", { token, password }),
+  resetPassword: (token: string, password: string, code = "") => cookieSignIn("/api/auth/reset", { token, password, code }),
   /** Once: swap a session token this browser kept in its storage (before roadmap D) for the HttpOnly cookie. */
   adopt: (token: string) => call<Session>("/api/auth/adopt", { method: "POST", headers: { "X-SCP-Session": "cookie", Authorization: `Bearer ${token}` } })
     .then((s) => { setCsrf((s as Session & { csrf?: string | null }).csrf); return s; }),
@@ -423,11 +529,19 @@ export const api = {
   makeKey: (id: string, name: string, role: "planner" | "viewer") =>
     call<ApiKey>(`${co(id)}/keys`, { method: "POST", body: JSON.stringify({ name, role }) }),
   revokeKey: (id: string, kid: string) => call<ApiKey[]>(`${co(id)}/keys/${encodeURIComponent(kid)}`, { method: "DELETE" }),
+  /** Supplier portal links of a company kept on the server (Enterprise 7.2); a new one carries its secret once. */
+  portalLinks: (id: string) => call<PortalLink[]>(`${co(id)}/portal-links`),
+  makePortalLink: (id: string, supplier: string, days?: number) =>
+    call<PortalLink>(`${co(id)}/portal-links`, { method: "POST", body: JSON.stringify({ supplier, ...(days ? { days } : {}) }) }),
+  revokePortalLink: (id: string, lid: string) =>
+    call<PortalLink[]>(`${co(id)}/portal-links/${encodeURIComponent(lid)}`, { method: "DELETE" }),
   imports: (id: string) => call<ImportJobs>(`${co(id)}/imports`),
   saveImport: (id: string, job: JobInput, jid?: string) =>
     call<ImportJobs>(`${co(id)}/imports${jid ? `/${encodeURIComponent(jid)}` : ""}`, { method: jid ? "PUT" : "POST", body: JSON.stringify(job) }),
   removeImport: (id: string, jid: string) => call<ImportJobs>(`${co(id)}/imports/${encodeURIComponent(jid)}`, { method: "DELETE" }),
   runImport: (id: string, jid: string) => call<MessageRow[]>(`${co(id)}/imports/${encodeURIComponent(jid)}/run`, { method: "POST" }, RUN_TIMEOUT_MS),
+  tryImport: (id: string, body: TryInput) => call<Tried>(`${co(id)}/imports/try`, { method: "POST", body: JSON.stringify(body) }, RUN_TIMEOUT_MS),
+  dryRunImport: (id: string, jid: string) => call<Tried>(`${co(id)}/imports/${encodeURIComponent(jid)}/dry-run`, { method: "POST" }, RUN_TIMEOUT_MS),
   messages: (id: string, o: { kind?: string; status?: string; before?: number } = {}) =>
     call<MessageRow[]>(`${co(id)}/messages?kind=${encodeURIComponent(o.kind ?? "")}&status=${encodeURIComponent(o.status ?? "")}${o.before ? `&before=${o.before}` : ""}`),
   mailSetup: (id: string) => call<MailSetup>(`${co(id)}/mail`),
@@ -448,26 +562,45 @@ export const api = {
   promote: (id: string, name?: string) =>
     call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, { method: "POST", body: JSON.stringify({ name: name ?? null }) }),
   compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`).then(done("whatif")),
+  /** The monthly S&OP cycle (enterprise 4.1): its steps are signed in order, each freezing the company. */
+  cycles: () => call<CycleSummary[]>("/api/sop/cycles"),
+  cycle: (id: string) => call<Cycle>(`/api/sop/cycles/${encodeURIComponent(id)}`),
+  newCycle: (month: string) => call<Cycle>("/api/sop/cycles", { method: "POST", body: JSON.stringify({ month }) }),
+  dropCycle: (id: string) => call<CycleSummary[]>(`/api/sop/cycles/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  stepOwner: (id: string, step: string, owner: string) =>
+    call<Cycle>(`/api/sop/cycles/${encodeURIComponent(id)}/steps/${step}/owner`, { method: "PUT", body: JSON.stringify({ owner }) }),
+  signStep: (id: string, step: string, ds: Dataset, note: string) =>
+    withDataset<Cycle>(`/api/sop/cycles/${encodeURIComponent(id)}/steps/${step}/sign`, ds, { note }),
+  reopenStep: (id: string, step: string, note: string) =>
+    call<Cycle>(`/api/sop/cycles/${encodeURIComponent(id)}/steps/${step}/reopen`, { method: "POST", body: JSON.stringify({ note }) }),
+  cycleFigures: (ds: Dataset, step: string) => withDataset<CycleFigures>("/api/sop/figures", ds, { step }),
   /** Roadmap H: example cases (fictional teaching datasets) with their brief and ready-made what-if scenarios. */
   cases: () => call<CaseInfo[]>("/api/cases"),
   /** Roadmap E: plan 2–4 scenarios from one base (chips) and compare them side by side. */
   /** Keep a what-if scenario as a stored scenario of the working copy's version (stored as a base first when it has none). */
   keepWhatIf: (base: Dataset, label: string, chips: WhatIfChip[], parent: string | null, baseName = "") =>
     call<KeepResult>("/api/whatif/keep", { method: "POST", body: JSON.stringify({ base: clean(base), label, chips, parent, base_name: baseName }) }),
-  whatif: (base: Dataset, scenarios: { label: string; chips: WhatIfChip[] }[]) =>
+  whatif: (base: Dataset, scenarios: { label: string; chips: WhatIfChip[]; version?: string | null }[]) =>
     call<WhatIfResult>("/api/whatif", { method: "POST", body: JSON.stringify({ base: clean(base), scenarios }) }).then(done("whatif")),
+  sweep: (base: Dataset, chip: WhatIfChip, values: number[]) =>
+    call<SweepResult>("/api/whatif/sweep", { method: "POST", body: JSON.stringify({ base: clean(base), chip, values }) }).then(done("whatif")),
   compare: (a: Dataset, b: Dataset, labelA: string, labelB: string) =>
     call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a: clean(a), b: clean(b), label_a: labelA, label_b: labelB }) }).then(done("whatif")),
   finance: (ds: Dataset) => planPost<FinanceResult>("/api/finance", ds),
   tower: (ds: Dataset) => planPost<TowerResult>("/api/tower", ds),
   /** Try an inbox item's action on a copy of the company: money at risk before and after, and the edits (nothing kept). */
   towerFix: (ds: Dataset, key: string) => withDataset<FixResult>("/api/tower/fix", ds, { key }),
+  /** Ask the plan (enterprise plan 5.2): a question in plain words, answered from the plan with the records cited. */
+  ask: (ds: Dataset, question: string) => withDataset<AskAnswer>("/api/ask", ds, { question }),
   /** Assign (owner "" = back to the rules), acknowledge / resolve / reopen, or annotate a worklist item. */
   towerItem: (id: string, patch: { owner?: string; status?: "open" | "acknowledged" | "resolved"; note?: string; sla_days?: Record<string, number> }) =>
     call<WorkItem>(`/api/tower/items/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(patch) }),
   towerHistory: (id: string) => call<WorkItemEntry[]>(`/api/tower/items/${encodeURIComponent(id)}/history`),
   forecastModels: () => call<ForecastModels>("/api/forecast/models"),
   forecast: (ds: Dataset) => planPost<ForecastResult>("/api/forecast", ds),
+  /** Forecast value add: each layer of the kept forecasts against the sales of the periods that have sold. */
+  valueAdd: (ds: Dataset) => planPost<ValueAdd>("/api/forecast/value-add", ds),
+  strategyAdvice: (ds: Dataset) => planPost<StrategyAdvisor>("/api/plan/strategy-advice", ds),
   release: (dataset: Dataset, keys?: string[]) =>
     write<ReleaseResponse>("/api/forecast/release", dataset, { keys: keys ?? null }),
   /** Proof: end-to-end scenarios with hand-derived answers, run against an isolated in-memory store. */

@@ -35,8 +35,11 @@ test('roll report follows its dataset through tab navigation and disappears on u
   await expect(page.getByText('Rolled from Mon 5 Jan to Mon 12 Jan')).toBeVisible();
   await page.getByRole('button',{name:'Undo',exact:true}).click();
   await expect(page.getByText('Rolled from Mon 5 Jan to Mon 12 Jan')).toHaveCount(0);
+  // the page stays open: back at 5 Jan the date offered is a week on again, not the week after the roll
+  await expect(page.getByLabel('Roll forward to')).toHaveValue('2026-01-12');
   await page.getByRole('button',{name:'Redo',exact:true}).click();
   await expect(page.getByText('Rolled from Mon 5 Jan to Mon 12 Jan')).toBeVisible();
+  await expect(page.getByLabel('Roll forward to')).toHaveValue('2026-01-19');
   await importCompany(page,'Company B');
   await page.goto('/#/execution/roll');
   await expect(page.getByText('Rolled from Mon 5 Jan to Mon 12 Jan')).toHaveCount(0);

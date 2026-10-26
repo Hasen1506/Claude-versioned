@@ -11,11 +11,12 @@ import {
 } from "../components/ui";
 import { addDays, day, exactMoney, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Msg, Prod, namesOf, useNames } from "../lib/names";
+import { highEnd, safeWords } from "../lib/safe";
 import { confirmationDocument, customerAddresses, customerEmail, invoiceDocument, openItems, statementDocument } from "../lib/sodoc";
 import { ServerSend } from "../components/ServerSend";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { download } from "../lib/tabular";
-import { orderWarnings } from "../lib/orderchecks";
+import { checkBlocked, orderWarnings } from "../lib/orderchecks";
 import { go, href } from "../lib/router";
 import { isStale, store, useFreshResult, useReadOnly, useStore } from "../state/store";
 
@@ -307,7 +308,12 @@ function LinesForm({ ds, customer, busy, submit, onSubmit, second }: {
     try {
       const recs = lines.map((l) => ({ location: customer, product: l.product, date: l.date, qty: l.qty, kind: "sales_order", priority: 5,
         complete_delivery: false, price: l.price }) as DemandRecord);
-      setChecked({ key, res: await api.promiseCheckLines(ds, recs) });
+      const res = await api.promiseCheckLines(ds, recs);
+      const blocked = checkBlocked(res);
+      if (blocked) {
+        setChecked(null);
+        setCheckErr(namesOf(ds).text(blocked));
+      } else setChecked({ key, res });
     } catch (e) {
       setCheckErr(String(e).replace(/^Error:\s*/, ""));
     } finally {
@@ -316,10 +322,11 @@ function LinesForm({ ds, customer, busy, submit, onSubmit, second }: {
   };
   const verdict = (c: NonNullable<typeof fresh>[number]) => {
     const last = c.lines.reduce((a, x) => (x.date > a ? x.date : a), "");
-    if (c.status === "on_time") return <><Badge sev="ok">on time</Badge> <span className="small">{day(last)}</span></>;
+    const high = c.safe && <div className="faint small">If demand runs high ({highEnd(ds)}): {safeWords(c.safe, c.qty)}</div>;
+    if (c.status === "on_time") return <><Badge sev="ok">on time</Badge> <span className="small">{day(last)}</span>{high}</>;
     if (c.confirmed <= 1e-9) return <><Badge sev="error">cannot be promised</Badge>{c.reason && <div className="faint small">{c.reason}</div>}</>;
     return <><Badge sev="warning">{c.status === "late" ? "late" : `${qty(c.confirmed)} of ${qty(c.qty)}`}</Badge> <span className="small">
-      {c.on_time > 1e-9 ? `${qty(c.on_time)} on time, ` : ""}the rest by {day(last)}</span>{c.reason && <div className="faint small">{c.reason}</div>}</>;
+      {c.on_time > 1e-9 ? `${qty(c.on_time)} on time, ` : ""}the rest by {day(last)}</span>{c.reason && <div className="faint small">{c.reason}</div>}{high}</>;
   };
   return <div className="stack">
     <div className="table-wrap"><table className="t">
@@ -362,12 +369,13 @@ function NewOrder({ res, ds }: { res: SalesView; ds: Dataset }) {
   const places = useMemo(() => customersOf(ds), [ds]);
   const [customer, setCustomer] = useState(places[0]?.id ?? "");
   const [ref, setRef] = useState("");
+  const [together, setTogether] = useState(false);
   const [terms, setTerms] = useState("");
   const { busy, run, banners } = useAction();
   const credit = res.customers.find((c) => c.customer === customer);
   const blocked = (ds.customers ?? []).find((c) => c.customer === customer && c.blocked);
   if (places.length === 0) return <Panel><Empty title="No customers">Add a place of type customer in <a href={href("setup")}>Set up</a>.</Empty></Panel>;
-  const payload = (lines: Line[]) => ({ customer, customer_ref: ref, payment_terms: terms || null,
+  const payload = (lines: Line[]) => ({ customer, customer_ref: ref, payment_terms: terms || null, single_delivery: together,
     lines: lines.map((l) => ({ product: l.product, qty: l.qty, date: l.date, price: l.price })) });
   return <div className="stack">
     {banners}
@@ -382,6 +390,8 @@ function NewOrder({ res, ds }: { res: SalesView; ds: Dataset }) {
           <select value={terms} onChange={(e) => setTerms(e.target.value)} aria-label="Payment terms">
             <option value="">The customer's ({credit?.payment_terms ?? "net 30 days"})</option>
             {(ds.payment_terms ?? []).map((t) => <option key={t.id} value={t.id}>{t.name || t.id}</option>)}</select></label>
+        <label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={together} onChange={(e) => setTogether(e.target.checked)}
+          aria-label="Ship the whole order together" /> Ship the whole order together (every line on the date the last can come)</label>
       </div>
       {blocked && <div className="banner error" style={{ marginTop: 10 }}><Badge sev="error">Blocked for sales</Badge>{blocked.block_reason || "Lift the block on the customer's sales data first."}</div>}
       {credit?.credit_limit != null && <p className="small" role="status">Credit: owes {exactMoney(credit.exposure, res.currency)} of a {exactMoney(credit.credit_limit, res.currency)} limit
@@ -431,26 +441,39 @@ function Quotes({ res }: { res: SalesView }) {
 function Deliveries({ res, ds, sel }: { res: SalesView; ds: Dataset; sel?: string }) {
   const { busy, run, banners } = useAction();
   const [pick, setPick] = useState<Set<string> | null>(null);
-  const free = res.to_deliver.filter((t) => !t.credit_block);
+  const check = ds.sales?.delivery_check ?? true;
+  // a line nothing of which can be picked by its goods issue is not ticked: the delivery would take none of it (§13)
+  const free = res.to_deliver.filter((t) => !t.credit_block && !(check && t.available !== null && t.available <= 1e-9));
   const chosen = pick ?? new Set(free.map((t) => t.order));
   const open = res.deliveries.find((d) => d.id === sel);
   const toggle = (id: string) => { const n = new Set(chosen); if (n.has(id)) n.delete(id); else n.add(id); setPick(n); };
   return <div className="stack">
     {banners}
     {open && <DeliveryDetail d={open} ds={ds} />}
-    <Panel flush title={`Due to ship in the next ${plural(ds.sales?.delivery_days ?? 3, "day")}`} actions={<Edits>
+    <Panel flush title={<h3 className="row" style={{ gap: 6 }}>Due to ship in the next
+      <Edits><input className="input" type="number" min={0} max={60} style={{ width: 64 }} aria-label="Days ahead to ship"
+        value={ds.sales?.delivery_days ?? 3} onChange={(e) => {
+          const n = Math.round(Number(e.target.value));
+          if (Number.isFinite(n) && n >= 0 && n <= 60) {
+            store.update((d) => { d.sales = { ...(d.sales ?? {}), delivery_days: n } as Dataset["sales"]; });
+            void store.run("sales");
+          }
+        }} /></Edits> days</h3>} actions={<Edits>
       <button className="btn sm accent" disabled={busy || chosen.size === 0}
         onClick={() => run("create_deliveries", { lines: [...chosen].map((order) => ({ order })) }, () => setPick(null))}>
         Make deliveries for {plural(chosen.size, "line")}</button></Edits>}>
       {res.to_deliver.length === 0 ? <p className="faint" style={{ padding: "8px 12px" }}>Nothing is due to ship that is not on a delivery already.</p> :
         <div className="table-wrap"><table className="t">
-          <thead><tr><th /><th>Order line</th><th>Customer</th><th>Product</th><th className="num">Quantity</th><th>From</th><th>Ships</th></tr></thead>
+          <thead><tr><th /><th>Order line</th><th>Customer</th><th>Product</th><th className="num">Quantity</th><th className="num">Can be picked</th><th>From</th><th>Ships</th></tr></thead>
           <tbody>{res.to_deliver.map((t) => (
             <tr key={t.order}>
               <td>{t.credit_block ? <Badge sev="error">credit block</Badge>
                 : <input type="checkbox" checked={chosen.has(t.order)} onChange={() => toggle(t.order)} aria-label={`Deliver ${t.order}`} />}</td>
               <td><a href={href("selling", "orders", t.header)}>{t.order}</a></td><td><Loc id={t.customer} /></td><td><Prod id={t.product} /></td>
-              <td className="num">{qty(t.qty)}</td><td>{t.ship_from ? <Loc id={t.ship_from} /> : "—"}</td><td>{day(t.ship_date)}</td>
+              <td className="num">{qty(t.qty)}</td>
+              <td className="num">{t.available === null ? "—" : t.available >= t.qty - 1e-9 ? qty(t.available)
+                : <Badge sev={t.available > 1e-9 ? "warning" : "error"}>{t.available > 1e-9 ? `only ${qty(t.available)}` : "none in stock"}</Badge>}</td>
+              <td>{t.ship_from ? <Loc id={t.ship_from} /> : "—"}</td><td>{day(t.ship_date)}</td>
             </tr>))}
           </tbody>
         </table></div>}

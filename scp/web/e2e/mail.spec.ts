@@ -67,7 +67,7 @@ test("mail from the server: firming e-mails the purchase order, Send from here s
   const email = await onServer(page);
 
   // firming: the button says the orders go by e-mail, and the supplier's mail server has the order attached
-  await page.goto("/#/execution/orders");
+  await page.goto("/#/plan/firm");
   // the plan may still be calculating on its own: wait for the order to firm, else ask for the plan
   const calculate = page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ });
   const firm = page.getByRole("button", { name: "Make 1 order firm", exact: true });

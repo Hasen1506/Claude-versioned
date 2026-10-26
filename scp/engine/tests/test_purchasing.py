@@ -125,7 +125,7 @@ def test_create_orders_groups_by_supplier_and_replanning_buys_nothing_more():
     po = rep.created[0]
     assert po.id == "PO-00001" and po.supplier == "S" and po.lines == ["PO-00001-10", "PO-00001-20"] and po.approved
     assert {r.po for r in new.receipts} == {"PO-00001"} and [h.id for h in new.purchase_orders] == ["PO-00001"]
-    assert sorted(r.planned_as for r in new.receipts) == sorted(r.id for r in reqs)     # "was PR-00001" (Q22)
+    assert sorted(r.planned_as for r in new.receipts) == sorted(r.id for r in reqs)     # "was PR-0001-01" (Q22)
     assert validate(new) == []
     again = run_mrp(new)
     assert not [o for o in again.orders if o.kind == "buy"]

@@ -23,3 +23,8 @@ class FinanceSettings(Model):
     capacity_options: list[CapacityOption] = Field(default_factory=list)
     discount_rate: float | None = Unit("fraction", le=1, default=None,
                                        description="Per year for NPV; empty = the company WACC")
+    ledgers: dict[str, str] = Field(default_factory=dict, max_length=60,
+                                    description="Accounting (Enterprise 7.4): the ledger name in Tally for an account "
+                                                "of the journal, by its code (STOCK, GRIR, SALES, …); empty = ours")
+    tally_company: str = Field("", max_length=120, description="The company's name in Tally, for the export; empty = "
+                                                               "its name here")

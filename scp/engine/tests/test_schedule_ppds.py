@@ -77,7 +77,7 @@ def test_every_rule_gives_a_feasible_schedule():
     rng = random.Random(3)
     for _ in range(30):
         inst = _random_instance(rng)
-        for rule in ("edd", "spt", "slack", "campaign", "backward"):
+        for rule in ("edd", "spt", "slack", "cr", "campaign", "backward"):
             seqs, hold = start(inst, rule)
             d = decode(inst, seqs, hold)
             assert check(inst, d) == [], rule
@@ -104,6 +104,18 @@ def test_shortest_job_first_and_dispatching_skip_an_order_waiting_for_parts():
     seqs, _ = start(inst, "spt")
     assert seqs["R"] == ["J1:10", "J2:10", "J0:10"]
     assert decode(inst, seqs).late_jobs == 0
+
+
+def test_critical_ratio_puts_the_order_furthest_behind_first_where_least_slack_does_not():
+    """J0 is due at hour 100 with 50 hours of work: CR = 100 ÷ 50 = 2, slack 50. J1 is due at hour 20 with 2 hours:
+    CR = 20 ÷ 2 = 10, slack 18. Least slack (and due date) take J1 first; critical ratio takes J0."""
+    jobs = [Job("J0", "P", 0.0, 100.0, [_op("P", "G", 0.0, 50.0, order="J0")]),
+            Job("J1", "P", 0.0, 20.0, [_op("P", "G", 0.0, 2.0, order="J1")])]
+    inst = _instance(jobs, {"R": 1})
+    assert start(inst, "slack")[0]["R"] == ["J1:10", "J0:10"]
+    seqs, _ = start(inst, "cr")
+    assert seqs["R"] == ["J0:10", "J1:10"]
+    assert check(inst, decode(inst, seqs)) == []
 
 
 def test_backward_starts_just_in_time():
@@ -170,7 +182,7 @@ def test_profiles_set_known_fields_and_every_rule_is_catalogued():
     for p in PROFILES:
         assert set(p.settings) <= fields, p.id
     ids = {h.id for h in HEURISTICS}
-    assert {"edd", "spt", "slack", "campaign", "backward", "improve", "optimize"} <= ids
+    assert {"edd", "spt", "slack", "cr", "campaign", "backward", "improve", "optimize"} <= ids
 
 
 def test_run_with_a_profile_and_compare_on_the_example():
@@ -189,7 +201,7 @@ def test_run_with_a_profile_and_compare_on_the_example():
     assert [o.completion for o in again.orders] == pytest.approx([o.completion for o in r.orders])
     c = compare_schedules(ex.model_copy(
         update={"scheduling": ex.scheduling.model_copy(update={"time_limit_seconds": 1.0})}))
-    assert c.ok and [x.method for x in c.rows] == ["edd", "spt", "slack", "campaign", "backward", "improve",
+    assert c.ok and [x.method for x in c.rows] == ["edd", "spt", "slack", "cr", "campaign", "backward", "improve",
                                                    "optimize"]
     assert sum(x.best for x in c.rows) >= 1
     low = min(x.kpis.objective for x in c.rows)

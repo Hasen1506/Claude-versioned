@@ -251,9 +251,187 @@ Where the ERP cannot call an API, it writes an export that the server reads. An 
   - Customer orders have one row per line; rows with the same order number make one order.
 - **JSON.** The message as the API takes it, or just its list of items.
 
+**A web API, page by page.** From *a web API* reads JSON answers page by page into one message:
+- **Next page at** a path in the answer that holds the next page's address (`links.next`, `@odata.nextLink`); an
+  address that names a page already read ends the reading.
+- **Numbered pages**: `?page=1`, `2`, … (the parameter is named on the import), until a flag in the answer says there
+  are no more (`page_context.has_more_page`) or, without one, a page has no records.
+- **The Link header** (`"paging": {"mode": "link"}`): the answer's `Link` header names the next page
+  (`<https://…?page_info=…>; rel="next"`), as Shopify's REST API and GitHub's do; no such link ends the reading.
+- **At most** a number of pages (50 unless set): an answer with more fails the run rather than take a part of it.
+- The headers go to the import's own host only; a next page on another host is asked without them.
+
+**Only what changed.** `{since}` anywhere in a web address (a file's or an API's) is the time the last good run started,
+as `2026-10-15T06%3A00%3A00%2B00%3A00` (the first run: 1970). A run that fails leaves it as it was, so nothing is missed.
+Changing the import to another host or another kind of record starts again from the beginning.
+
+**Mapping.** Without one, columns are recognised by their names (below). With *Name the fields myself* (`mapping` in
+the API) each field here is filled from what the mapping names:
+
+```json
+{"items": "orders", "each": "line_items",
+ "fields": {"number": {"source": "name"},
+            "customer": {"source": "customer.code", "values": {"C-77": "CUS-WEST-TRADE"}},
+            "date": {"source": "note_attributes.deliver_by", "date_format": "%d %b %Y"},
+            "product": {"source": "line.sku", "values": {"MG500": "MG-500"}},
+            "qty": {"source": "line.quantity", "factor": 12},
+            "location": {"value": "PLT-PUNE"}}}
+```
+
+- `source`: a column of a CSV file (as written, or in any case and spacing), or a path in a JSON record
+  (`customer.code`, `lines.0.sku`); with `each`, `line.<path>` is the element of the list.
+- `items`: the path to the list of records in a JSON answer; `each`: a list in each record that makes one row per
+  element (an order's lines; the order's own fields are repeated on each).
+- `values`: codes translated, `*` for any other; `factor`: numbers multiplied; `date_format`: as `strftime` writes it
+  (`%d-%b-%Y`), and it must give a day, month and year; `value`: used when the source is empty, or always with no source.
+- For master data, a field within a field is named with a dot (`lot_sizing.policy`).
+- The fields each kind has are in `GET /imports` (`fields`); a mapping naming another is refused.
+
+**Try it first.** `POST /imports/try` with `{"job": {…the import…}, "content": "…a sample…"}` (no `content`: the source
+is read now; `"id"` of a saved import uses its saved headers for the same host) and `POST /imports/{id}/dry-run` for a
+saved import answer what would become of each line (`"dry_run": true`, summary "Dry run, nothing saved: …"), the
+columns found (`columns`) and the first rows as the fields here (`rows`). Nothing is saved, logged or moved, and the
+schedule and `{since}` stay as they were. Only an owner may: an import reads from outside with the owner's rights.
+
 **Each file once.** A file is applied as the message of its kind, by the owner who set the import up, and logged with what became of each line. The same file content is never applied twice.
 
-**Run now** reads the file at once.
+**Run now** reads the file at once. The message log keeps the first 2,000 characters of what was read beside each
+message (*What was read* on **Connections → Messages**, `sample` in `GET /messages`).
+
+## Tally Prime and Zoho Inventory
+
+A scheduled import can ask Tally Prime or Zoho Inventory directly (*Connect Tally*, *Connect Zoho* on **Connections
+→ Scheduled imports**; `source_type` `tally` or `zoho` in the API). Each job does one thing, on its schedule:
+
+| What it brings | Tally Prime | Zoho Inventory |
+|---|---|---|
+| `records:products` | stock items: the name (as the code too, unless translated), the stock group as family and the base unit of a new product | items: the SKU (else the name) as the code, the unit and item group of a new product, the selling rate as price; services are left out |
+| `records:locations` | ledgers under Sundry Debtors (customers) and Sundry Creditors (suppliers), sub-groups too: address, GSTIN, the state as region of a new one | contacts: customers and vendors, GSTIN, billing address, place of supply as region of a new one |
+| `stock` | each stock item's closing balance, counted at the place the job names | each tracked item's stock on hand, counted at the place the job names |
+| `orders` | vouchers of the sales order type (`Sales Order` unless set) of the last `days_back` days: a line due in parts is a line per due date (`ORDERDUEDATE`), a cancelled voucher cancels the order, an optional one is not read | sales orders changed since the last good run (newest first, until an older one), each read whole: the shipment date is each line's date, a void order cancels it, a draft is not read |
+| `send:purchase_order` | purchase order vouchers numbered as the order here (`Alter` when it changed, `Cancel` when it was cancelled or deleted here), quantities in the stock item's own unit, booked to the purchase ledger | purchase orders numbered as the order here (`ignore_auto_number_generation`), Zoho's item and vendor IDs found by SKU or name; changed: updated, cancelled: cancelled; the earliest line date is the delivery date |
+
+```json
+{"name": "Tally stock", "kind": "stock", "source_type": "tally", "source": "http://tally-pc:9000",
+ "app": {"company": "Kaveri Kitchenware", "place": "PLT-PUNE"},
+ "mapping": {"fields": {"product": {"values": {"Mixer Grinder 500W": "MG-500"}}}},
+ "every": "hour", "at": "00:05"}
+```
+
+- **Codes.** The mapping translates them (`values`, the other system's code = the code here; a field without
+  `source` is the connector's field of the same name). A name not translated becomes the code here as it is, with
+  characters a code cannot have made hyphens (`Steel Tumbler 250 ml` → `Steel-Tumbler-250-ml`). Sending, each code
+  here goes as the first name translated to it; otherwise as the name of the product or supplier here (Tally: a
+  product's name when its code was made from it).
+- **Kept as here.** A product's type, unit and family, and a place's type and region, are taken only by a new record:
+  one kept here is not made another type because the other system says so. Its name, address and GSTIN follow.
+- **Purchase orders out.** The orders an ERP would take (`GET /erp/purchase-orders`) are sent one by one; what the
+  other system took is acknowledged as an ERP acknowledges, so each keeps its number there (`erp_ref`) and goes again
+  only when it changes. A refused one (Tally's or Zoho's own words) goes again on the next run. Before making one,
+  the connector asks whether the other system has it already by our number (an answer lost on the way), and then
+  changes it rather than making it twice. An order cancelled here that was never sent is not sent.
+- **Tally** answers on its port (F1 Help → Settings → Connectivity: TallyPrime acts as a server, port 9000). It sits
+  on the company's own network: the server reaches it only when the administrator allows its host by name
+  (`SCP_IMPORT_HOSTS=tally-pc`), so a server on the internet needs a tunnel or a server on the same network. `company`
+  is the company's name in Tally (empty: the one open). An answer with a document type (entities) is refused; the
+  control characters Tally writes in names are dropped.
+- **Zoho**: the organisation ID is the source, `data_centre` where it is kept (`in`, `com`, `eu`, `com.au`, `jp`,
+  `ca`, `sa`), and a *self client* from Zoho's API console gives `secrets`: `client_id`, `client_secret` and
+  `refresh_token` (scope `ZohoInventory.FullAccess.all`). They are kept on the server and never shown again (their
+  names are in `header_names`); changing the job with a value left empty keeps the one kept for the same organisation
+  and data centre. An access token is asked for once an hour (once more if Zoho stops taking it early). At most
+  20,000 records of a kind, and 500 sales orders changed between two runs, are read.
+- **Try it** and **Dry run** work as for a file: a pasted answer of Tally's (or one page of Zoho's) is read as the
+  connector would; a dry run of `send:purchase_order` builds what would be sent and sends nothing.
+
+### The accounts to Tally
+
+*Money → Accounts → Tally* makes the journal (Enterprise 7.4) as Tally's import file. Each company of the group gets
+its own file: its ledgers, then its vouchers for the period. Ledgers are created under their Tally group: customers
+and suppliers by name under Sundry Debtors and Sundry Creditors, the others (Stock, GR/IR, Sales, Output IGST, Bank,
+…) under the groups listed on the page. In Tally Prime, go to *Gateway of Tally → Import → Vouchers* and choose the
+file. A debit is written as a negative amount with `ISDEEMEDPOSITIVE` Yes, which is how Tally keeps it.
+
+* Give each account the ledger name the books already use (*Ledger names in Tally*, kept in `finance.ledgers` by
+  the account's code), and the company's name in Tally (`finance.tally_company`).
+* The same journal comes as a spreadsheet: `POST /api/accounting/export?format=csv`. The Tally file is
+  `format=tally&company=<id>`, where an empty id is the company itself. Both take `period_start` and `period_end`.
+* A document cancelled after its voucher went to Tally is not reversed in the next file: put the cancellation into
+  Tally by hand.
+
+## Shopify and Odoo
+
+*Connect Shopify* and *Connect Odoo* (`source_type` `shopify` or `odoo`) work as Tally and Zoho do: one kind a job,
+codes translated by the mapping, a new record's type, unit and family taken only when it is new, orders sent one by
+one and acknowledged.
+
+| What it brings | Shopify | Odoo |
+|---|---|---|
+| `records:products` | product variants: the SKU (else the product's title, and the variant's when there are several) as the code, the product type as a new product's family, the variant's price; a draft or archived product is not read | product variants: the internal reference (else the name) as the code, the unit and the category's last part for a new product, the sales price; services and combos are not read |
+| `records:locations` | the shop's active locations as places (a warehouse, a new one), with their address | customers and vendors (companies and people without a parent company): the tax ID, the address, the state as region; a partner that is more vendor than customer is a supplier |
+| `records:production_sources` | — | bills of materials (not kits) as ways to make their product at the plant the job names (`place`): the BOM's quantity and components; the steps here are kept |
+| `stock` | on hand at each location, per tracked variant | on hand in internal locations, summed by warehouse |
+| `orders` | orders updated since the last good run: the name without `#` as the number, the customer the job names (`customer`, the online shop) and the buyer's name as the note, each line's quantity after edits and refunds, a cancelled order cancelled | confirmed sales orders changed since the last good run: the reference as the number, the customer's company as the customer, the delivery date (else the order date) on every line, a cancelled one cancelled; quotations are not read |
+| `postings` | fulfilments of the orders updated since the last good run, as deliveries of the order's lines (`1001/10`), each taken once | — |
+| `send:purchase_order` | — (Shopify keeps no purchase orders) | requests for quotation made and confirmed, our number as the source document, Odoo's vendor and products found by name and internal reference; changed: its lines rewritten (a line no longer here cut to what was received); cancelled or deleted here: cancelled |
+| `send:production_order` | — | manufacturing orders made and confirmed (start and deadline, our number as the source document); a new quantity through Odoo's own *change quantity*; deleted here: cancelled |
+
+```json
+{"name": "Shopify orders", "kind": "orders", "source_type": "shopify", "source": "kaveri.myshopify.com",
+ "app": {"customer": "WEB-SHOP"}, "secrets": {"access_token": "shpat_…"}, "every": "hour", "at": "00:20"}
+{"name": "Production orders to Odoo", "kind": "send:production_order", "source_type": "odoo",
+ "source": "https://kaveri.odoo.com", "app": {"database": "kaveri"},
+ "secrets": {"login": "planner@kaveri.example", "api_key": "…"}, "every": "hour", "at": "00:25"}
+```
+
+- **Shopify** is asked through its Admin GraphQL API (`api_version`, `2026-07` unless set; it pages by cursor and a
+  throttled call is asked again once) with a custom app's Admin API access token in Shopify's own header
+  (`X-Shopify-Access-Token`). The app needs `read_products`, `read_inventory`, `read_locations`, `read_orders` and,
+  for fulfilments, `read_fulfillments`. The source is the shop's `myshopify.com` address; the token is kept for that
+  shop only. A shop's buyers are not places here: its orders go to one customer the job names.
+- **Odoo** is asked as a user, with an API key made for them (Preferences → Account security → New API key), through
+  JSON-RPC (`/jsonrpc`, every version) or, with `"odoo_api": "json2"`, the JSON API of Odoo 19 and later
+  (`/json/2/…`, the key as a bearer token); Odoo 20 removes JSON-RPC. `database` is the database's name. The user's
+  rights in Odoo are what the connector may do. The login and key are kept for the same address and database.
+- **Places.** Shopify's locations and Odoo's warehouses are the places of the same name here, or the ones the mapping
+  translates them to (`location` values); a job's `place` takes every one not translated.
+- **Odoo's warehouses for orders out.** A place translated to an Odoo warehouse (the mapping's `location`, here =
+  there) sends its orders to that warehouse's receipt or manufacturing operation; otherwise Odoo's default.
+
+## Supplier portal
+
+A planner makes a link for one supplier on **Buying → Supplier portal** (on a company kept on the server). The link
+is `https://<the application>/#/portal/scp_sp_…`; the part after `#/portal/` is its secret, shown once and kept on the
+server only as a hash. It works for 90 days unless another length is chosen, until it is withdrawn, and only while
+the person who made it may still change the company. What the supplier does is saved as that person's change, named
+"… from <supplier> on the supplier portal (link L0001)" in the History.
+
+The supplier's page and their own system use the same calls, with the secret in the header `X-Portal-Token` (no
+sign-in, no cookie; limited like any call without a session):
+
+| Call | What it does |
+|---|---|
+| `GET /api/portal` | Their open lines of sent purchase orders (ordered, received, on the way, price, wanted date, confirmation) and their shipping notices. Nothing else of the company's. |
+| `POST /api/portal/respond` | `{"reference": "SC/OC/3381", "lines": [{"order": "PO-4500012872-10", "qty": 1500, "date": "2026-10-14"}]}`. A line with no quantity or date is confirmed as asked; `parts` (`[{"date", "qty"}]`) confirms it in several deliveries. Recorded as the order's confirmation: planning counts on it. |
+| `POST /api/portal/dispatch` | `{"shipped_on", "arrives_on"?, "reference", "lines": [{"order", "qty"?, "batch"?, "expires_on"?}]}`. A shipping notice (`ASN-00001`). With no arrival date it is the dispatch plus the lane's transit days; the goods on it are expected on that date, counted against the earliest delivery still confirmed. More than ordered is refused past the supplier's over-delivery tolerance. |
+| `POST /api/portal/message` | A UBL 2.1 `OrderResponse` or `DespatchAdvice` as the body (`application/xml`, at most 2 MB, no document type declaration). |
+| `GET /api/portal/order?po=…` | One of their sent orders as a UBL 2.1 `Order` (Peppol BIS Ordering 3). |
+
+**The messages.** The `Order` carries one `OrderLine/LineItem` per open line with our line id in `cbc:ID`, the
+quantity in UN/ECE units (`KGM`, `EA`, …), the requested date, the price, the supplier's part number
+(`SellersItemIdentification`) and the HS code. An answer names the line in `OrderLineReference/LineID`:
+- `OrderResponse`: `cbc:OrderResponseCode` `AP` with no lines accepts the whole order as asked, `RE` with no lines
+  rejects it; per line `cbc:LineStatusCode` 7 rejects it (nothing confirmed), otherwise `cbc:Quantity` and
+  `Delivery/PromisedDeliveryPeriod/cbc:EndDate` are what is confirmed.
+- `DespatchAdvice`: per `DespatchLine` the `cbc:DeliveredQuantity` and `Item/ItemInstance/LotIdentification`
+  (`LotNumberID`, `ExpiryDate`); the shipment's `Delivery/Despatch/ActualDespatchDate` and
+  `Delivery/EstimatedDeliveryPeriod/EndDate` give the dispatch and arrival.
+
+Buying can read the same messages by hand (*Supplier portal → A message from their system*, or
+`POST /api/portal/act` with `action: "message"`), and downloads an order as UBL with `POST /api/portal/order-xml`.
+Goods arrive against a notice with *Goods received* (`action: "receive"`): each line is received on its order with the
+batch advised. A notice that will not come is cancelled (`action: "cancel"`); its quantity is expected again on the
+line's last confirmed date.
 
 ## E-mail from the server
 
@@ -289,7 +467,7 @@ These are set in the server's environment:
 | Variable | What it does | Default |
 |---|---|---|
 | `SCP_IMPORT_DIR` | Folder of company folders (`<dir>/<company id>/`) for scheduled imports. None: imports read web addresses only. | none |
-| `SCP_IMPORT_HOSTS` | Comma-separated hosts a scheduled import may read from. None: any host on the internet, never one inside the server's own network. That means no private, loopback or link-local address, as the name resolves when the file is read, redirects included. | none |
+| `SCP_IMPORT_HOSTS` | Comma-separated hosts a scheduled import may read from. None: any host on the internet, never one inside the server's own network. That means no private, loopback or link-local address, as the name resolves when the file is read, redirects included. A host named here may be on the server's own network (a company's Tally). | none |
 | `SCP_TIMEZONE` | Time zone of the imports' and reminders' times of day, e.g. `Asia/Kolkata`. | `UTC` |
 | `SCP_SCHEDULER` | `0` stops this server from running imports and reminders, e.g. on a second server using the same database. | on |
 | `SCP_SMTP_*`, `SCP_PUBLIC_URL` | Mail, as for password resets; the public address is used in reminder links. | none |

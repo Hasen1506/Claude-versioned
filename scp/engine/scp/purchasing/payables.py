@@ -64,10 +64,39 @@ class LineInfo:
         self.open_receipt, self.contract = open_receipt, contract
 
 
-def lines_index(ds: Dataset, wanted: set[str] | None = None) -> dict[str, LineInfo]:
-    """Every purchase order line, open or closed (or only ``wanted``), by id."""
+def outside_lines(ds: Dataset) -> dict[str, tuple[LineInfo, float, date | None]]:
+    """Lines bought without goods coming into our stock (Enterprise 7.1), each with what counts as received and
+    when it last did: a third-party order (what the supplier dispatched to the customer), and a job-work challan
+    with a job charge (the units processed and back)."""
+    from ..jobwork import order_product
+    out: dict[str, tuple[LineInfo, float, date | None]] = {}
+    co = ds.settings.currency
+    for t in ds.third_party_orders:
+        if t.cancelled and not t.shipments:
+            continue
+        out[t.id] = (LineInfo(t.id, t.supplier, t.product, t.customer, t.qty, t.cost, None, t.currency or co, False,
+                              None), t.shipped, max((x.date for x in t.shipments), default=None))
+    for c in ds.challans:
+        if c.cancelled or c.charge <= 0:
+            continue
+        back = [r for r in c.returns if r.kind == "processed"]
+        product = order_product(ds, c.order) or (back[0].product if back else c.lines[0].product)
+        rc = next((r for r in ds.receipts if r.id == c.order), None)
+        done = next((x for x in ds.closed_orders if x.id == c.order), None)
+        ordered = max(c.processed, (rc.ordered_qty or rc.qty) if rc else (done.ordered_qty if done else 0.0))
+        cur = ds.vendor(c.job_worker).currency or co
+        out[c.id] = (LineInfo(c.id, c.job_worker, product, c.ship_from, ordered, c.charge, None, cur, False, None),
+                     c.processed, max((r.date for r in back), default=None))
+    return out
+
+
+def lines_index(ds: Dataset, wanted: set[str] | None = None, outside: bool = True) -> dict[str, LineInfo]:
+    """Every purchase order line, open or closed (or only ``wanted``), by id; with ``outside``, the lines bought
+    without goods coming into our stock too."""
     from . import _supplier_of
     out: dict[str, LineInfo] = {}
+    if outside and (ds.third_party_orders or ds.challans):
+        out.update({k: v[0] for k, v in outside_lines(ds).items() if wanted is None or k in wanted})
     for c in ds.closed_orders:
         if c.kind == "purchase" and (wanted is None or c.id in wanted):
             po = ds.purchase_order_by_id.get(c.po or "")
@@ -97,6 +126,10 @@ def received(ds: Dataset) -> dict[str, float]:
     for m in ds.movements:
         if m.reference and m.type in (MovementType.RECEIPT, MovementType.RETURN):
             out[m.reference] += m.net if m.type is MovementType.RECEIPT else -m.net
+    if ds.third_party_orders or ds.challans:
+        for k, (_, q, _) in outside_lines(ds).items():
+            if q > EPS:
+                out[k] += q
     return out
 
 
@@ -125,6 +158,10 @@ def _last_receipt(ds: Dataset) -> dict[str, date]:
     for m in ds.movements:
         if m.type is MovementType.RECEIPT and m.reference:
             out[m.reference] = max(out.get(m.reference, m.date), m.date)
+    if ds.third_party_orders or ds.challans:
+        for k, (_, _, last) in outside_lines(ds).items():
+            if last is not None:
+                out[k] = last
     return out
 
 
@@ -474,6 +511,8 @@ def return_goods(ds: Dataset, order: str, qty: float, *, on: date | None = None,
     li = line_info(ds, order)
     if li is None:
         raise PayablesError(f"{order} is not a purchase order line")
+    if order in {t.id for t in ds.third_party_orders} | {c.id for c in ds.challans}:
+        raise PayablesError(f"{order} did not come into our stock: nothing can be sent back from here")
     have = received(ds).get(order, 0.0)
     q = float(qty)
     if q <= EPS:
@@ -692,5 +731,6 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
 
 __all__ = [
     "PayablesError", "cancel_invoice", "contract_for", "contract_views", "enter_invoice", "invoiced", "line_info",
+    "outside_lines",
     "pay_invoice", "payables_view", "received", "release_invoice", "return_goods", "still_blocked", "to_invoice",
 ]

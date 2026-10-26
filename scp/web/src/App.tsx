@@ -16,6 +16,13 @@ const Demand = lazy(() => import("./pages/Demand").then((m) => ({ default: m.Dem
 const Buying = lazy(() => import("./pages/Buying").then((m) => ({ default: m.Buying })));
 const Selling = lazy(() => import("./pages/Selling").then((m) => ({ default: m.Selling })));
 const Execution = lazy(() => import("./pages/Execution").then((m) => ({ default: m.Execution })));
+const Warehouse = lazy(() => import("./pages/Warehouse").then((m) => ({ default: m.Warehouse })));
+const Transport = lazy(() => import("./pages/Transport").then((m) => ({ default: m.Transport })));
+const Group = lazy(() => import("./pages/Group").then((m) => ({ default: m.Group })));
+const InventoryPolicy = lazy(() => import("./pages/InventoryPolicy").then((m) => ({ default: m.InventoryPolicy })));
+const Accounts = lazy(() => import("./pages/Accounts").then((m) => ({ default: m.Accounts })));
+const Outside = lazy(() => import("./pages/Outside").then((m) => ({ default: m.Outside })));
+const Scan = lazy(() => import("./pages/Scan").then((m) => ({ default: m.Scan })));
 const Finance = lazy(() => import("./pages/Finance").then((m) => ({ default: m.Finance })));
 const Tower = lazy(() => import("./pages/Tower").then((m) => ({ default: m.Tower })));
 const Versions = lazy(() => import("./pages/Versions").then((m) => ({ default: m.Versions })));
@@ -25,6 +32,7 @@ const Promising = lazy(() => import("./pages/Promising").then((m) => ({ default:
 const Proof = lazy(() => import("./pages/Proof").then((m) => ({ default: m.Proof })));
 const Schedule = lazy(() => import("./pages/Schedule").then((m) => ({ default: m.Schedule })));
 const Sop = lazy(() => import("./pages/Sop").then((m) => ({ default: m.Sop })));
+const SopCycle = lazy(() => import("./pages/SopCycle").then((m) => ({ default: m.SopCyclePage })));
 const MasterData = lazy(() => import("./pages/MasterData").then((m) => ({ default: m.MasterData })));
 const Network = lazy(() => import("./pages/Network").then((m) => ({ default: m.Network })));
 const Plan = lazy(() => import("./pages/Plan").then((m) => ({ default: m.Plan })));
@@ -35,6 +43,7 @@ const Machines = lazy(() => import("./pages/Machines").then((m) => ({ default: m
 const Capacity = lazy(() => import("./pages/Capacity").then((m) => ({ default: m.Capacity })));
 const History = lazy(() => import("./pages/History").then((m) => ({ default: m.History })));
 const Connections = lazy(() => import("./pages/Connections").then((m) => ({ default: m.Connections })));
+const SupplierPortal = lazy(() => import("./pages/SupplierPortal").then((m) => ({ default: m.SupplierPortal })));
 
 /** Open a dataset and calculate everything, so no page opens empty. */
 function openAndPlan(ds: Dataset) {
@@ -46,10 +55,12 @@ function openAndPlan(ds: Dataset) {
 export function App() {
   const route = useRoute();
   const ds = useStore((s) => s.dataset);
+  const supplier = route[0] === "portal" && !!route[1];   // a supplier on their link: no company of ours is opened
   useEffect(() => {
+    if (supplier) return;
     store.restore();
     if (store.get().dataset) void store.planAll();
-  }, []);
+  }, [supplier]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -63,11 +74,15 @@ export function App() {
   }, []);
 
   setPlanYear(ds?.settings.planning_start);   // idempotent: dates print their year only outside the planning year
-  const page = route[0] || "home";
+  // the S&OP cycle moved out of the capacity plan's tabs (N351): its old link opens it where it is now
+  const page = route[0] === "sop" && route[1] === "cycle" ? "cycle" : route[0] || "home";
   useEffect(() => { if (ds) markVisited(page); }, [page, ds]);
   const item = ds ? navItemFor(page) : undefined;
   const [navOpen, setNavOpen] = useState(false);   // phones: the rail opens over the page from the Menu button
   useEffect(() => setNavOpen(false), [route.join("/")]);
+  if (supplier) {
+    return <Suspense fallback={<p className="faint">Opening your orders…</p>}><SupplierPortal token={route[1]} /></Suspense>;
+  }
   return (
     <div className={`app ${navOpen ? "nav-open" : ""}`}>
       <TopBar navOpen={navOpen} onNav={() => setNavOpen((o) => !o)} />
@@ -99,13 +114,21 @@ export function App() {
           : page === "demand" ? <Demand route={route} />
           : page === "inventory" ? <Inventory route={route} />
           : page === "sop" ? <Sop route={route} />
+          : page === "cycle" ? <SopCycle />
           : page === "plan" ? <Plan route={route} />
           : page === "schedule" ? <Schedule route={route} />
           : page === "promise" ? <Promising route={route} />
           : page === "execution" ? <Execution route={route} />
+          : page === "warehouse" ? <Warehouse route={route} />
+          : page === "transport" ? <Transport route={route} />
+          : page === "outside" ? <Outside route={route} />
+          : page === "scan" ? <Scan route={route} />
           : page === "buying" ? <Buying route={route} />
           : page === "selling" ? <Selling route={route} />
           : page === "finance" ? <Finance route={route} />
+          : page === "group" ? <Group route={route} />
+          : page === "accounts" ? <Accounts route={route} />
+          : page === "policy" ? <InventoryPolicy route={route} />
           : page === "tower" ? <Tower route={route} />
           : page === "versions" ? <Versions />
           : page === "whatif" ? <WhatIf />

@@ -188,7 +188,7 @@ What real use turned up, and what was done about it, is logged in [docs/USABILIT
 - **Which utilisation.** The supply plan, the capacity plan and the shop floor each say whose load it is and over what
   period (the busiest week, month or scheduling window), so their percentages can be told apart.
 - **Order numbers that hold.** Planned numbers are marked temporary (every plan hands them out again); a firm order
-  shows the planned number it came from ("was MO-00430"). A late requisition says when it should have been ordered.
+  shows the planned number it came from ("was MO-0012-03"). A late requisition says when it should have been ordered.
 - **A purchase order to send.** *Print or PDF*, *Download* and *E-mail* on a purchase order give the supplier a
   document with the lines, prices, dates and the supplier's terms.
 - **Pages that keep up.** Actuals, Buying, Money and customer orders recalculate when opened out of date. A viewer sees

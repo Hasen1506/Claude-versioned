@@ -86,6 +86,10 @@ class SalesSettings(Model):
     quotation_days: int = Unit("days", ge=1, le=366, default=30, description="How long a new quotation is valid")
     delivery_days: int = Unit("days", le=60, default=3,
                               description="Order lines promised to ship within this many days are listed to deliver")
+    delivery_check: bool = Field(
+        True, description="A delivery takes only what can be picked by its planned goods issue: unrestricted stock at "
+                          "the shipping place plus firm receipts in by then, less what other open deliveries take "
+                          "(S/4 availability check at delivery creation); the rest stays to deliver")
     reminder_days: list[int] = Field(
         default_factory=lambda: [7, 21, 35], max_length=5,
         description="Days past the due date for the first, second, third … payment reminder (dunning levels). "
@@ -108,6 +112,8 @@ class SalesOrder(Model):
     customer_ref: str = Field("", max_length=64, description="The customer's own order number")
     payment_terms: str | None = Ref("payment_terms", default=None, description="Empty = the customer's")
     quotation: str | None = Field(None, max_length=64, description="The quotation the order was won from")
+    single_delivery: bool = Field(False, description="Ship the whole order together (a kit): every line is confirmed "
+                                                     "in full, for the date the last one can be, or none is")
     credit_block: bool = Field(False, description="Over the customer's credit limit: not delivered until released")
     credit_note: str = Field("", max_length=200, description="Why it was blocked, or who released it")
     confirmation_sent_on: dt.date | None = Field(None, description="When the order confirmation went to the customer")

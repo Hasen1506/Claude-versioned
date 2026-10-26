@@ -10,7 +10,8 @@ What happened before ``as_of`` becomes the new starting position:
 * elapsed forecast is dropped (period records straddling ``as_of`` keep their remaining share, and the forecast as
   entered, against which every plan counts the orders already delivered: plan/consumption.py);
 * the elapsed weeks are logged as forecast-vs-actual records, and actual sales are appended to history;
-* closed orders are logged with due and delivery dates — the source of OTIF and supplier reliability.
+* closed orders are logged with due and delivery dates — the source of OTIF and supplier reliability;
+* with firming type 1 or 2, the planned orders that now start inside a product's planning time fence are firmed.
 
 Demand dates are delivery dates at the demand location, so a sale shipped to a customer counts on the day
 it arrives there (goods issue + the lane's transit): for OTIF, for accuracy weeks and for history.
@@ -26,15 +27,40 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from ..model import (
-    ClosedOrder, Dataset, DemandKind, GoodsMovement, LocationProduct, MovementType, NegativeStock, RolledWeek,
-    SalesHistory, StockType,
+    ClosedOrder, Dataset, DemandKind, GoodsMovement, LocationProduct, MovementType, NegativeStock, OrderStock,
+    RolledWeek, SalesHistory, StockType,
 )
-from .lots import batch_index, lots, planning_stock
+from .lots import batch_index, lots, order_stock, planning_stock
 from .result import OrderChange, RollReport, StockChange
 from .stock import (
     EPS, _sum, accuracy_records, before, by_ref, counterparty, demand_keys, pending_openings, refresh_actuals,
     delivered_between, sale_days, sale_point, stock, week_grid, forecast_days,
 )
+
+
+def sold_out(ds: Dataset, as_of: date) -> set[tuple[str, str, date]]:
+    """The days a sale left its shipping place with no free stock of the product at the end of the day: what sold
+    there is a floor on the demand, not the demand (a customer who came later found the shelf empty)."""
+    days: dict[tuple[str, str], set[date]] = defaultdict(set)
+    for m in ds.movements:
+        if m.type is MovementType.SALE and m.date < as_of:
+            days[(m.location, m.product)].add(m.date)
+    if not days:
+        return set()
+    moves: dict[tuple[str, str], list[GoodsMovement]] = defaultdict(list)
+    for m in before(ds, as_of):
+        if m.sales_order is None and (m.location, m.product) in days:
+            moves[(m.location, m.product)].append(m)
+    out: set[tuple[str, str, date]] = set()
+    for node, sale_on in days.items():
+        level, ms, i = 0.0, sorted(moves[node], key=lambda m: m.date), 0
+        for d in sorted(sale_on):
+            while i < len(ms) and ms[i].date <= d:
+                level += ms[i].signed
+                i += 1
+            if level <= EPS:
+                out.add((node[0], node[1], d))
+    return out
 
 
 def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
@@ -74,6 +100,16 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
         lp.on_hand = after_q
         if abs(after_q - before_q) > EPS:
             rep.stock.append(StockChange(location=node[0], product=node[1], before=before_q, after=after_q))
+    # stock held for sales orders: planned, promised and issued only to its order
+    held = order_stock(movs)
+    for node in sorted(set(held) | {k for k, lp in by_key.items() if lp.order_stock}):
+        lp = by_key.get(node)
+        if lp is None:
+            lp = LocationProduct(location=node[0], product=node[1])
+            lps.append(lp)
+            by_key[node] = lp
+        lp.order_stock = [OrderStock(order=so, qty=round(q, 6)) for so, q in sorted(held.get(node, {}).items())
+                          if q > EPS]
 
     # ② firm receipts -------------------------------------------------------------------------------------
     got, g_first, g_last, g_final = _sum(movs, {MovementType.RECEIPT},
@@ -214,14 +250,19 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
     have = {(h.location, h.product, h.date) for h in imported}
     was = {(h.location, h.product, h.date): h.qty for h in ds.history if h.from_journal}
     journal: dict[tuple[str, str, date], float] = defaultdict(float)
+    emptied = sold_out(ds, as_of)
+    out_of_stock: set[tuple[str, str, date]] = set()
     for m in ds.movements:
         if m.type is not MovementType.SALE:
             continue
         (loc, prod), day = sale_point(ds, m, keys)
         if day < as_of and (loc, prod, day) not in have:
             journal[(loc, prod, day)] += m.net
+            if (m.location, m.product, m.date) in emptied:
+                out_of_stock.add((loc, prod, day))
     history = imported + [SalesHistory(location=k[0], product=k[1], date=k[2], qty=round(q, 6),
-                                       price=ds.selling_price(k[0], k[1]), from_journal=True)
+                                       price=ds.selling_price(k[0], k[1]), stockout=k in out_of_stock,
+                                       from_journal=True)
                           for k, q in sorted(journal.items())]
     rep.history_added = sum(1 for k, q in journal.items() if abs(was.get(k, 0.0) - round(q, 6)) > EPS)
 
@@ -257,13 +298,50 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
         rep.warnings.append(f"{len(past_due)} open receipt(s) past due: {', '.join(past_due[:6])}"
                             + ("…" if len(past_due) > 6 else ""))
     rep.ok = True
-    return Dataset.model_validate(new.model_dump()), rep
+    return _firm_fence(Dataset.model_validate(new.model_dump()), rep, prev)
+
+
+def _firm_fence(ds: Dataset, rep: RollReport, prev: date) -> tuple[Dataset, RollReport]:
+    """Firming types 1 and 2 (S/4 §8.5, automatic firming): the planned orders that now start inside a product's
+    planning time fence are firmed as the week rolls, so the weeks ahead keep the plan the shop floor works to. They
+    are the orders last week's plan had: the rolled company is planned with each fence still ending where it ended
+    last week (an order on time then is firmed on time, not moved to the new fence end), and what starts before the
+    new fence end is firmed. Buys become purchase orders (not sent: the buyers send them), as the firm action makes
+    them."""
+    from ..plan import run_mrp
+    from ..plan.mrp import fence_days_to, fence_end
+    from .firm import firm_orders
+
+    before = ds.model_copy(update={"settings": ds.settings.model_copy(update={"planning_start": prev})})
+    ends: dict[tuple[str, str], date] = {}
+    lps = []
+    for lp in ds.location_products:
+        node = (lp.location, lp.product)
+        p = ds.planning_lp(node)
+        end = fence_end(ds, node, p) if p.firming_type in (1, 2) else None
+        if end is None:
+            lps.append(lp)
+            continue
+        ends[node] = end
+        last = fence_end(before, node, p)
+        lps.append(p.model_copy(update={"mrp_group": None, "planning_time_fence_days": fence_days_to(ds, node, last)}))
+    if not ends:
+        return ds, rep
+    plan = run_mrp(ds.model_copy(update={"location_products": lps}))
+    ids = [o.id for o in plan.orders if (o.location, o.product) in ends and o.start_date < ends[(o.location, o.product)]]
+    if not ids:
+        return ds, rep
+    out, fr = firm_orders(ds, plan, ids)
+    if fr.ok:
+        rep.firmed, rep.purchase_orders = fr.firmed, fr.purchase_orders
+        ds = out
+    return ds, rep
 
 
 def unrestricted(movs) -> dict[tuple[str, str], float]:
     out: dict[tuple[str, str], float] = defaultdict(float)
     for m in movs:
-        if m.stock_type is StockType.UNRESTRICTED:
+        if m.stock_type is StockType.UNRESTRICTED and m.sales_order is None:
             out[(m.location, m.product)] += m.signed
     return out
 

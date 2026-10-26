@@ -35,7 +35,7 @@ test('procure to pay: firmed and sent, released at two levels, confirmed in two 
   await open(page);
 
   // firming makes the purchase order and offers to send it; above two release levels it waits
-  await page.goto('/#/execution/orders');
+  await page.goto('/#/plan/firm');
   const calculate=page.getByRole('button',{name:/^(Recalculate the supply plan|Calculate the supply plan)$/});
   // pages load on demand: wait for the firm zone to be drawn before asking whether the plan needs calculating
   await expect(page.getByRole('heading',{name:/^Firm zone:/})).toBeVisible({timeout:45000});

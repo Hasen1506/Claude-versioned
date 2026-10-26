@@ -4,7 +4,7 @@ Ideas met while implementing the roadmap from the UX audit of 7 Oct 2026 (PRs A�
 candidate for a later PR. Newest at the bottom of each group.
 
 ## Promising and planning
-- **Promise against a P90 demand view.** Run ATP with the forecast's upper interval so sales sees a "safe" date beside
+- **Promise against a P90 demand view.** (built, ENTERPRISE_PLAN 4.4) Run ATP with the forecast's upper interval so sales sees a "safe" date beside
   the expected one.
 - **Plan around a loop instead of blocking.** Data check blocks the whole plan for one circular route; plan the rest
   and mark the loop's nodes.
@@ -45,29 +45,29 @@ candidate for a later PR. Newest at the bottom of each group.
 
 ## S/4 guide backtest, part B (§6 order capture, §7 aATP, §8 MRP, §9 PP/DS)
 Found while backtesting the engine against the S/4HANA supply-chain guide (8 Oct 2026). Ranked by value; none built.
-- **Outbound handling times in delivery scheduling (fig. 6.2).** The promised date is scheduled back from the requested
+- **Outbound handling times in delivery scheduling (fig. 6.2) (built, ENTERPRISE_PLAN 2.2).** The promised date is scheduled back from the requested
   delivery date by transit and goods-receipt time only. Add pick/pack and loading time at the shipping location (and a
   transport-planning lead time on the lane), so the material availability date and goods-issue date the guide draws
   are real: today every warehouse that needs a day to pick confirms a day too early.
-- **A rescheduling horizon (§8.1).** MRP pulls a firm receipt in only when a new order could not arrive sooner, so a PO
+- **A rescheduling horizon (§8.1) (built, ENTERPRISE_PLAN 2.1).** MRP pulls a firm receipt in only when a new order could not arrive sooner, so a PO
   due a week late is duplicated by a new PR (now reported as RECEIPT_NOT_NEEDED). Within a horizon per product, propose
   "reschedule in" first and create new supply only beyond it. Plan-changing: needs a documented differential entry.
-- **DDMRP as a planning type, not only an analysis (§8.7 pitfall).** `ddmrp_buffer` sizes zones and a net-flow
+- **DDMRP as a planning type, not only an analysis (§8.7 pitfall) (built, ENTERPRISE_PLAN 2.4).** `ddmrp_buffer` sizes zones and a net-flow
   recommendation on the inventory page, but MRP still plans the same item by net requirements: the two competing signals
   the guide warns about. An MRP type `ddmrp` would let the buffer (TOG − NFP when NFP ≤ TOY) drive the planned orders,
   with buffer-status (red/yellow) items in the inbox.
-- **Configurable rescheduling tolerance.** `RESCHEDULE_OUT` uses a fixed 3-day tolerance; make it a planning setting
+- **Configurable rescheduling tolerance (built, ENTERPRISE_PLAN 2.1).** `RESCHEDULE_OUT` uses a fixed 3-day tolerance; make it a planning setting
   (per MRP group) as S/4 does.
-- **Firming types 2–4 (§8.5).** Only type 1 exists (new proposals move to the fence end). Add "no proposals inside the
+- **Firming types 2–4 (§8.5) (built, ENTERPRISE_PLAN 2.3).** Only type 1 exists (new proposals move to the fence end). Add "no proposals inside the
   fence, report the shortage" (type 2) and manual firming, for plants that must not get automatic late orders.
-- **Fences and GR time in working days.** Safety time now counts working days (S4-B2); the planning time fence and the
+- **Fences and GR time in working days (built, ENTERPRISE_PLAN 2.3, a company setting).** Safety time now counts working days (S4-B2); the planning time fence and the
   goods-receipt processing time still count calendar days, while S/4 counts all three in working days. Changing them
   changes saved data's meaning: needs a migration note.
-- **Allocation hierarchy and sequence (§7.4).** Allocations cap one product × customer set × period. A product-family
+- **Allocation hierarchy and sequence (§7.4) (built, ENTERPRISE_PLAN 2.7).** Allocations cap one product × customer set × period. A product-family
   cap checked before the customer cap, carry-forward of unused allocation, and a catch-all bucket are missing.
-- **Optimising lot sizes (§8.3).** Part-period balancing / least unit cost / Groff for lumpy demand, beside EOQ.
-- **Fixed pegging (§9.2).** Hard-link a firm supply to a sales order (MTO traceability) so replanning cannot reassign it.
-- **Multi-item single delivery (§7.2).** Confirm the lines of one order together (all on the date the last is
+- **Optimising lot sizes (§8.3) (built, ENTERPRISE_PLAN 2.7).** Part-period balancing / least unit cost / Groff for lumpy demand, beside EOQ.
+- **Fixed pegging (§9.2) (built, ENTERPRISE_PLAN 2.5).** Hard-link a firm supply to a sales order (MTO traceability) so replanning cannot reassign it.
+- **Multi-item single delivery (§7.2) (built, ENTERPRISE_PLAN 2.7).** Confirm the lines of one order together (all on the date the last is
   available) for kits, instead of line by line.
 
 ## S/4 guide backtest, part C (§10–16, §18.2)
@@ -83,7 +83,7 @@ recorded only.
   working days before the PO date; a PO placed today does not wait for it again.
 - **Schedule adherence counts orders still open past their week (built).** §18.2: finished in the planned period ÷
   orders *planned*; the KPI divided by closed orders only, so a plant whose orders run late showed only those that made it.
-- **Sales-order stock for make to order (segment E).** §16.2: supply made for one MTO order is reserved to it and
+- **Sales-order stock for make to order (segment E) (built, ENTERPRISE_PLAN 2.5).** §16.2: supply made for one MTO order is reserved to it and
   cannot be consumed by another. Planning nets MTO anonymously (free stock first, any order's receipt); give firm
   receipts an optional sales-order assignment and peg/issue only to it. High value for job shops; large.
 - **Moving-average valuation and actual GR prices.** §12.4: stock is valued at one planned price per place (≈ price
@@ -92,11 +92,11 @@ recorded only.
 - **Inventory turns and cash-to-cash.** Not in §18.2's list, but the money view the guide closes with (§15): DIO from
   stock value ÷ COGS per day, DSO from open receivables, DPO from open payables (both already in Selling/Buying),
   cash-to-cash = DIO + DSO − DPO, on the KPI page with numerator and denominator like the others.
-- **Availability re-check at delivery creation.** §13: the delivery re-checks availability (rule A) before picking.
+- **Availability re-check at delivery creation (built, ENTERPRISE_PLAN 2.6).** §13: the delivery re-checks availability (rule A) before picking.
   Today a delivery is created whatever the stock, and the shortfall only shows at goods issue.
-- **OTIF blind spot for orders not shipped yet.** §18.2 OTIF is delivery-based, as the app's; add the count (and
+- **OTIF blind spot for orders not shipped yet (built, ENTERPRISE_PLAN 2.6).** §18.2 OTIF is delivery-based, as the app's; add the count (and
   value) of open lines already past their requested/confirmed date to the KPI note so a late backlog is not invisible.
-- **Re-pricing of lines without an agreed price.** §15 PITFALL (pricing type B vs G): a line taken through Selling
+- **Re-pricing of lines without an agreed price (built, ENTERPRISE_PLAN 2.6).** §15 PITFALL (pricing type B vs G): a line taken through Selling
   carries its price forward, but an imported line with no price is billed at today's list price (without its quantity
   scale). Freeze the price on such a line at goods issue.
 - **Third-party (drop-ship) orders.** §16.3 TAS: a sales line bought from a supplier who ships straight to the
@@ -107,7 +107,7 @@ recorded only.
   sent to the job worker are tracked as stock at the supplier (special stock O) and consumed when the finished part
   comes back; today a subcontracted step only adds days and a price, and the parts never leave the plant's stock.
   High value for Indian manufacturers (job work under GST); large.
-- **Supplier lead-time deviation.** §11 outputs / §18.2: actual (PO date → goods receipt) vs planned lead time per
+- **Supplier lead-time deviation.** (built, ENTERPRISE_PLAN 4.4) §11 outputs / §18.2: actual (PO date → goods receipt) vs planned lead time per
   supplier and product, shown beside supplier reliability and offered as `lead_time_std_days`, so safety stock uses a
   measured spread.
 
@@ -132,19 +132,19 @@ small or mid-sized planner. None is built.
   - An S&OP release that splits a begun forecast makes its pieces new forecasts, without the original. Deliveries
     made before the split then stop reducing the pieces.
   - A begun forecast edited by hand keeps its original. Decide whether an edit should start a new original.
-- **Planning at a common platform (strategies 60/63 "planning material") (high, L).** Many SMEs sell variants (sizes,
+- **Planning at a common platform (strategies 60/63 "planning material") (high, L) (built, ENTERPRISE_PLAN 4.3).** Many SMEs sell variants (sizes,
   colours, voltages) of one base: forecast the base once, let each variant's orders consume it with a conversion
   factor. Today each variant needs its own forecast.
-- **Forecast on an assembly consumed by dependent demand (strategy 70/74) (med, M).** A forecast on a sub-assembly
+- **Forecast on an assembly consumed by dependent demand (strategy 70/74) (med, M) (built for 70, ENTERPRISE_PLAN 4.3).** A forecast on a sub-assembly
   is planned on top of the dependent requirements from its parents instead of being consumed by them, so pre-building
   long-lead sub-assemblies to forecast double-counts.
-- **Strategy advisor from lead times (§5.4 deep dive) (med, S).** CDT ≥ CLT+ALT → make to order; ALT ≤ CDT <
+- **Strategy advisor from lead times (§5.4 deep dive) (med, S) (built, ENTERPRISE_PLAN 4.3).** CDT ≥ CLT+ALT → make to order; ALT ≤ CDT <
   CLT+ALT → assemble to order; CDT < ALT → make to stock consuming forecast. The engine knows ALT and CLT (lead-time
   model); with a "customer accepts N days" per product it can flag a strategy that cannot meet it.
 - **Consumption mode: forward first, and windows in working days (med, S).** Orders always look back first, then
   forward (SAP mode 2). SAP also has forward-then-backward (4); and SAP counts the windows in working days, the app in
   calendar days (the field help now says so).
-- **Make-to-order stock kept apart (sales-order stock, special stock E) (med, L).** MTO orders use free stock first
+- **Make-to-order stock kept apart (sales-order stock, special stock E) (med, L) (built, ENTERPRISE_PLAN 2.5).** MTO orders use free stock first
   (by design, and the form says so); an order-specific stock segment would let a business keep customer-specific
   goods from being shipped to someone else.
 - **GR processing in working days (§17.1) (low, S).** GR days are counted in calendar days, so goods can become
@@ -160,3 +160,91 @@ customers at unit value, on-hand, customer invoices and supplier invoices with t
 on 9 Oct 2026. Not built yet:
 - **Targets for the working-capital measures (low, S).** They are ungraded until a company sets a target. A
   suggested target from the company's own last quarter would grade them from day one.
+
+## Inventory policy (CONFORMANCE §1)
+- **A cost of a shortage.** A cost per unit short (or per order late) on the product, so a target can be chosen where
+  the next point of service costs more in stock than it saves in shortages, instead of from the ABC-XYZ table.
+- **A single-period buy.** For a season's or an event's stock bought once (newsvendor): the quantity where the chance
+  of selling the last unit equals underage ÷ (underage + overage) cost.
+
+## Demand planning (CONFORMANCE §2)
+
+* **Accuracy by lag (D19).** A waterfall of each period's forecast as it stood 1, 2, 3 … periods before, from the kept
+  releases, instead of one lag at a time.
+* **Working-day and festival effects (D20).** A month with fewer selling days, or a Diwali closure, read from the
+  calendar into the forecast instead of through an event.
+* **Price as a driver (D21).** The price kept on each sales-history row used as a regressor (elasticity), so a price
+  change moves the forecast without an event.
+* **Customer forecasts (D22).** A key customer's own forecast taken in, compared with ours and blended where it has
+  been the better one.
+* **Demand sensing (D23).** The next two or three weeks nudged by open orders and the latest days' sales.
+* **A short delivery closed on an order as lost demand.** The roll marks stock-outs from the journal; a closed short
+  order could write its shortfall as `lost_qty` too.
+
+## Supply planning (CONFORMANCE §3)
+
+* **Kanban (M21).** Pull loops for repetitive parts: a number of cards and a container quantity per loop, the plan
+  replenishing what was used instead of netting forecasts.
+* **MRP areas (M22).** A storage location or a subcontractor planned on its own within a place.
+* **Range of coverage (M23).** Safety stock and a maximum as days of demand (a target range), not only a quantity.
+* **A planning calendar on time-phased MRP (M24).** Orders placed on given days, each covering to the next; the review
+  calendar now does this on a reorder point.
+
+## Buying (CONFORMANCE §4)
+
+* **Requests for quotation (B17).** Ask several suppliers for a part, compare their offers (price, scales, lead time,
+  terms, landed cost) side by side and award one, which becomes the source.
+* **A weighted supplier score (B19).** Delivery (on time, in full), quality (rejects and returns), price (against the
+  plan's and the market's) and service in one rating per supplier.
+* **Consignment stock (B20).** The supplier's stock on our premises, paid for when it is taken.
+* **Incoterms in the landed cost (B22).** Who pays the freight and the duty decided by the order's incoterm.
+* **Spend by month and product group.** The spend view per period and family, to see where it is growing.
+
+## Selling (CONFORMANCE §5)
+
+* **Substitution in backorder processing (S11).** Substitutes are offered and taken by hand; backorder processing could
+  take them itself, by a rule per customer segment.
+* **Customer segments by revenue (S22).** Customers classed A, B, C by revenue or margin, each class with its service
+  target and its promising priority, instead of choosing segments by hand.
+* **Quotation conversion and the order book (S23).** Win rate by customer and product, lost reasons counted, and the
+  open orders by age and value.
+* **Rebates and volume agreements (S24).** A customer earns money back above a volume in a period, accrued against
+  revenue as they buy.
+* **Freight, surcharges and a minimum order value on customer orders (S25).**
+* **Consignment at the customer and vendor-managed inventory (S26).** Our stock at the customer, billed when used, and
+  replenishment we plan from their stock and sales.
+
+## Warehouse (CONFORMANCE §6)
+
+* **Slotting (W8).** Fast movers, by picks over the last weeks, proposed for the bins nearest the start of the walk.
+* **Handling units (W16).** Pallets and cartons with what is on them, nested and labelled (SSCC), moved and shipped
+  whole.
+* **Cross-docking (W17).** A receipt that a waiting delivery needs goes straight to goods out, not to a bin.
+* **Space against capacity in the plan (W19).** MRP warns when the projected stock at a place takes more volume than
+  the place holds, as S&OP already caps it.
+* **Warehouse measures (W20).** Pick accuracy (short picks), dock-to-stock time, order to goods issue, lines picked a
+  day.
+* **Workload of a wave (W21).** Hours a wave takes by time standards per line and per unit, against the people on the
+  shift.
+
+## Transport (CONFORMANCE §7)
+
+* **Incoterms in the landed cost (T12, B22).** A collected purchase's freight, planned or billed, added to the cost of
+  what it carried, and a delivered one's left out.
+* **Multi-stop routes (T13).** Several drops on one vehicle in a sequence, each stop's time and the route's cost.
+* **Carrier performance (T14).** Tenders accepted, picked up and delivered on time per carrier, weighed in the choice.
+* **Billed freight in cost to serve (T15).** What carriers bill shared to the customers and products it carried.
+* **Dock appointments (T16).** Loading and unloading slots per dock, booked by the freight orders.
+* **Shipment tracking (T17).** Events from the carrier (picked up, in transit, delivered) on the freight order.
+
+## Money (CONFORMANCE §8)
+
+* **Overhead rates (F14).** Overhead absorbed by rates on machine and labour hours and a share on material, in the
+  roll-up and the production order costs.
+* **Write-downs (F17).** Stock that will expire or no longer sells written down to what it can be sold for, posted to
+  the journal.
+* **Currency revaluation (F18).** Rates by date and open receivables and payables in other currencies revalued at the
+  period end.
+* **Cash with the bank (F15).** The cash projection started from the bank balance, with tax payments and fixed costs
+  (salaries, rent) on their dates.
+

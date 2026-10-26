@@ -8,10 +8,19 @@ in the UI ("Load example"), and they are validated in the engine test suite.
 from __future__ import annotations
 
 import json
+import os
+import platform
 import random
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+
+# One linear-algebra kernel on every x86 machine, set before numpy loads: OpenBLAS otherwise picks one per processor,
+# and the forecasts fitted for the kept releases differ by a tenth between them (an AVX-512 machine and an AVX2 one
+# rounded a kettle week to 641 and 640), so the file would not be the same on every machine.
+if platform.machine().lower() in ("x86_64", "amd64"):
+    os.environ.setdefault("OPENBLAS_CORETYPE", "Haswell")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "engine"))
@@ -56,6 +65,43 @@ def weekly_history(loc: str, prod: str, base: float, season: dict[int, float], r
     return out
 
 
+def delhi_warehouse() -> dict:
+    """The Delhi DC's bins (Enterprise 6.1): a picking area of shelves along the walk, filled first and topped up with
+    the same product, and a high-rack reserve by weight behind it. Stock taken at go-live is in no bin yet: putting
+    it away is the first warehouse step. The first six shelves are kept two to each appliance and refilled from the
+    reserve when down to 100 (Enterprise 8.3); the last two take whatever comes."""
+    kept = ["KT-15", "KT-15", "MG-500", "MG-500", "MG-750", "MG-750"]
+    shelves = [{"location": "DC-DELHI", "id": f"S-01-{i:02d}", "storage_type": "SHELF", "walk": 10 * i, "max_qty": 300,
+                **({"product": kept[i - 1], "min_qty": 100} if i <= len(kept) else {})} for i in range(1, 9)]
+    racks = [{"location": "DC-DELHI", "id": f"R-{a:02d}-{i:02d}", "storage_type": "RACK", "walk": 100 * a + 10 * i,
+              "max_kg": 1800} for a in (1, 2) for i in range(1, 5)]
+    return {
+        "storage_types": [
+            {"location": "DC-DELHI", "id": "SHELF", "name": "Picking shelves", "putaway": "add_to_stock",
+             "bins_per_product": 2, "sequence": 10},
+            {"location": "DC-DELHI", "id": "RACK", "name": "High rack reserve", "putaway": "next_empty",
+             "picking": False, "sequence": 20}],
+        "bins": shelves + racks,
+        "putaway_rules": [{"location": "DC-DELHI", "product": "", "storage_types": ["SHELF", "RACK"]}],
+    }
+
+
+def kaveri_carriers() -> list[dict]:
+    """Three fictional carriers (Enterprise 6.3). Sahyadri charges a smaller flat fee and a rate a kilogram, so it is
+    the cheaper truck for a light load; Deccan a flat rate a truck, the cheaper one when it is full. Northline carries
+    part loads on every LTL lane by the kilogram, never under its minimum."""
+    return [
+        {"id": "CR-DECCAN", "name": "Deccan Roadlines", "payment_days": 30, "rates": [
+            {"lane": "LN-PUNE-DEL", "mode": "truck_ftl", "per_shipment": 32000},
+            {"lane": "LN-PUNE-BHW", "mode": "truck_ftl", "per_shipment": 9500}]},
+        {"id": "CR-SAHYADRI", "name": "Sahyadri Freight Carriers", "payment_days": 15, "rates": [
+            {"lane": "LN-PUNE-DEL", "mode": "truck_ftl", "per_shipment": 24000, "per_kg": 1.2},
+            {"lane": "LN-PUNE-BHW", "mode": "truck_ftl", "per_shipment": 7000, "per_kg": 0.5}]},
+        {"id": "CR-NORTHLINE", "name": "Northline LTL Express", "payment_days": 30, "rates": [
+            {"mode": "truck_ltl", "per_kg": 3.2, "min_charge": 1500, "capacity_kg": 5000, "capacity_m3": 30}]},
+    ]
+
+
 def kitchenware() -> dict:
     rng = random.Random(42)
     festive = {10: 1.35, 11: 1.25, 12: 0.95, 1: 0.9, 2: 0.95, 3: 1.05}
@@ -65,10 +111,14 @@ def kitchenware() -> dict:
     ]
     locations = [
         {"id": "PLT-PUNE", "name": "Pune plant (Chakan)", "type": "plant", "region": "West", "address": "Plot 21, MIDC Chakan Phase II\nPune 410501, Maharashtra", "calendar": "CAL-IN-6D",
+         "tax_id": "27AAJCK4821M1Z3",
          "lat": 18.76, "lon": 73.86, "storage_capacity_m3": 2500, "handling_cost_per_unit": 2},
         {"id": "DC-BHIWANDI", "name": "Bhiwandi DC (Mumbai)", "type": "dc", "region": "West", "address": "Gala 4, Building B7, Vashere logistics park\nBhiwandi 421302, Maharashtra", "calendar": "CAL-IN-6D",
          "lat": 19.30, "lon": 73.06, "storage_capacity_m3": 4000, "handling_cost_per_unit": 6},
+        # Enterprise 7.3: the Delhi DC belongs to the group's northern sales company, which buys from Kaveri at cost
+        # plus 6 % and invoices from its own GSTIN in Haryana
         {"id": "DC-DELHI", "name": "Delhi NCR DC", "type": "dc", "region": "North", "address": "Warehouse 12, Sector 37 industrial area\nGurugram 122001, Haryana", "calendar": "CAL-IN-6D",
+         "entity": "KAN",
          "lat": 28.46, "lon": 77.03, "storage_capacity_m3": 3000, "handling_cost_per_unit": 7},
         {"id": "CUS-WEST-TRADE", "name": "West trade distributors", "type": "customer", "region": "West",
          "lat": 19.08, "lon": 72.88},
@@ -85,21 +135,29 @@ def kitchenware() -> dict:
          "lat": 22.54, "lon": 114.06},
         {"id": "SUP-PACK", "name": "Bhosari corrugated boxes", "type": "supplier", "region": "West", "address": "Plot 44, J block, Bhosari MIDC\nPune 411026, Maharashtra",
          "lat": 18.64, "lon": 73.84},
+        # Enterprise 7.1: a job worker who winds motors on Kaveri's parts when the winding machines are full, and an
+        # appliance maker who ships kettles straight to marketplace warehouses under Kaveri's name
+        {"id": "SUP-WIND", "name": "Bhosari winding works", "type": "supplier", "region": "West",
+         "address": "Shed 9, S block, Bhosari MIDC\nPune 411026, Maharashtra", "tax_id": "27AAKFB4417M1Z5",
+         "lat": 18.63, "lon": 73.83},
+        {"id": "SUP-VASAI", "name": "Vasai appliance works", "type": "supplier", "region": "West",
+         "address": "Gala 17, Sativali industrial estate\nVasai East 401208, Maharashtra",
+         "tax_id": "27AAGCV2290Q1ZK", "lat": 19.42, "lon": 72.87},
     ]
     products = [
-        {"id": "MG-500", "name": "Mixer grinder 500 W", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.2,
-         "volume_m3": 0.028, "price": 2890, "setup_group": "MG"},
-        {"id": "MG-750", "name": "Mixer grinder 750 W", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.9,
-         "volume_m3": 0.031, "price": 3990, "setup_group": "MG"},
-        {"id": "KT-15", "name": "Electric kettle 1.5 L", "type": "FG", "family": "Kettles", "weight_kg": 1.3,
-         "volume_m3": 0.009, "price": 1190, "setup_group": "KT"},
-        {"id": "MOT-500", "name": "Motor assembly 500 W", "type": "SFG", "weight_kg": 1.6, "volume_m3": 0.004,
+        {"id": "MG-500", "name": "Mixer grinder 500 W", "hsn": "85094010", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.2,
+         "volume_m3": 0.028, "price": 2890, "setup_group": "MG", "customer_wait_days": 2, "barcode": "8906011250005"},
+        {"id": "MG-750", "name": "Mixer grinder 750 W", "hsn": "85094010", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.9,
+         "volume_m3": 0.031, "price": 3990, "setup_group": "MG", "barcode": "8906011250012"},
+        {"id": "KT-15", "name": "Electric kettle 1.5 L", "hsn": "85167100", "type": "FG", "family": "Kettles", "weight_kg": 1.3,
+         "volume_m3": 0.009, "price": 1190, "setup_group": "KT", "customer_wait_days": 2, "barcode": "8906011250029"},
+        {"id": "MOT-500", "name": "Motor assembly 500 W", "hsn": "85013119", "type": "SFG", "weight_kg": 1.6, "volume_m3": 0.004,
          "setup_group": "W500"},
-        {"id": "MOT-750", "name": "Motor assembly 750 W", "type": "SFG", "weight_kg": 2.0, "volume_m3": 0.005,
+        {"id": "MOT-750", "name": "Motor assembly 750 W", "hsn": "85013119", "type": "SFG", "weight_kg": 2.0, "volume_m3": 0.005,
          "setup_group": "W750"},
-        {"id": "RM-CU-WIRE", "name": "Enamelled copper wire", "type": "RM", "base_uom": "KG", "weight_kg": 1.0,
+        {"id": "RM-CU-WIRE", "name": "Enamelled copper wire", "hsn": "85441110", "type": "RM", "base_uom": "KG", "weight_kg": 1.0,
          "volume_m3": 0.0002},
-        {"id": "RM-STAMP", "name": "Stator/rotor lamination set", "type": "RM", "weight_kg": 0.9, "volume_m3": 0.0006},
+        {"id": "RM-STAMP", "name": "Stator/rotor lamination set", "hsn": "85030010", "type": "RM", "weight_kg": 0.9, "volume_m3": 0.0006},
         {"id": "RM-JARSET", "name": "Stainless jar set (3 jars)", "type": "RM", "weight_kg": 1.4, "volume_m3": 0.012},
         {"id": "RM-BODY-MG", "name": "Moulded MG body", "type": "RM", "weight_kg": 0.6, "volume_m3": 0.006},
         {"id": "RM-BODY-KT", "name": "Kettle body (SS)", "type": "RM", "weight_kg": 0.7, "volume_m3": 0.006},
@@ -297,6 +355,9 @@ def kitchenware() -> dict:
          "due_date": "2026-10-19", "source": "PIR-HEATER"},
         {"id": "MO-100455", "kind": "production", "location": "PLT-PUNE", "product": "MG-500", "qty": 800,
          "due_date": "2026-09-30", "source": "PV-MG-500"},
+        # winding for the 750 W motors, released ahead of the festive build
+        {"id": "MO-100461", "kind": "production", "location": "PLT-PUNE", "product": "MOT-750", "qty": 600,
+         "due_date": "2026-10-09", "start_date": "2026-10-05", "source": "PV-MOT-750"},
         {"id": "STO-2201", "kind": "transfer", "location": "DC-DELHI", "product": "KT-15", "qty": 600,
          "due_date": "2026-09-29", "source": "LN-PUNE-DEL"},
     ]
@@ -308,10 +369,13 @@ def kitchenware() -> dict:
         {"supplier": "SUP-COPPER", "contact": "Sales office Silvassa", "payment_terms_days": 45,
          "confirmation_required": True, "confirmation_days": 2},
         {"supplier": "SUP-PACK", "payment_terms_days": 30, "min_order_value": 5000, "under_delivery_tolerance": 0.02},
+        {"supplier": "SUP-WIND", "contact": "Shinde (works manager)", "payment_terms_days": 30},
+        {"supplier": "SUP-VASAI", "contact": "Order desk", "payment_terms_days": 45, "over_delivery_tolerance": 0.02},
     ]
     return {
         "schema_version": "1",
         "settings": {"company_name": "Kaveri Kitchenware Pvt Ltd (fictional)", "currency": "INR",
+                     "company_tax_id": "27AAJCK4821M1Z3",
                      "company_address": "Kaveri House, 3rd floor, Baner road\nPune 411045, Maharashtra",
                      "planning_start": START.isoformat(), "horizon_days": 182, "bucket": "week",
                      "fx_rates": {"USD": 84.2}, "wacc": 0.13, "holding_spread": 0.09,
@@ -320,6 +384,12 @@ def kitchenware() -> dict:
         "resources": resources, "production_sources": production_sources, "purchasing_sources": purchasing,
         "lanes": lanes, "vendors": vendors, "purchase_orders": [],
         "purchasing": {"approval_limit": 1000000, "release_window_days": 7},
+        **delhi_warehouse(),
+        "carriers": kaveri_carriers(),
+        "entities": [{"id": "KAN", "name": "Kaveri Appliances North Pvt Ltd (fictional)", "tax_id": "06AAJCK7716N1Z8",
+                      "address": "Unit 1104, Tower B, Global Business Park\nGurugram 122002, Haryana",
+                      "invoice_prefix": "KAN/"}],
+        "transfer_prices": [{"id": "TP-NORTH", "buyer": "KAN", "method": "cost_plus", "markup": 0.06}],
         "demand": demand, "receipts": receipts, "history": history, "events": events, "npi": npi,
         "overrides": overrides,
         # sequence-dependent setups: winding gauge change (thick→thin needs re-tensioning) and
@@ -330,6 +400,20 @@ def kitchenware() -> dict:
              "end": "2026-11-01", "qty": 1500, "fallback": "next_period"},
             {"id": "AL-ECOM-KT-NOV", "product": "KT-15", "customers": ["CUS-ECOM"], "start": "2026-11-01",
              "end": "2026-12-01", "qty": 1800, "fallback": "next_period"},
+        ],
+        # the 750 W grinder may ship for a 500 W order to the trade and online (product substitution), at the
+        # 500 W price: same base and jars, a stronger motor
+        "substitutions": [
+            {"product": "MG-500", "substitute": "MG-750", "customers": ["CUS-WEST-TRADE", "CUS-ECOM"],
+             "note": "same base and jars, a stronger motor, at the 500 W price"},
+        ],
+        # the year's sales budget by product family, which the monthly S&OP cycle sets the plan against
+        "budgets": [
+            {"month": f"{y}-{m:02d}-01", "family": fam, "qty": qty, "revenue": rev}
+            for (y, m), lift in (((2026, 10), 1.25), ((2026, 11), 1.1), ((2026, 12), 1.0), ((2027, 1), 0.9),
+                                 ((2027, 2), 0.9), ((2027, 3), 1.0))
+            for fam, qty, rev in (("Mixer grinders", round(9200 * lift), round(30_500_000 * lift, -4)),
+                                  ("Kettles", round(7400 * lift), round(8_800_000 * lift, -4)))
         ],
         # capacity investments appraised against the S&OP plan (P9)
         "finance": {"capacity_options": [
@@ -347,6 +431,12 @@ def kitchenware() -> dict:
     }
 
 
+def _kept_rows(ds: Dataset) -> list[dict]:
+    """The kept forecasts of a released company, in whole units so the file is reproducible across platforms."""
+    return [{**k.model_dump(mode="json"), **{f: round(getattr(k, f)) for f in ("naive", "statistical", "adjusted", "final")}}
+            for k in ds.forecast_snapshots]
+
+
 def released(data: dict) -> dict:
     """Run the demand-planning pipeline and write its consensus forecast into ``demand`` exactly as the
     Release button does, rounded to whole units so the file is reproducible across platforms."""
@@ -355,7 +445,38 @@ def released(data: dict) -> dict:
     fc = [{"location": d.location, "product": d.product, "date": d.date.isoformat(), "qty": round(d.qty),
            "kind": "forecast", "period_days": d.period_days}
           for d in new.demand if d.kind is DemandKind.FORECAST and round(d.qty) > 0]
-    return {**data, "demand": fc + [d for d in data["demand"] if d["kind"] != "forecast"]}
+    return {**data, "demand": fc + [d for d in data["demand"] if d["kind"] != "forecast"],
+            "forecast_snapshots": _kept_rows(new)}
+
+
+# the planners' overrides of the twelve weeks before the planning start (forecast value add): Sales West lifts its
+# trade forecasts by a quarter for the season it expects; the e-commerce desk adds a tenth to the marketplace for
+# the sale-season weeks it sees in its traffic
+PAST_OVERRIDES = (
+    [{"location": "CUS-WEST-TRADE", "product": p, "date": (START - timedelta(weeks=w)).isoformat(), "change": 0.25,
+      "reason": "Distributors expect a strong season", "author": "Sales West"}
+     for p in ("MG-500", "MG-750") for w in (2, 4, 5, 7, 8, 10)]
+    + [{"location": "CUS-ECOM", "product": p, "date": (START - timedelta(weeks=w)).isoformat(), "change": 0.1,
+        "reason": "Marketplace traffic up", "author": "E-commerce desk"}
+       for p in ("MG-500", "KT-15") for w in (1, 2, 3, 5, 6)]
+)
+
+
+def with_kept_forecasts(data: dict, weeks: int = 12) -> dict:
+    """Twelve weekly forecast releases before the planning start, as the company would have made them: each from the
+    sales known that Monday, with the planners' overrides of the time, keeping what every layer said (forecast value
+    add). The overrides of those weeks are in the kept forecasts; the overrides list keeps only today's."""
+    kept: list[dict] = []
+    for w in range(weeks, 0, -1):
+        origin = START - timedelta(weeks=w)
+        past = {**data, "settings": {**data["settings"], "planning_start": origin.isoformat()},
+                "history": [h for h in data["history"] if date.fromisoformat(h["date"]) < origin],
+                "overrides": [o for o in PAST_OVERRIDES if date.fromisoformat(o["date"]) >= origin],
+                "forecast_snapshots": kept}
+        ds = Dataset.model_validate(past)
+        new, _ = release(ds, run_forecast(ds))
+        kept = _kept_rows(new)
+    return {**data, "forecast_snapshots": kept}
 
 
 def with_journal(data: dict) -> dict:
@@ -721,7 +842,7 @@ def chennai_port_pumps() -> dict:
 
 
 def main() -> None:
-    for name, build in (("kitchenware_network", lambda: with_history(with_journal(released(kitchenware())))),
+    for name, build in (("kitchenware_network", lambda: with_history(with_journal(released(with_kept_forecasts(kitchenware()))))),
                         ("single_product_plant", single_product),
                         ("chennai_port_pumps", chennai_port_pumps)):
         data = build()

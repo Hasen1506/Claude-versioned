@@ -14,7 +14,7 @@ from datetime import timedelta
 
 from ..model import Dataset
 from ..plan import run_mrp
-from ..plan.leadtime import gr_days, location_calendar, resource_calendar
+from ..plan.leadtime import gr_after, gr_before, gr_days, location_calendar, resource_calendar
 from ..plan.result import PlanResult
 from ..plan.structure import entering, needs
 from ..time.capacity import NoWorkingTime, day_capacity, max_units
@@ -142,8 +142,7 @@ def build_instance(ds: Dataset, plan: PlanResult | None = None,
             continue
         due = rc.due_date
         if rc.id in need:
-            gr = math.ceil(gr_days(ds.location_product_by_key.get((rc.location, rc.product))) - 1e-9)
-            due = min(due, max(origin, need[rc.id] - timedelta(days=gr)))
+            due = min(due, max(origin, gr_before(ds, rc.location, rc.product, need[rc.id])))
         add(rc.id, ps, rc.location, rc.product, rc.qty, max(rc.start_date or origin, origin), due, firm=True,
             steps=rc.step_resources)
         if cfg.frozen_days and rc.scheduled and (rc.start_date or origin) < frozen_end:
@@ -362,9 +361,8 @@ def _run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None,
     for j in sorted(inst.jobs.values(), key=lambda j: (j.due, j.id)):
         m = meta[j.id]
         c = final.completion[j.id]
-        gr = math.ceil(gr_days(ds.location_product_by_key.get((m["location"], j.product))) - 1e-9)
         done_day = math.ceil(c / 24.0 - 1e-9)
-        avail = s.planning_start + timedelta(days=done_day + gr)
+        avail = gr_after(ds, m["location"], j.product, s.planning_start + timedelta(days=done_day))
         ready = max((final.parts.get(o.key, 0.0) for o in j.ops), default=0.0)
         came = []
         for sid, (prod, t) in m["from"].items():
@@ -425,7 +423,7 @@ def _compare_schedules(ds: Dataset) -> ScheduleComparison:
         return out
     inst, *_ = build_instance(ds)
     names = {h.id: h.name for h in HEURISTICS}
-    for rule in ("edd", "spt", "slack", "campaign", "backward"):
+    for rule in ("edd", "spt", "slack", "cr", "campaign", "backward"):
         t = time.perf_counter()
         seqs, hold = start(inst, rule, cfg.backward_buffer_days)
         d = decode(inst, seqs, hold)

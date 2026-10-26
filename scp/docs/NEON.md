@@ -18,7 +18,7 @@ Set server-only `DATABASE_URL` to the chosen branch's PostgreSQL URL, with `sslm
 
 When DATABASE_URL is absent, SCP_DB/local SQLite behavior is retained. An invalid or unreachable DATABASE_URL fails startup; it does not fall back to an ephemeral file. The application schema is `scp`, and requires CREATE SCHEMA and CREATE EXTENSION privileges for citext. Schema initialization takes an advisory lock. Existing SQLite SQL is adapted for bound PostgreSQL parameters, case-insensitive email columns and searches, generated IDs, binary revisions, double-precision worklist quantities, and immutable base-version triggers. Keep one uvicorn worker: the current Store shares one connection protected by an in-process lock, and some operations span multiple statements outside explicit transactions. Multi-worker or multi-instance writes require further transaction/connection refactoring.
 
-SCP_BACKUP_DIR is SQLite-only and fails explicitly when combined with PostgreSQL. Use PostgreSQL backups and Neon's retained restore history for hosted storage; the free history window is limited.
+SCP_BACKUP_DIR is SQLite-only and fails explicitly when combined with PostgreSQL. Back it up with `python -m scp.admin backup <folder>` (a consistent snapshot while the server runs; DEPLOY.md §4) and keep Neon's retained restore history as a second line; the free history window is limited.
 
 ## Validation
 

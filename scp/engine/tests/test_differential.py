@@ -60,7 +60,7 @@ INTENTIONAL: list[tuple[str, str, object]] = [
     ('S4-B3 (s4 backtest B): reschedule-out / receipt-not-needed exceptions (S/4 15 and 20), part 4',
      "scp/plan/mrp.py",
      ('                    fresh.add(max(d, o.available_date) + timedelta(days=shelf), o.qty, o.id)\n        self._peg(node, st)\n',
-      '                    fresh.add(max(d, o.available_date) + timedelta(days=shelf), o.qty, o.id)\n        if disc is None:\n            self._reschedule_out(node, st, thresholds)\n        self._peg(node, st)\n\n    def _reschedule_out(self, node: Node, st: _NodeState, thresholds: dict[date, float]) -> None:\n        """The rescheduling check the other way (S/4 exceptions 15 and 20): a firm receipt the plan does not need on its\n        date. Receipts are taken in date order; each is needed on the first checked date where the stock without it\n        (and without the firm receipts after it) would fall below the safety stock, target or reorder point. Needed\n        nowhere in the horizon: RECEIPT_NOT_NEEDED (cancel it, or pull it in instead of a new order); needed more than\n        RESCHEDULE_OUT_TOLERANCE_DAYS later: RESCHEDULE_OUT to that date. Advice only: the receipt keeps its date."""\n        firm = sorted((s for s in st.supplies if s.kind == "receipt"), key=lambda s: (s.date, s.id))\n        if not firm or not thresholds:\n            return\n        others = [s for s in st.supplies if s.kind != "receipt"]\n        out_req: dict[date, float] = defaultdict(float)\n        for r in st.reqs:\n            out_req[r.date] += r.qty\n        checks = sorted(thresholds)\n        for k, rc in enumerate(firm):\n            inflow: dict[date, float] = defaultdict(float)\n            for s in [*others, *firm[:k]]:\n                inflow[s.date] += s.qty\n            avail = 0.0\n            needed: date | None = None\n            for d in sorted(set(checks) | set(inflow) | set(out_req)):\n                avail += inflow.get(d, 0.0) - out_req.get(d, 0.0)\n                if d in thresholds and avail < thresholds[d] - EPS:\n                    needed = d\n                    break\n            if needed is None:\n                self._exc("RECEIPT_NOT_NEEDED", "warning",\n                          f"{rc.id}: {rc.qty:,.1f} arrive {rc.date.isoformat()} but nothing needs them before the "\n                          f"horizon ends: cancel or push it out (or pull it in in place of a new order)",\n                          node=node, order=rc.id, when=rc.date, qty=rc.qty)\n            elif (needed - rc.date).days > RESCHEDULE_OUT_TOLERANCE_DAYS:\n                self._exc("RESCHEDULE_OUT", "warning",\n                          f"{rc.id}: arrives {rc.date.isoformat()} but is first needed {needed.isoformat()}; push it "\n                          f"out by {(needed - rc.date).days} d", node=node, order=rc.id, when=needed, qty=rc.qty)\n')),
+      '                    fresh.add(max(d, o.available_date) + timedelta(days=shelf), o.qty, o.id)\n        if disc is None:\n            self._reschedule_out(node, st, thresholds)\n        self._peg(node, st)\n\n    def _reschedule_out(self, node: Node, st: _NodeState, thresholds: dict[date, float]) -> None:\n        """The rescheduling check the other way (S/4 exceptions 15 and 20): a firm receipt the plan does not need on its\n        date. Receipts are taken in date order; each is needed on the first checked date where the stock without it\n        (and without the firm receipts after it) would fall below the safety stock, target or reorder point. Needed\n        nowhere in the horizon: RECEIPT_NOT_NEEDED (cancel it, or pull it in instead of a new order); needed more than\n        RESCHEDULE_OUT_TOLERANCE_DAYS later: RESCHEDULE_OUT to that date. Advice only: the receipt keeps its date."""\n        firm = sorted((s for s in st.supplies if s.kind == "receipt"), key=lambda s: (s.date, s.id))\n        if not firm or not thresholds:\n            return\n        others = [s for s in st.supplies if s.kind != "receipt"]\n        out_req: dict[date, float] = defaultdict(float)\n        for r in st.reqs:\n            out_req[r.date] += r.qty\n        checks = sorted(thresholds)\n        for k, rc in enumerate(firm):\n            inflow: dict[date, float] = defaultdict(float)\n            for s in [*others, *firm[:k]]:\n                inflow[s.date] += s.qty\n            avail = 0.0\n            needed: date | None = None\n            for d in sorted(set(checks) | set(inflow) | set(out_req)):\n                avail += inflow.get(d, 0.0) - out_req.get(d, 0.0)\n                if d in thresholds and avail < thresholds[d] - EPS:\n                    needed = d\n                    break\n            if needed is None:\n                self._exc("RECEIPT_NOT_NEEDED", "warning",\n                          f"{rc.id}: {rc.qty:,.1f} arrive {rc.date.isoformat()} but nothing needs them before the "\n                          f"planning horizon ends: cancel or push it out (or pull it in in place of a new order)",\n                          node=node, order=rc.id, when=rc.date, qty=rc.qty)\n            elif (needed - rc.date).days > RESCHEDULE_OUT_TOLERANCE_DAYS:\n                self._exc("RESCHEDULE_OUT", "warning",\n                          f"{rc.id}: arrives {rc.date.isoformat()} but is first needed {needed.isoformat()}; push it "\n                          f"out by {(needed - rc.date).days} d", node=node, order=rc.id, when=needed, qty=rc.qty)\n')),
 ]
 
 
@@ -114,6 +114,61 @@ INTENTIONAL += [
      ("                o.projected_on_time_qty = sum(q for d, q in prof if d <= o.need_date)\n",
       _engine_passage("scp/plan/mrp.py", "                o.projected_on_time_qty = sum",
                       "                queue = [list(c) for c in prof]"))),
+]
+
+
+# ENTERPRISE_PLAN 2.5: a planned order made to order names the sales order it is for (none in these companies: the
+# random companies hold no stock or firm orders for a sales order, so only the empty field shows)
+INTENTIONAL += [
+    ("Sales-order stock: a planned order says which sales order it is made for (field)", "scp/plan/result.py",
+     ("    convertible: bool = True      # False: ATO forecast-driven FG supply\n",
+      _engine_passage("scp/plan/result.py", "    convertible: bool", "    unit_cost: float"))),
+]
+
+# ENTERPRISE_PLAN 4.2: a forecast period names who overrode it, so a release can keep it for forecast value add
+INTENTIONAL += [
+    ("Forecast value add: a forecast period names who overrode it (field)", "scp/demand/result.py",
+     ('    override_reason: str = ""\n',
+      '    override_reason: str = ""\n    override_author: str = ""\n')),
+]
+
+# ENTERPRISE_PLAN 4.4: the forecast summary adds up what a release writes as the high end of each period (P90)
+_PIPE = "scp/demand/pipeline.py"
+INTENTIONAL += [
+    ("Demand spread: the forecast summary's high end (field)", "scp/demand/result.py",
+     ("    total_final: float = 0.0\n",
+      _engine_passage("scp/demand/result.py", "    total_final: float", "\n\nclass ForecastResult"))),
+    ("Demand spread: math for rounding the high end up", _PIPE, ("import copy\n", "import copy\nimport math\n")),
+    ("Demand spread: the summary is given the dataset", _PIPE, ("summary=_summary(out)", "summary=_summary(out, ds)")),
+    ("Demand spread: the high end of a period, as a release writes it", _PIPE,
+     ("def _summary(series: list[Series]) -> Summary:\n",
+      _engine_passage(_PIPE, "def high_end(", "    abs_err = act = bias"))),
+    ("Demand spread: the summary adds it up", _PIPE,
+     ("total_final=sum(p.released_qty for s in series for p in s.forecast))",
+      _engine_passage(_PIPE, "total_final=sum(", "\n\n"))),
+]
+
+# ENTERPRISE_PLAN 5.1: a plan made from the previous plan's work says how many nodes it planned (None from scratch, as
+# here: the two engines plan each company from scratch)
+INTENTIONAL += [
+    ("Planning again: the plan says how many nodes it planned again", "scp/plan/result.py",
+     ("    issues: list[Issue] = Field(default_factory=list)\n",
+      _engine_passage("scp/plan/result.py", "    issues: list[Issue] = Field(default_factory=list)\n",
+                      "    planned_again: int | None = None\n") + "    planned_again: int | None = None\n")),
+]
+
+# Planned order numbers by the product at its place, so that a node planned again as before keeps its numbers
+INTENTIONAL += [
+    ("Planning again: a planned order's number names its product at its place", "scp/plan/mrp.py",
+     ('    def _next_id(self, kind: str) -> str:\n        self.counters[kind] += 1\n'
+      '        return f"{_PREFIX[kind]}-{self.counters[kind]:05d}"\n',
+      '    def _next_id(self, kind: str, node: Node) -> str:\n'
+      '        if not hasattr(self, "_node_no"):\n'
+      '            self._node_no = {n: i for i, n in enumerate(self.g.order, 1)}\n'
+      '        self.counters[(node, kind)] += 1\n'
+      '        return f"{_PREFIX[kind]}-{self._node_no[node]:04d}-{self.counters[(node, kind)]:02d}"\n')),
+    ("Planning again: the order's node is passed for its number", "scp/plan/mrp.py",
+     ("        oid = self._next_id(opt.kind)\n", "        oid = self._next_id(opt.kind, node)\n")),
 ]
 
 

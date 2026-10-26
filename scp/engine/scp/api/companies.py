@@ -40,6 +40,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
+import logging
 import math
 import os
 import secrets
@@ -61,32 +63,43 @@ from ..companies.store import PendingInvite
 from ..companies import mail, sso
 from ..companies.store import KEY_PREFIX
 from ..model.common import Out
+from ..plan.mrp import plan_owner
 from .working import asker, send_raw, takes_gzip, takes_rows
 
 router = APIRouter(prefix="/api", tags=["companies"])
 
-OPEN_PATHS = ("/api/health", "/api/auth/config", "/api/auth/signin", "/api/auth/signup", "/api/auth/reset",
+OPEN_PATHS = ("/api/health", "/api/metrics", "/api/auth/config", "/api/auth/signin", "/api/auth/signup", "/api/auth/reset",
               "/api/auth/reset/request", "/api/auth/sso/start", "/api/auth/sso/callback", "/api/auth/email/verify",
-              "/api/auth/csrf", "/api/auth/adopt")
+              "/api/auth/csrf", "/api/auth/adopt", "/api/auth/signin/second")
+# a supplier on their portal link (Enterprise 7.2): no sign-in, the link's secret (X-Portal-Token) is the credential;
+# still limited like any call without a session
+PORTAL_PATHS = ("/api/portal", "/api/portal/respond", "/api/portal/dispatch", "/api/portal/message",
+                "/api/portal/order")
 # calls that never act on the session cookie, so they need no CSRF token (sign-in itself, and swapping a token)
 NO_CSRF = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset", "/api/auth/reset/request", "/api/auth/adopt",
-           "/api/auth/email/verify")
+           "/api/auth/email/verify", "/api/auth/signin/second", *PORTAL_PATHS)
 # the sign-in calls that set the session cookie when a browser asks for it: that browser must prove it is this
 # application's own page (the double-submit token of ``GET /api/auth/csrf``), so a forged form cannot sign it into
 # someone else's account (login CSRF)
-COOKIE_SIGNIN = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset")
+COOKIE_SIGNIN = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset", "/api/auth/signin/second")
 SESSION_COOKIE, CSRF_COOKIE, CSRF_HEADER = "scp_session", "scp_csrf", "x-csrf-token"
 # the cost in units of one anonymous call (roadmap D): what is not listed costs 1
 ANON_COSTS: dict[str, int] = {
     "/api/plan": 20, "/api/plan/trace": 10, "/api/schedule": 30, "/api/schedule/compare": 40, "/api/sop": 20,
-    "/api/forecast": 10, "/api/inventory": 10, "/api/finance": 10, "/api/capacity/level": 10, "/api/compare": 40,
+    "/api/forecast": 10, "/api/inventory": 10, "/api/inventory/policy": 5, "/api/finance": 10, "/api/capacity/level": 10, "/api/compare": 40,
     "/api/promise": 5, "/api/promise/bop": 5, "/api/promise/check": 5, "/api/tower": 10, "/api/actuals": 5,
     "/api/purchasing": 5, "/api/sales": 5, "/api/network": 2, "/api/validate": 1,
     "/api/whatif": 80,                       # roadmap E: up to four full plans in one call
+    "/api/whatif/sweep": 160,                # enterprise 5.3: up to nine full plans (today and eight sizes)
+    "/api/ask": 40,                          # a plan and the worklist; a what-if question plans a copy too
     "/api/tower/fix": 30,                    # two plans and their exceptions
+    "/api/warehouse": 2,                     # enterprise 6.1: the place's journal read by bin
+    "/api/valuation": 5, "/api/transport": 5, "/api/cycle-counts": 5, "/api/outside": 5,   # enterprise 6.2: the journal and the invoices replayed
+    "/api/intercompany": 10,                 # enterprise 7.3: the books twice, each company's and the group's
+    "/api/accounting": 10, "/api/accounting/export": 10,   # enterprise 7.4: the stock books once more, with every document
 }
 RATED_PATHS = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset", "/api/auth/reset/request",
-               "/api/auth/email/verify", "/api/auth/email/request")
+               "/api/auth/email/verify", "/api/auth/email/request", "/api/auth/signin/second")
 
 
 def _int_env(name: str, default: int) -> int:
@@ -109,6 +122,20 @@ def signup_policy() -> str:
     if p not in ("open", "invite", "closed"):
         raise CompanyError("SCP_SIGNUP must be open, invite, or closed", 503)
     return p
+
+
+def production_guard() -> None:
+    """With ``SCP_ENV=production`` the server does not start open to anyone: anyone may make an account
+    (``SCP_SIGNUP=open``) and no call needs a session (no ``SCP_REQUIRE_SIGNIN``) is refused, unless
+    ``SCP_OPEN_ON_PURPOSE=1`` says it is meant (a public demonstration). ENTERPRISE_PLAN 1.5."""
+    if os.environ.get("SCP_ENV", "").strip().lower() != "production":
+        return
+    on_purpose = os.environ.get("SCP_OPEN_ON_PURPOSE", "").strip().lower() in ("1", "true", "yes", "on")
+    if signup_policy() == "open" and not require_signin() and not on_purpose:
+        raise RuntimeError(
+            "SCP_ENV=production with open sign-up and no sign-in: anyone could make an account and use the server "
+            "without one. Set SCP_REQUIRE_SIGNIN=1 and SCP_SIGNUP=invite (or closed); for a public demonstration "
+            "set SCP_OPEN_ON_PURPOSE=1.")
 
 
 def require_signin() -> bool:
@@ -224,7 +251,11 @@ def company_error(_request: Request, exc: CompanyError) -> JSONResponse:
 async def gate(request: Request, call_next):
     """With SCP_REQUIRE_SIGNIN, every API call but health and signing in needs a valid session."""
     path = request.url.path
-    asker.set((token_of(request), request.headers.get("x-company", "").strip()))
+    token, cid = token_of(request), request.headers.get("x-company", "").strip()
+    asker.set((token, cid))
+    # whose plan work a plan is made from next time: the person (or browser) and the company open, unchecked (it
+    # only finds a plan's work to start from: the plan is the one planned from scratch either way)
+    plan_owner.set(hashlib.sha256(f"{token or request.headers.get('x-browser-key', '')}|{cid}".encode()).hexdigest())
     takes_gzip.set("gzip" in request.headers.get("accept-encoding", ""))
     takes_rows.set(request.headers.get("x-pack", "") == "rows")
     try:
@@ -243,7 +274,8 @@ async def gate(request: Request, call_next):
     if request.method == "POST" and path in COOKIE_SIGNIN and wants_cookie(request) and not csrf_ok(request):
         return JSONResponse(status_code=403, content={"detail": "this sign-in is missing its security token "
                                                                 "(X-CSRF-Token); reload the page and try again"})
-    if signin_required and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
+    if signin_required and path.startswith("/api/") and path not in OPEN_PATHS and path not in PORTAL_PATHS \
+            and request.method != "OPTIONS":
         try:
             get_companies().whoami(token_of(request))
         except CompanyError as e:
@@ -382,6 +414,7 @@ class ResetRequest(Out):
 class ResetPassword(Out):
     token: str
     password: str
+    code: str = ""                # the authenticator app's code, when the account signs in with two steps
 
 
 class ResetLink(Out):
@@ -428,6 +461,75 @@ class SsoLink(Out):
 class PasswordChange(Out):
     old: str
     new: str
+    code: str = ""                # the authenticator app's code, when two-step sign-in is on
+
+
+class EmailChange(Out):
+    password: str
+    email: str                    # the new address
+    code: str = ""
+
+
+class SecondStep(Out):
+    ticket: str                   # Session.second_step from signing in with the password
+    code: str                     # the six digits the app shows now, or a recovery code
+
+
+class Reauth(Out):
+    password: str
+    code: str = ""
+
+
+class TwoStepCode(Out):
+    code: str
+
+
+class TwoStepState(Out):
+    on: bool
+    recovery_left: int = 0        # recovery codes not used yet
+    password: bool = True         # the account has a password (one that signs in only through single sign-on: no)
+
+
+class TwoStepKey(Out):
+    secret: str                   # the key, to type into the app
+    grouped: str                  # … in groups of four
+    uri: str                      # otpauth:// link (a phone opens the app with it; a QR code holds the same)
+
+
+class RecoveryCodes(Out):
+    codes: list[str]              # each works once instead of the app's code; shown only now
+
+
+class TwoStepSetting(Out):
+    required: bool
+
+
+class AccountConfirm(Out):
+    password: str = ""
+    code: str = ""                # with two-step sign-in
+    confirm: str = ""             # an account that signs in only through single sign-on types its address instead
+
+
+class AccountDelete(AccountConfirm):
+    choices: dict[str, str] = {}  # per company the account alone owns: a member's address to hand it to, or "delete"
+
+
+class CompanyChoice(Out):
+    id: str
+    name: str
+    role: str = "owner"
+    members: list[dict[str, str]] = []    # who it can be handed to (alone-owned companies)
+
+
+class DeletionPlan(Out):
+    alone: list[CompanyChoice]    # owned by this account alone: hand over or delete, the holder says which
+    shared: list[CompanyChoice]   # owned with others: the account leaves
+    member: list[CompanyChoice]   # a planner or viewer there: the account leaves
+
+
+class Deleted(Out):
+    deleted_at: str
+    done: list[str]
 
 
 class Csrf(Out):
@@ -446,6 +548,8 @@ def browser_session(s: Session, request: Request, response: Response) -> Session
     """A browser that asked for it (``X-SCP-Session: cookie``) gets the session in its HttpOnly cookie and a fresh
     double-submit token in the answer, and no token: a script running in the page at sign-in never sees the
     session. Other callers (scripts) get the token as before."""
+    if s.second_step:             # no session yet: the second step makes it
+        return s
     if wants_cookie(request):
         s.csrf = set_session_cookies(response, request, s.token, csrf=secrets.token_urlsafe(24))
         s.token = ""
@@ -461,6 +565,12 @@ def auth_signup(body: SignUp, request: Request, response: Response) -> Session:
 @router.post("/auth/signin", response_model=Session)
 def auth_signin(body: SignIn, request: Request, response: Response) -> Session:
     return browser_session(get_companies().signin(body.email, body.password), request, response)
+
+
+@router.post("/auth/signin/second", response_model=Session)
+def auth_signin_second(body: SecondStep, request: Request, response: Response) -> Session:
+    """Finish signing in with two steps: the ticket the password gave, and the authenticator app's code."""
+    return browser_session(get_companies().signin_second(body.ticket, body.code), request, response)
 
 
 @router.post("/auth/adopt", response_model=Session)
@@ -529,8 +639,92 @@ def auth_email_verify(body: EmailVerify) -> User:
 
 @router.post("/auth/password")
 def auth_password(body: PasswordChange, user: Signed, request: Request) -> dict:
-    get_companies().change_password(user, body.old, body.new, keep_token=token_of(request))
+    get_companies().change_password(user, body.old, body.new, keep_token=token_of(request), code=body.code)
     return {"ok": True}
+
+
+@router.post("/auth/email", response_model=User)
+def auth_email_change(body: EmailChange, user: Signed, request: Request) -> User:
+    """Move the account to another address (password and, with two steps, the app's code again). The old address is
+    told; a link to confirm the new one goes there when the server sends mail. Other sessions are signed out."""
+    old = user.email
+    out = get_companies().change_email(user, body.password, body.email, keep_token=token_of(request), code=body.code)
+    try:                          # the change is made; a mail server that fails does not undo it
+        if mail.mail_on():
+            mail.send(old, "Your sign-in address was changed",
+                      f"The account that signed in as {old} now signs in as {out.email}.\n\nIf you did not do this, "
+                      "tell your company's owner or the server's administrator at once.")
+        if links_by_mail():
+            token = get_companies().email_token(out)
+            mail.send(out.email, "Confirm your e-mail address",
+                      f"Open this link within a day to confirm that {out.email} is yours:\n"
+                      f"{mail.public_url()}/#/account/verify/{token}\n\nIf you did not ask, ignore this mail.")
+    except Exception:  # noqa: BLE001
+        logging.getLogger("scp").exception("the mail about a changed sign-in address could not be sent")
+    return out
+
+
+# ---- the account's own data (ENTERPRISE_PLAN 1.4) ----------------------------------------------------------------
+@router.post("/auth/account/export")
+def auth_account_export(body: AccountConfirm, user: Signed) -> Response:
+    """Download everything the account holds (one JSON file), after the password (and code) again."""
+    data = get_companies().export_account(user, body.password, body.code, body.confirm)
+    name = f"scp-account-{data['exported_at'][:10]}.json"
+    return Response(json.dumps(data, ensure_ascii=False, indent=1), media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
+@router.get("/auth/account/delete", response_model=DeletionPlan)
+def auth_account_deletion_plan(user: Signed) -> DeletionPlan:
+    """What deleting the account would do: said first."""
+    if get_companies().is_key(user):
+        raise CompanyError("a key is withdrawn by its company's owner, not deleted", 403)
+    return DeletionPlan(**get_companies().deletion_plan(user))
+
+
+@router.post("/auth/account/delete", response_model=Deleted)
+def auth_account_delete(body: AccountDelete, user: Signed, request: Request, response: Response) -> Deleted:
+    """Delete the account (password and code again; each company it alone owns handed over or deleted, as chosen).
+    Signs this browser out."""
+    out = Deleted(**get_companies().delete_account(user, body.choices, body.password, body.code, body.confirm))
+    clear_session_cookies(response, request)
+    return out
+
+
+# ---- two-step sign-in (ENTERPRISE_PLAN 1.3) ----------------------------------------------------------------------
+@router.get("/auth/two-step", response_model=TwoStepState)
+def auth_two_step(user: Signed) -> TwoStepState:
+    c = get_companies()
+    with c.lock:
+        r = c.db.execute("SELECT pw_hash FROM users WHERE id = ?", (user.id,)).fetchone()
+    return TwoStepState(on=user.two_step, recovery_left=c.recovery_left(user) if user.two_step else 0,
+                        password=bool(r and r["pw_hash"]))
+
+
+@router.post("/auth/two-step/begin", response_model=TwoStepKey)
+def auth_two_step_begin(body: Reauth, user: Signed) -> TwoStepKey:
+    """A new key for an authenticator app (password again). Nothing changes until a code from the app comes back."""
+    from ..companies import twostep
+    secret, uri = get_companies().two_step_begin(user, body.password)
+    return TwoStepKey(secret=secret, grouped=twostep.grouped(secret), uri=uri)
+
+
+@router.post("/auth/two-step/enable", response_model=RecoveryCodes)
+def auth_two_step_enable(body: TwoStepCode, user: Signed, request: Request) -> RecoveryCodes:
+    """Turn two-step sign-in on with a code from the app: answers the recovery codes, once. Signs out elsewhere."""
+    return RecoveryCodes(codes=get_companies().two_step_enable(user, body.code, keep_token=token_of(request)))
+
+
+@router.post("/auth/two-step/disable")
+def auth_two_step_disable(body: Reauth, user: Signed) -> dict:
+    get_companies().two_step_disable(user, body.password, body.code)
+    return {"ok": True}
+
+
+@router.post("/auth/two-step/recovery", response_model=RecoveryCodes)
+def auth_two_step_recovery(body: Reauth, user: Signed) -> RecoveryCodes:
+    """New recovery codes (the old ones stop working)."""
+    return RecoveryCodes(codes=get_companies().new_recovery_codes(user, body.password, body.code))
 
 
 # ---- companies -----------------------------------------------------------------------------------------------
@@ -671,6 +865,12 @@ def set_company_approval(cid: str, body: ApprovalSetting, user: Signed) -> Compa
     return get_companies().set_approval(user, cid, body.approval)
 
 
+@router.put("/companies/{cid}/two-step", response_model=CompanyMeta)
+def set_company_two_step(cid: str, body: TwoStepSetting, user: Signed) -> CompanyMeta:
+    """An owner requires two-step sign-in of every member (or stops): one without it cannot open the company."""
+    return get_companies().set_two_step(user, cid, body.required)
+
+
 @router.get("/companies/{cid}/held", response_model=list[HeldChange])
 def company_held_changes(cid: str, user: Signed, status: Literal["pending", "approved", "rejected", "withdrawn", "all"] = "pending",
                          limit: int = 50) -> list[HeldChange]:
@@ -730,7 +930,7 @@ def auth_reset_request(body: ResetRequest, request: Request) -> dict:
 @router.post("/auth/reset", response_model=Session)
 def auth_reset(body: ResetPassword, request: Request, response: Response) -> Session:
     """Set a new password with a reset link's token; signs out every other session of the account."""
-    return browser_session(get_companies().reset_password(body.token, body.password), request, response)
+    return browser_session(get_companies().reset_password(body.token, body.password, body.code), request, response)
 
 
 @router.post("/companies/{cid}/members/{email}/reset", response_model=ResetLink)

@@ -31,10 +31,10 @@ def build() -> dict:
         "locations": [
             {"id": "PLANT", "name": "Preserving kitchen", "type": "plant"},
             {"id": "COPACK", "name": "Co-packer", "type": "plant"},
-            {"id": "DC", "name": "Distribution centre", "type": "dc"},
+            {"id": "DC", "name": "Distribution centre", "type": "dc", "entity": "SHOPS"},   # the farm-shop company's
             {"id": "CUST", "name": "Grocery chain", "type": "customer"},
             {"id": "SUP-F", "name": "Fruit farm (US)", "type": "supplier"},
-            {"id": "SUP-J", "name": "Jar & sugar merchant", "type": "supplier"},
+            {"id": "SUP-J", "name": "Jar & sugar merchant", "type": "supplier", "entity": "SHOPS"},  # not in the group
             {"id": "SUP-OLD", "name": "Former fruit supplier", "type": "supplier"},
         ],
         "products": [
@@ -44,7 +44,9 @@ def build() -> dict:
              "cold_chain": True},
             {"id": "JAR", "name": "Jar and lid", "type": "PKG", "weight_kg": 0.2, "serial_numbers": True},
             {"id": "SUGAR", "name": "Sugar", "type": "RM", "weight_kg": 1},
-            {"id": "LABEL", "name": "Label", "type": "PKG"},
+            {"id": "LABEL", "name": "Label", "type": "PKG", "planning_material": "LABEL-STD"},   # its own forecast too
+            {"id": "LABEL-STD", "name": "Label, any print", "type": "PKG"},
+            {"id": "LABEL-GOLD", "name": "Gold label", "type": "PKG", "planning_material": "LABEL"},  # a variant's variant
         ],
         "location_products": [
             {"location": "PLANT", "product": "JAM", "safety_stock": {"method": "fixed", "qty": 100},
@@ -52,11 +54,13 @@ def build() -> dict:
             {"location": "PLANT", "product": "FRUIT", "on_hand": 250,
              "safety_stock": {"method": "service_level", "service_level": 0.95}},
             {"location": "PLANT", "product": "SUGAR", "phantom": True},                        # bought, not made
-            {"location": "DC", "product": "JAM", "on_hand": 40},
+            {"location": "DC", "product": "JAM", "on_hand": 40,
+             "order_stock": [{"order": "SO-GONE", "qty": 6}]},                                # its order is gone
             {"location": "DC", "product": "JAM", "on_hand": 50, "strategy": "MTO"},              # maintained twice
-            {"location": "DC", "product": "GIFT"},
+            {"location": "DC", "product": "GIFT", "mrp_type": "ddmrp",                        # a buffer and a safety stock
+             "safety_stock": {"method": "fixed", "qty": 5}},
             {"location": "CUST", "product": "JAM", "on_hand": 20},
-            {"location": "PLANT", "product": "LABEL", "strategy": "MTO"},
+            {"location": "PLANT", "product": "LABEL", "strategy": "MTO", "mrp_type": "ddmrp"},  # no stock to buffer
         ],
         "resources": [
             {"id": "KETTLE", "location": "PLANT"}, {"id": "KETTLE", "location": "PLANT", "units": 2},
@@ -104,6 +108,7 @@ def build() -> dict:
         "forecasting": {"released_inputs": "before-the-overrides"},   # the overrides came after the release
         "overrides": [{"location": "CUST", "product": "JAM", "date": "2026-09-01", "qty": 120},
                       {"location": "DC", "product": "JAM", "date": "2026-07-15", "qty": 30}],
+        "family_overrides": [{"family": "Chutneys", "date": "2026-07-15", "qty": 50}],   # no product is a chutney
         "confirmations": [{"order": "SO-GONE", "ship_from": "DC", "ship_date": "2026-07-07", "date": "2026-07-08",
                            "qty": 5}],
         "receipts": [{"id": "PO-77", "kind": "purchase", "location": "CUST", "product": "JAM", "qty": 10,
@@ -111,7 +116,11 @@ def build() -> dict:
                      {"id": "PO-100-10", "kind": "purchase", "location": "PLANT", "product": "SUGAR", "qty": 40,
                       "due_date": "2026-07-09", "source": "PU-SUGAR", "po": "PO-100"},
                      {"id": "PO-200-10", "kind": "purchase", "location": "PLANT", "product": "FRUIT", "qty": 20,
-                      "due_date": "2026-07-09", "po": "PO-200"}],
+                      "due_date": "2026-07-09", "po": "PO-200"},
+                     # jam for the shops' DC, which belongs to another company of the group with no transfer price
+                     {"id": "TR-55", "kind": "transfer", "location": "DC", "product": "JAM", "qty": 20,
+                      "due_date": "2026-07-10", "source": "L-PD"}],
+        "entities": [{"id": "SHOPS", "name": "Crescent Farm Shops Ltd"}],
         "vendors": [{"supplier": "SUP-OLD", "blocked": True, "block_reason": "replaced by SUP-F"}],
         "purchase_orders": [{"id": "PO-100", "supplier": "SUP-F", "location": "PLANT", "order_date": "2026-07-01"},
                             {"id": "PO-200", "supplier": "SUP-OLD", "location": "PLANT", "order_date": "2026-06-20"}],
@@ -126,6 +135,15 @@ def build() -> dict:
              "reversal_of": "GM-99", "serials": [f"J-{i:04d}" for i in range(1, 11)]},     # takes back a lost posting
         ],
         "batches": [{"product": "FRUIT", "id": "F-0701", "made_on": "2026-07-01", "expires_on": "2026-07-03"}],
+        # the DC's racking labelled before its storage types were set up
+        "bins": [{"location": "DC", "id": "A-01", "storage_type": "RACK"}],
+        # a haulier's rate keyed to a lane that was renamed since
+        "carriers": [{"id": "CR-HAUL", "name": "Valley haulage", "rates": [{"lane": "L-OLD", "per_shipment": 900}]}],
+        # jars sent to the co-packer's labeller for a batch long closed and never written down: past the year GST
+        # allows, and the order it was for is not in the data any more
+        "challans": [{"id": "JW-0012", "job_worker": "SUP-J", "ship_from": "PLANT", "order": "PRD-311",
+                      "sent_on": "2025-05-02", "lines": [{"product": "JAR", "qty": 400, "value": 0.3,
+                                                          "location": "PLANT"}]}],
     }
 
 
@@ -153,6 +171,7 @@ WARNINGS = {
     ("NPI_DUPLICATE", "npi", "CUST/GIFT"), ("NPI_LIKE_WITHOUT_HISTORY", "npi", "CUST/GIFT"),
     ("OVERRIDE_OUTSIDE_HORIZON", "override", "CUST/JAM@2026-09-01"),
     ("OVERRIDE_WITHOUT_FORECAST", "override", "DC/JAM@2026-07-15"),
+    ("FAMILY_OVERRIDE_NO_FAMILY", "family_override", "Chutneys@2026-07-15"),
     ("PHANTOM_NOT_MADE", "location_product", "PLANT/SUGAR"),
     ("PRODUCTION_NO_LEAD_TIME", "production_source", "PV-LABEL"),
     ("PRODUCTION_NO_OPERATIONS", "production_source", "PV-LABEL"),
@@ -160,10 +179,15 @@ WARNINGS = {
     ("FIXED_SOURCE_TWICE", "purchasing_source", "PU-SUGAR-2"), ("OPEN_PO_BLOCKED_SUPPLIER", "vendor", "SUP-OLD"), ("QUOTA_SUM", "location_product", "PLANT/SUGAR"),
     ("RESOURCE_UNUSED", "resource", "OLD-OVEN"), ("SHELF_LIFE_VS_LEAD_TIME", "location_product", "PLANT/FRUIT"),
     ("SOURCE_NOT_VALID_IN_HORIZON", "purchasing_source", "PU-JAR"),
+    ("DDMRP_NOT_A_BUFFER", "location_product", "PLANT/LABEL"), ("HELD_FOR_UNKNOWN_ORDER", "location_product", "DC/JAM"), ("DDMRP_SAFETY_STOCK", "location_product", "DC/GIFT"),
     ("SS_AND_SAFETY_TIME", "location_product", "PLANT/JAM"), ("STOCK_AT_CUSTOMER", "location_product", "CUST/JAM"),
     ("STOCK_NOT_SYNCED", "location_product", "PLANT/FRUIT"), ("STOCK_EXPIRED", "location_product", "PLANT/FRUIT"),
     ("BATCH_UNKNOWN", "movement", "GM-3"), ("SERIALS_COUNT", "movement", "GM-3"),
     ("REVERSAL_UNKNOWN", "movement", "GM-4"), ("COLD_CHAIN_LANE", "lane", "L-FARM"),
+    ("PLANNING_MATERIAL_CHAIN", "product", "LABEL-GOLD"), ("VARIANT_FORECAST", "demand", "PLANT/LABEL"),
+    ("WH_MISFIT", "bin", "DC/A-01"), ("TM_MISFIT", "carrier", "CR-HAUL"),
+    ("OUTSIDE_MISFIT", "challan", "JW-0012"), ("JOBWORK_DUE", "challan", "JW-0012"),
+    ("INTERCOMPANY_MISFIT", "location", "SUP-J"), ("TRANSFER_PRICE_MISSING", "receipt", "TR-55"),
 }
 
 

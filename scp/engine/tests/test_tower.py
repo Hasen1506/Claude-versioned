@@ -60,6 +60,28 @@ def test_kpis_against_hand_calculation():
     assert k["otif_requested"].n == 4 and k["otif_requested"].status == "critical"
 
 
+def test_fill_rate_and_order_cycle_time_by_hand():
+    d = fixture()
+    # S1 and S4 were taken on order headers placed on 27 and 20 December
+    d["sales_orders"] = [{"id": "H1", "customer": "P", "order_date": "2025-12-27"},
+                         {"id": "H2", "customer": "P", "order_date": "2025-12-20"}]
+    for c in d["closed_orders"]:
+        if c["id"] in ("S1", "S4"):
+            c["source_order"] = {"order": "H1" if c["id"] == "S1" else "H2"}
+    k = kpis(run_tower(ds(d)))
+    # units there by the requested date: S1 100, S2 none (late), S3 90 (short, on time), S4 50, of 350 ordered
+    assert k["fill_rate"].value == pytest.approx(240 / 350)
+    assert (k["fill_rate"].numerator, k["fill_rate"].denominator) == (240, 350)
+    # S1: 27 Dec → 1 Jan, 5 days; S4: 20 Dec → 2 Jan, 13 days; S2 and S3 have no header
+    assert k["order_cycle_time"].value == pytest.approx(9.0) and k["order_cycle_time"].n == 2
+    # a delivery in the journal splits S2: 60 left on the requested date, 39 the day after
+    d["movements"] = [{"id": "GI-1", "date": "2026-01-02", "type": "sale", "location": "P", "product": "A", "qty": 60,
+                       "reference": "S2"},
+                      {"id": "GI-2", "date": "2026-01-03", "type": "sale", "location": "P", "product": "A", "qty": 39,
+                       "reference": "S2"}]
+    assert kpis(run_tower(ds(d)))["fill_rate"].value == pytest.approx(300 / 350)
+
+
 def test_inventory_kpis_by_hand():
     d = fixture()
     res = run_tower(ds(d))

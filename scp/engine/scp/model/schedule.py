@@ -47,9 +47,9 @@ class ScheduleSettings(Model):
                                   description="Objective weight per hour until the last order in the window finishes")
     profile: str = Field("balanced", max_length=40,
                          description="The scheduling profile these settings came from (a label; the settings rule)")
-    start_rule: Literal["edd", "spt", "slack", "campaign", "backward"] = Field(
+    start_rule: Literal["edd", "spt", "slack", "cr", "campaign", "backward"] = Field(
         "edd", description="How the first sequence is built: earliest due date, shortest job first, least slack, "
-                           "campaigns by setup group, or backward from the due date (just in time)")
+                           "critical ratio, campaigns by setup group, or backward from the due date (just in time)")
     optimizer: bool = Field(False, description="Search for a better machine choice and sequence with a constraint "
                                                "solver (CP-SAT), then time it on the shift calendar; never worse than "
                                                "the dispatching rule and local search")

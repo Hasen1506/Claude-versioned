@@ -15,8 +15,9 @@ import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useFreshResult, useStore } from "../state/store";
 import { LotFields, lotExtra, NO_LOT, ShortOrders, type LotInput } from "./ExecutionStock";
 import { Contracts, Invoices, Owed, Returns, usePoAction } from "./BuyingPay";
+import { PortalTab } from "./BuyingPortal";
 
-type View = "order" | "orders" | "invoices" | "owed" | "returns" | "contracts" | "suppliers";
+type View = "order" | "orders" | "invoices" | "owed" | "returns" | "contracts" | "suppliers" | "spend" | "portal";
 type Sev = "error" | "warning" | "info" | "ok";
 
 const STATUS_SEV: Record<string, Sev> = {
@@ -73,6 +74,8 @@ export function Buying({ route }: { route: string[] }) {
       { id: "returns", label: "Returns", count: res.payables?.returns.length ?? 0 },
       { id: "contracts", label: "Contracts", count: res.payables?.contracts.length ?? 0 },
       { id: "suppliers", label: "Suppliers", count: res.vendors.length },
+      { id: "spend", label: "Spend & sourcing", count: res.spend?.single_products || undefined },
+      { id: "portal", label: "Supplier portal", count: (ds.shipping_notices ?? []).filter((n) => !n.received_on && !n.cancelled).length || undefined },
     ]} />
     {view === "order" && <ToOrder res={res} ds={ds} />}
     {view === "orders" && <Orders res={res} ds={ds} sel={route[2]} />}
@@ -82,6 +85,8 @@ export function Buying({ route }: { route: string[] }) {
     {view === "returns" && res.payables && <Returns res={res} ds={ds} />}
     {view === "contracts" && res.payables && <Contracts res={res} ds={ds} />}
     {view === "suppliers" && <Suppliers res={res} ds={ds} />}
+    {view === "spend" && <Spend res={res} ds={ds} />}
+    {view === "portal" && <PortalTab ds={ds} />}
   </>);
 }
 
@@ -511,6 +516,47 @@ function PoDocButtons({ po, ds, onSent }: { po: PoView; ds: Dataset; onSent?: ()
   </span>;
 }
 
+/** Where the buying money goes, and which bought products would stop a place if their one supplier failed. */
+function Spend({ res, ds }: { res: PurchasingView; ds: Dataset }) {
+  const v = res.spend;
+  const nm = namesOf(ds);
+  if (!v || !v.suppliers.length) return <Panel><Empty title="No spend yet">Nothing bought, open or planned to buy.</Empty></Panel>;
+  const cur = v.currency;
+  return (
+    <div className="stack">
+      <div className="grid-auto">
+        <StatTile label="Spend" value={money(v.total, cur)} sub={`${money(v.spent, cur)} spent since ${day(v.since)}, ${money(v.committed, cur)} on order, ${money(v.planned, cur)} planned`} />
+        <StatTile label="Biggest supplier" value={pct(v.top_share, 0)} sub={v.top_supplier ? nm.loc(v.top_supplier) : ""} />
+        <StatTile label="Bought from one source" value={`${v.single_products} of ${v.products}`} tone={v.single_products ? "hl" : undefined}
+          sub={`${pct(v.single_share, 0)} of the spend`} />
+      </div>
+      <Panel flush title="By supplier" actions={<span className="small faint">spent in the last year, on order and planned, at the supplier's price</span>}>
+        <div className="table-wrap"><table className="t" aria-label="Spend by supplier">
+          <thead><tr><th>Supplier</th><th>Class</th><th className="num">Spent</th><th className="num">On order</th><th className="num">Planned</th>
+            <th className="num">Share</th><th className="num">Only source for</th><th className="num">On time</th></tr></thead>
+          <tbody>{v.suppliers.map((s) => <tr key={s.supplier}>
+            <td>{nm.loc(s.supplier)}</td><td><b>{s.abc}</b></td><td className="num">{money(s.spent, cur)}</td><td className="num">{money(s.committed, cur)}</td>
+            <td className="num">{money(s.planned, cur)}</td><td className="num">{pct(s.share, 1)}</td>
+            <td className="num">{s.sole_for ? `${s.sole_for} of ${s.products}` : <span className="faint">none</span>}</td>
+            <td className="num">{s.on_time != null ? pct(s.on_time, 0) : <span className="faint">—</span>}</td></tr>)}</tbody>
+        </table></div>
+      </Panel>
+      <Panel flush title="Sourcing" actions={<span className="small faint">the products with one usable source first</span>}>
+        <div className="table-wrap"><table className="t" aria-label="Sourcing">
+          <thead><tr><th>Product at a place</th><th>Sources</th><th className="num">Spend</th><th className="num">Lead time</th><th className="num">Its supplier on time</th></tr></thead>
+          <tbody>{v.sourcing.map((s) => <tr key={`${s.location}|${s.product}`}>
+            <td><Prod id={s.product} /> <span className="faint small"><Loc id={s.location} /></span></td>
+            <td>{s.sources === 0 ? <Badge sev="error">no usable source</Badge> : s.single ? <><Badge sev="warning">one</Badge> {nm.loc(s.suppliers[0])}</>
+              : `${s.sources}: ${s.suppliers.map((x) => nm.loc(x)).join(", ")}`}</td>
+            <td className="num">{money(s.total, cur)}</td><td className="num">{s.lead_time_days != null ? `${qty(s.lead_time_days)} d` : "—"}</td>
+            <td className="num">{s.on_time != null ? pct(s.on_time, 0) : <span className="faint">—</span>}</td></tr>)}</tbody>
+        </table></div>
+        {v.notes.map((n) => <p key={n} className="small faint" style={{ margin: "8px 14px" }}>{n}</p>)}
+      </Panel>
+    </div>
+  );
+}
+
 function Suppliers({ res, ds }: { res: PurchasingView; ds: Dataset }) {
   const [open, setOpen] = useState<string | null>(null);
   if (res.vendors.length === 0) return <Panel><Empty title="No suppliers">Add a place of type supplier in <a href={href("setup")}>Set up</a>.</Empty></Panel>;
@@ -542,10 +588,26 @@ function Suppliers({ res, ds }: { res: PurchasingView; ds: Dataset }) {
       </Panel>
       {open && <SupplierDetail v={res.vendors.find((x) => x.supplier === open)!} currency={res.currency} ds={ds} />}
       <Reading formula={<>On time: share of delivered lines fully in by their due date. In full: delivered within the tolerance
-        ({pct(ds.execution?.delivery_tolerance ?? 0.02, 0)}, or the supplier's own).</>}
-        soWhat="The score comes from lines closed by the roll-forward, so it grows as the weeks roll. Blocking a supplier keeps planning and new orders off it; its open orders are still received." />
+        ({pct(ds.execution?.delivery_tolerance ?? 0.02, 0)}, or the supplier's own). Spread measured (a supplier's sources): the standard
+        deviation of goods receipt less due date over the last year, from the source's own receipts once it has three, else from all its supplier's.</>}
+        soWhat="The score comes from lines closed by the roll-forward, so it grows as the weeks roll. Safety stock covers the spread planned; planning with the measured one makes it cover what the supplier really does, and a supplier late on average needs a longer lead time instead. Blocking a supplier keeps planning and new orders off it; its open orders are still received." />
     </div>
   );
+}
+
+// How far the source's receipts landed from their due dates (Enterprise 4.4), and the button that plans with it
+function Measured({ r, planned }: { r: VendorRow["info_records"][number]; planned: number }) {
+  const m = r.measured;
+  if (!m) return <span className="faint small">too few receipts yet</span>;
+  const sd = Math.round(m.std_days * 10) / 10, mean = m.mean_days_late;
+  const use = () => store.update((d) => {
+    const pu = (d.purchasing_sources ?? []).find((x) => x.id === r.source_id);
+    if (pu) pu.lead_time_std_days = sd;
+  });
+  return <span className="small">± {sd.toFixed(1)} d <span className="faint">over {plural(m.lines, "receipt")}{m.basis === "supplier" ? " of all its parts" : ""}
+    {Math.abs(mean) >= 0.05 ? `, ${Math.abs(mean).toFixed(1)} d ${mean > 0 ? "late" : "early"} on average` : ""}</span>
+    {Math.abs(sd - planned) >= 0.05 && <Edits> <button className="btn sm" onClick={use}
+      title="Plan with the measured spread: safety stock covers it">Plan with ± {sd.toFixed(1)} d</button></Edits>}</span>;
 }
 
 function SupplierDetail({ v, currency, ds }: { v: VendorRow; currency: string; ds: Dataset }) {
@@ -576,7 +638,7 @@ function SupplierDetail({ v, currency, ds }: { v: VendorRow; currency: string; d
         <div className="table-wrap">
           <table className="t">
             <thead><tr><th>Source</th><th>Product</th><th>To</th><th className="num">Price</th><th>Price scales</th><th className="num">Min</th>
-              <th className="num">Lead time</th><th>Valid</th><th>Source list</th><th>Scheduling agreement</th></tr></thead>
+              <th className="num">Lead time</th><th className="num">Spread planned</th><th>Spread measured</th><th>Valid</th><th>Source list</th><th>Scheduling agreement</th></tr></thead>
             <tbody>
               {v.info_records.map((r) => (
                 <tr key={r.source_id}>
@@ -586,6 +648,10 @@ function SupplierDetail({ v, currency, ds }: { v: VendorRow; currency: string; d
                   <td className="small">{r.price_scales.length ? r.price_scales.map((s) => `from ${qty(s.from_qty)}: ${unitMoney(s.price, r.currency)}`).join(" · ") : "—"}</td>
                   <td className="num">{r.moq ? qty(r.moq) : ""}{r.rounding_qty ? <span className="faint small"> ×{qty(r.rounding_qty)}</span> : ""}</td>
                   <td className="num">{qty(r.lead_time_days)} d</td>
+                  {(() => { // the spread as the data says now: planning with the measured one shows at once, before a recalculation
+                    const planned = (ds.purchasing_sources ?? []).find((x) => x.id === r.source_id)?.lead_time_std_days ?? r.lead_time_std_days;
+                    return <><td className="num">{planned ? `± ${planned.toFixed(1)} d` : "none"}</td><td><Measured r={r} planned={planned} /></td></>;
+                  })()}
                   <td className="small">{r.valid_from || r.valid_to ? `${r.valid_from ? day(r.valid_from) : "…"} – ${r.valid_to ? day(r.valid_to) : "…"}` : "always"}</td>
                   <td>{r.blocked ? <Badge sev="error">blocked</Badge> : r.fixed ? <Badge sev="ok">fixed</Badge> : <span className="small">priority {r.priority}{r.quota != null ? ` · quota ${pct(r.quota, 0)}` : ""}</span>}</td>
                   <td>{(() => {

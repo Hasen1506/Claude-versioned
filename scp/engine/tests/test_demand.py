@@ -436,3 +436,80 @@ def test_a_series_whose_history_did_not_change_is_not_competed_again(monkeypatch
     shorter = d.model_copy(update={"history": [x for x in d.history if not (x.location == h.location and x.product == h.product and x.date == h.date)]})
     pipeline.run_forecast(shorter)
     assert len(ran) == 1
+
+
+def test_stock_outs_and_lost_sales_are_read_as_demand_not_sales():
+    # A: 40 weeks of 100. Week 38 sold out after 40 (the rest unknown); week 39 sold 70 and turned 30 away. Demand,
+    # not sales: week 38 reads at its neighbours' 100 and week 39 at 70 + 30, so every week is 100, 90 put back, and
+    # the forecast is the 100 demanded. B: a week short for a day that still sold 130 keeps its 130
+    vals = [100.0] * 40
+    vals[38], vals[39] = 40.0, 70.0
+    rows = weekly("P", "A", vals)
+    rows[38]["stockout"] = True
+    rows[39]["lost_qty"] = 30
+    other = weekly("P", "B", [100.0] * 20 + [130.0] + [100.0] * 19)
+    other[20]["stockout"] = True
+    r = run_forecast(ds(dataset(rows + other)))
+    s = next(x for x in r.series if x.product == "A")
+    assert [s.history[i].flag for i in (38, 39)] == ["stockout"] * 2
+    assert (s.history[38].raw, s.history[38].cleaned) == (40, 100)
+    assert (s.history[39].raw, s.history[39].cleaned) == (70, 100)
+    assert all(h.cleaned == 100 for h in s.history)
+    assert any(n.startswith("2 periods out of stock or with demand turned away: 90 put back") for n in s.notes)
+    assert all(p.statistical == pytest.approx(100) for p in s.forecast)
+    b = next(x for x in r.series if x.product == "B")
+    assert (b.history[20].flag, b.history[20].raw, b.history[20].cleaned) == ("stockout", 130, 130)
+    # read as sales, the same history forecasts less: the last weeks' dips pull it down
+    plain = run_forecast(ds(dataset(weekly("P", "A", vals)))).series[0]
+    assert sum(p.statistical for p in plain.forecast) < sum(p.statistical for p in s.forecast) - 1
+
+
+def test_a_family_total_is_spread_over_its_series_and_a_series_override_stays():
+    # pumps A (100 a week) and C (50) are family Pumps; seal B (80) has none. Week 1: the family is set to 300, spread
+    # 2 : 1 by their own forecasts: A 200, C 100. Week 2: A has its own 120, which stays; the family's 300 leaves 180
+    # for C. Week 3: the family +10 %: A 110, C 55. B is untouched throughout; the family reads its totals per week
+    d = dataset(weekly("P", "A", [100.0] * 40) + weekly("P", "C", [50.0] * 40) + weekly("P", "B", [80.0] * 40))
+    d["products"][0]["family"] = "Pumps"
+    d["products"][2]["family"] = "Pumps"
+    d["overrides"] = [{"location": "P", "product": "A", "date": "2026-01-12", "qty": 120},
+                      {"location": "P", "product": "A", "date": "2026-01-26", "qty": 100}]   # week 4: A alone, as it was
+    d["family_overrides"] = [{"family": "Pumps", "date": "2026-01-05", "qty": 300, "reason": "trade scheme"},
+                             {"family": "Pumps", "date": "2026-01-13", "qty": 300},
+                             {"family": "Pumps", "date": "2026-01-19", "change": 0.1}]
+    r = run_forecast(ds(d))
+    f = {s.product: [round(p.final, 6) for p in s.forecast[:4]] for s in r.series}
+    assert f["A"] == [200, 120, 110, 100]
+    assert f["C"] == [100, 180, 55, 50]
+    assert f["B"] == [80, 80, 80, 80]
+    a = next(s for s in r.series if s.product == "A")
+    assert a.forecast[0].override_reason == "Pumps family: trade scheme" and a.forecast[1].override_reason == ""
+    fam = {x.family: x for x in r.families or []}
+    assert list(fam) == ["Pumps"] and fam["Pumps"].series == 2
+    assert [(round(p.statistical), round(p.final), p.override) for p in fam["Pumps"].periods[:4]] == [
+        (150, 300, 300), (150, 300, 300), (150, 165, None), (150, 150, None)]
+    assert [p.overridden for p in fam["Pumps"].periods[:5]] == [True, True, True, True, False]   # week 4: one series
+    # a family with no forecast to spread over: everything stays
+    d["family_overrides"] = [{"family": "Hoses", "date": "2026-01-05", "qty": 999}]
+    assert all(p.override is None for s in run_forecast(ds(d)).series for p in s.forecast[:1] if s.product != "A")
+
+
+def test_a_family_of_whole_units_gets_whole_shares_that_add_up_to_its_total():
+    # three tins of 100 a week, counted in each; the family set to 200: 66.67 each, so whole shares by the largest
+    # remainder (all equal: the first two get the extra unit) 67 + 67 + 66 = 200, kept as they are by the rounding
+    rows = weekly("P", "A", [100.0] * 40) + weekly("P", "B", [100.0] * 40) + weekly("P", "C", [100.0] * 40)
+    d = dataset(rows)
+    for p in d["products"]:
+        p.update(family="Tins", whole_units=True)
+    d["family_overrides"] = [{"family": "Tins", "date": "2026-01-05", "qty": 200}]
+    r = run_forecast(ds(d))
+    assert [s.forecast[0].final for s in r.series] == [67, 67, 66]
+    assert [s.forecast[0].released_qty for s in r.series] == [67, 67, 66]
+    assert r.families[0].periods[0].final == 200
+    # unequal remainders: 100, 200 and 300 a week, the family set to 100: 16.67, 33.33, 50, so 16 + 33 + 50 = 99 and
+    # the one unit left goes to the largest remainder (A's 0.67): 17, 33, 50
+    rows = weekly("P", "A", [100.0] * 40) + weekly("P", "B", [200.0] * 40) + weekly("P", "C", [300.0] * 40)
+    d = dataset(rows)
+    for p in d["products"]:
+        p.update(family="Tins", whole_units=True)
+    d["family_overrides"] = [{"family": "Tins", "date": "2026-01-05", "qty": 100}]
+    assert [s.forecast[0].final for s in run_forecast(ds(d)).series] == [17, 33, 50]

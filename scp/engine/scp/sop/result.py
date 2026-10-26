@@ -101,6 +101,16 @@ class Economics(Out):
     unpriced: list[str] = []         # sold products without a selling price
 
 
+class BucketMoney(Out):
+    """One bucket's money in the constrained plan (N364): what its sales bring in, what it costs to make, buy, move,
+    keep and work overtime for (penalties left out: they are the model's, not money), and the stock it ends with."""
+    bucket: int
+    revenue: float                   # sales of products with a selling price
+    cost: float                      # purchase + production + transport + holding + overtime
+    margin: float                    # revenue − cost (sales without a price earn nothing and cost what they cost)
+    stock_value: float               # end-of-bucket stock at unit value
+
+
 class SopKpis(Out):
     demand: float
     sales: float
@@ -131,6 +141,7 @@ class SopResult(Out):
     resources: list[ResourceLine] = []
     binding: list[Binding] = []
     economics: Economics | None = None
+    money: list[BucketMoney] = []
     kpis: SopKpis | None = None
     solver: SolverStats | None = None
     notes: list[str] = []

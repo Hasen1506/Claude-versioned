@@ -30,7 +30,7 @@ export interface Mark {
   i: number;
   v: number;
   label: string;
-  shape: "triangle" | "cross";
+  shape: "triangle" | "cross" | "square";
 }
 
 function niceMax(v: number): number {
@@ -123,6 +123,7 @@ export function BucketChart({ labels, series, height = 240, unit = "", highlight
           {spans.length > 0 && <span><span className="key box" style={{ background: "var(--hl)", opacity: 0.5 }} />Event</span>}
           {marks.some((m) => m.shape === "triangle") && <span>▲ cleansed (event)</span>}
           {marks.some((m) => m.shape === "cross") && <span>✕ cleansed (outlier)</span>}
+          {marks.some((m) => m.shape === "square") && <span>□ read as demand (out of stock)</span>}
         </div>
       )}
       <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={series.map((s) => s.name).join(", ")}
@@ -178,6 +179,8 @@ export function BucketChart({ labels, series, height = 240, unit = "", highlight
         ) : null))}
         {marks.map((m, k) => m.shape === "triangle" ? (
           <path key={`m-${k}`} d={`M${cx(m.i)},${y(m.v) - 11} l5,8 h-10 z`} fill="var(--ink)" />
+        ) : m.shape === "square" ? (
+          <rect key={`m-${k}`} x={cx(m.i) - 4.5} y={y(m.v) - 4.5} width={9} height={9} fill="none" stroke="var(--warning)" strokeWidth={2} />
         ) : (
           <path key={`m-${k}`} d={`M${cx(m.i) - 4},${y(m.v) - 4} l8,8 M${cx(m.i) + 4},${y(m.v) - 4} l-8,8`} stroke="var(--critical)" strokeWidth={2.5} />
         ))}
