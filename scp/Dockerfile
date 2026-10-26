@@ -3,7 +3,9 @@
 # See docs/DEPLOY.md for the database, mail, single sign-on, backups and a reverse proxy.
 
 # --- the web client ------------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS web
+# 22.23.4 is the 21 October 2026 security release: Brotli decoder RCE, TLS hostname bypasses,
+# and rejection of the compromised eMudhra intermediates.
+FROM node:22.23.4-bookworm-slim AS web
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -17,9 +19,20 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     SCP_REQUIRE_SIGNIN=1 \
     SCP_SIGNUP=invite
 WORKDIR /app
-# dependencies first, so a code change does not reinstall them
+# DLA-4845-1: bookworm's security update drops emSign ECC Root CA - G3. Scheduled imports
+# verify TLS with this system bundle (ssl.create_default_context).
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
+ && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' ca-certificates)" ge '20250419~deb12u2' \
+ && rm -rf /var/lib/apt/lists/*
+# dependencies first, so a code change does not reinstall them.
+# pip before 26.2.2 vendors a CA bundle that still trusts the compromised eMudhra root, and it
+# trusts that bundle even when the system store does not. Download the wheel with the system
+# store, check the published digest, then install it.
 COPY engine/pyproject.toml engine/
-RUN mkdir -p engine/scp && touch engine/scp/__init__.py \
+RUN python -c 'import hashlib, urllib.request; url="https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl"; expected="fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"; data=urllib.request.urlopen(url, timeout=120).read(); digest=hashlib.sha256(data).hexdigest(); assert digest==expected, digest; open("/tmp/pip.whl","wb").write(data)' \
+ && python -m pip install --no-cache-dir /tmp/pip.whl && rm /tmp/pip.whl \
+ && mkdir -p engine/scp && touch engine/scp/__init__.py \
  && pip install --no-cache-dir ./engine && pip uninstall -y scp
 COPY engine/ engine/
 COPY examples/ examples/
