@@ -28,6 +28,7 @@ from ..model import (
     SupplierInvoiceLine, SupplierReturn,
 )
 from ..plan.costing import contract_for, fx
+from ..model.currency import CurrencyPrecisionError, require_posting_currency
 from .result import (
     ActionReport, ContractLineView, ContractView, InvoiceLineView, PayableRow, PayablesView, SupplierInvoiceView,
     SupplierReturnView, ToInvoice,
@@ -41,6 +42,11 @@ class PayablesError(ValueError):
 
 
 def posting_rate(ds: Dataset, currency: str | None) -> float:
+    try:
+        require_posting_currency(ds.settings.currency)
+        require_posting_currency(currency or ds.settings.currency)
+    except CurrencyPrecisionError as exc:
+        raise PayablesError(str(exc)) from None
     if currency and currency != ds.settings.currency and currency not in ds.settings.fx_rates:
         raise PayablesError(f"set an exchange rate for {currency} before posting in {ds.settings.currency}")
     return fx(ds, currency)

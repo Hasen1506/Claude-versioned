@@ -64,6 +64,10 @@ def protect(before: dict, after: dict, email: str) -> dict:
     try:
         old_ds = lenient(before)[0]
         ds = lenient(after)[0]
+        from ..model.currency import require_posting_currency
+        require_posting_currency(ds.settings.currency)
+        for invoice in ds.supplier_invoices:
+            require_posting_currency(invoice.currency or ds.settings.currency)
         from ..model.sales import Invoice
         from ..model.intercompany import IntercompanyInvoice
         from ..model.transport import FreightOrder

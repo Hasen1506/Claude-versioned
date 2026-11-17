@@ -1357,7 +1357,13 @@ def post_intercompany_action(req: IntercompanyActionRequest) -> IntercompanyActi
 def post_accounting(ds: PlanData, period_start: dt.date | None = None, period_end: dt.date | None = None) -> Response:
     """The accounts (Enterprise 7.4): the double-entry journal made from the movements, invoices and payments, each
     company's balances on the period's last day and its checks against the documents."""
-    return respond("accounting", ds, lambda: acct.view(ds, period_start, period_end), period_start, period_end)
+    def make():
+        from ..model.currency import CurrencyPrecisionError
+        try:
+            return acct.view(ds, period_start, period_end)
+        except CurrencyPrecisionError as exc:
+            raise HTTPException(409, str(exc)) from None
+    return respond("accounting", ds, make, period_start, period_end)
 
 
 class AccountingExport(Out):
@@ -1370,7 +1376,11 @@ def post_accounting_export(ds: PlanData, format: Literal["tally", "csv"] = "tall
                            period_start: dt.date | None = None, period_end: dt.date | None = None) -> Response:
     """One company's vouchers of the period as Tally's import file, or the whole journal as a spreadsheet (CSV)."""
     def make() -> AccountingExport:
-        v = acct.view(ds, period_start, period_end, limit=10**9)
+        from ..model.currency import CurrencyPrecisionError
+        try:
+            v = acct.view(ds, period_start, period_end, limit=10**9)
+        except CurrencyPrecisionError as exc:
+            raise HTTPException(409, str(exc)) from None
         failed = [c for c in v.checks if not c.ok]
         if failed:
             raise HTTPException(409, "the accounts do not reconcile: " + "; ".join(

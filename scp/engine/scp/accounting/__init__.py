@@ -539,6 +539,10 @@ def view(ds: Dataset, period_start: date | None = None, period_end: date | None 
          limit: int = 500) -> AccountingView:
     """The journal and the balances of every company of the group on ``period_end`` (default: the latest document),
     the vouchers of the period (default: the financial year to that day), and the checks against the documents."""
+    from ..model.currency import require_posting_currency
+    require_posting_currency(ds.settings.currency)
+    for invoice in ds.supplier_invoices:
+        require_posting_currency(invoice.currency or ds.settings.currency)
     end = period_end or _day(ds)
     start = _period(ds, end, period_start)
     if start > end:

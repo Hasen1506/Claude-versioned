@@ -262,3 +262,15 @@ def test_legacy_transfer_prices_are_frozen_from_the_saved_basis_before_a_rule_ed
     forged = saved.model_dump(mode="json")
     next(m for m in forged["movements"] if m["type"] == "transfer_out")["transfer_price"] = 20
     assert save(owner, cid, forged, 2).status_code == 403
+
+
+@pytest.mark.parametrize("currency", ["JPY", "KWD", "CLF"])
+def test_unsupported_currency_precision_is_refused_instead_of_misstated(currency):
+    x = billed()
+    x = x.model_copy(update={"settings": x.settings.model_copy(update={"currency": currency})})
+    owner, _, cid = team(x)
+    paid, _ = sales.pay(x, x.invoices[0].id, on=date(2026, 2, 10))
+    assert save(owner, cid, paid).status_code == 403
+    for endpoint in ("/api/accounting", "/api/accounting/export"):
+        response = client.post(endpoint, json=x.model_dump(mode="json"))
+        assert response.status_code == 409 and "two-decimal" in response.text
