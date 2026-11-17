@@ -69,6 +69,27 @@ def main():
         assert abs(balances.get(account, 0) - expected) < .005, (account, balances)
     assert all(check["ok"] for check in books["checks"])
 
+    live_id = request("/api/companies", {"dataset": doc})["id"]
+    live_revision = 1
+
+    def command(identifier, action, **parameters):
+        nonlocal live_revision
+        result = request(f"/api/companies/{live_id}/commands", {
+            "id": identifier, "kind": "purchasing", "action": action, "posting_date": "2026-01-05",
+            "base_revision": live_revision, "parameters": parameters})
+        live_revision = result["company"]["meta"]["revision"]
+        return result
+
+    command("goods-receipt-1", "receive", po="PO-1", lines=[{"id": "PO-1-10", "qty": 100}])
+    command("invoice-1", "enter_invoice", po="PO-1")
+    command("payment-1", "pay_invoice", po="SI-00001")
+    replay = command("invoice-1", "enter_invoice", po="PO-1")
+    assert replay["duplicate"] and replay["revision"] == 3 and live_revision == 4
+    live_books = request("/api/accounting", replay["company"]["dataset"])
+    assert live_books == books
+    receipt = request(f"/api/companies/{live_id}/commands?id=payment-1")
+    assert receipt["revision"] == 4 and receipt["engine_commit"] == health["commit"]
+
     blocked = act(received, "enter_invoice", lines=[{"order": "PO-1-10", "qty": 100, "price": 11}])
     request("/api/purchasing/act", {"dataset": blocked, "action": "pay_invoice", "po": "SI-00001"}, expected=409)
     blocked_id = request("/api/companies", {"dataset": blocked})["id"]
@@ -78,6 +99,7 @@ def main():
     assert request(f"/api/companies/{blocked_id}")["meta"]["revision"] == 1
     print(json.dumps({"commit": health["commit"], "uid": os.geteuid(), "health": "passed", "web": "passed",
                       "persisted_procure_to_pay": "passed", "company_revision": revision,
+                      "authoritative_commands_and_replay": "passed", "command_revision": live_revision,
                       "ledger": {k: balances.get(k, 0) for k in ("STOCK", "INPUT_TAX", "BANK", "PAYABLES", "GRIR")},
                       "blocked_payment_action": 409, "forged_payment_save": 403}, indent=2))
 

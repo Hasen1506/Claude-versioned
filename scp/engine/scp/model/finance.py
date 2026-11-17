@@ -24,8 +24,9 @@ class CapacityOption(Model):
 class FinanceSettings(Model):
     closed_through: dt.date | None = Field(None, description="Posted financial transactions on or before this date are closed")
     control_roles: dict[Literal["master_data", "planning", "purchasing", "sales", "manufacturing", "warehouse",
-                                "transport", "billing", "payments", "invoice_release", "credit_release", "period_close"],
-                        list[str]] = Field(default_factory=dict, max_length=12,
+                                "transport", "billing", "payments", "invoice_release", "credit_release", "period_close",
+                                "inventory_adjustment"],
+                        list[str]] = Field(default_factory=dict, max_length=13,
                                            description="Named e-mail grants. Empty: legacy member roles. When configured, "
                                                        "every operation requires its grant, including for owners and keys")
     separate_payments: bool = Field(False, description="A payer must differ from the invoice's recorded entrant and releaser")

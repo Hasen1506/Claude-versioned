@@ -5,7 +5,8 @@ import type {
   PlanTrace, ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoActionInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
   SalesView, SalesAction, SalesActionInput, SalesActionResponse,
-  AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
+  AuthConfig, Session, Me, CompanyMeta, CompanyDoc, CompanyCommand, CompanyCommandResult, CompanyCommandRecord,
+  SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
   User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
   WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, PolicyView, PolicyApplyResponse, PolicyApplyInput, AccountingView, AccountingExport, IntercompanyView, IntercompanyAction, IntercompanyActionInput, IntercompanyActionResponse, CyclePlan, PutawayProposal, RefillProposal, PickList, WarehouseActionResponse,
@@ -478,6 +479,11 @@ export const api = {
   createCompany: (dataset: Dataset, note = "") =>
     call<CompanyMeta>("/api/companies", { method: "POST", body: JSON.stringify({ dataset, note }) }),
   company: (id: string) => call<CompanyDoc>(`/api/companies/${encodeURIComponent(id)}`),
+  /** Live operation: keep the same id/date/parameters when retrying a lost response. */
+  companyCommand: (id: string, command: CompanyCommand) => call<CompanyCommandResult>(
+    `/api/companies/${encodeURIComponent(id)}/commands`, { method: "POST", body: JSON.stringify(command) }),
+  companyCommandRecord: (id: string, command: string) => call<CompanyCommandRecord>(
+    `/api/companies/${encodeURIComponent(id)}/commands?id=${encodeURIComponent(command)}`),
   /** Save the working copy, whole (`dataset`) or as what changed since `baseRevision` (`patch`). */
   saveCompany: (id: string, what: { dataset: Dataset } | { patch: Patch }, baseRevision: number, note = "") =>
     call<SaveReport>(`/api/companies/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ ...what, base_revision: baseRevision, note }) }),

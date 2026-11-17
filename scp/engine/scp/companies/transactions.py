@@ -33,14 +33,16 @@ def _rows(doc: dict, name: str) -> dict[str, dict]:
 
 def protect(before: dict, after: dict, email: str) -> dict:
     """Return a normalized document or refuse an invalid financial state transition."""
-    names = ("supplier_invoices", "movements", "purchase_orders", "invoices", "intercompany_invoices", "freight_orders")
+    names = ("supplier_invoices", "movements", "purchase_orders", "invoices", "intercompany_invoices", "freight_orders",
+             "inventory_docs")
     # No financial records means incomplete master data can still be edited freely.
     if not any(before.get(n) or after.get(n) for n in names):
         return after
     cost_lists = ("purchasing_sources", "production_sources", "resources", "lanes", "transfer_prices")
     def product_costs(doc):
-        return {p.get("id"): (p.get("standard_cost"), p.get("price_control")) for p in doc.get("products") or []
-                if p.get("standard_cost") is not None or p.get("price_control") is not None}
+        return {p.get("id"): (p.get("standard_cost"), p.get("price_control"), bool(p.get("serial_numbers")))
+                for p in doc.get("products") or []
+                if p.get("standard_cost") is not None or p.get("price_control") is not None or p.get("serial_numbers")}
     def location_costs(doc):
         return {(p.get("location"), p.get("product")): p["unit_cost"]
                 for p in doc.get("location_products") or [] if p.get("unit_cost") is not None}
@@ -71,7 +73,9 @@ def protect(before: dict, after: dict, email: str) -> dict:
         from ..model.sales import Invoice
         from ..model.intercompany import IntercompanyInvoice
         from ..model.transport import FreightOrder
-        for name, model in (("invoices", Invoice), ("intercompany_invoices", IntercompanyInvoice), ("freight_orders", FreightOrder)):
+        from ..model.actuals import InventoryDoc
+        for name, model in (("invoices", Invoice), ("intercompany_invoices", IntercompanyInvoice), ("freight_orders", FreightOrder),
+                            ("inventory_docs", InventoryDoc)):
             for raw in [*_rows(before, name).values(), *_rows(after, name).values()]:
                 model.model_validate(raw)
         old_inv, new_inv = _rows(before, "supplier_invoices"), _rows(after, "supplier_invoices")
@@ -294,6 +298,8 @@ def protect(before: dict, after: dict, email: str) -> dict:
                 working, _ = cancel_invoice(working, iid, target.cancelled_on)
         from .commercial import protect_commercial
         protect_commercial(old_ds, ds, open_period)
+        from .materials import protect_materials
+        protect_materials(old_ds, ds, open_period)
         if ds.finance.closed_through is not None and ds.finance.closed_through != closed:
             from ..accounting import view
             books = view(ds, period_end=ds.finance.closed_through)

@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, ValidationError
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -86,13 +86,14 @@ from ..whatif import (
     keep_scenario, sweep_chip,
 )
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
-from ..companies import CompanyError
+from ..companies import CompanyError, get_companies
+from ..companies.commands import CommandRecord, CommandRequest, CommandResult, execute as execute_command, record as command_record
 from .connect import router as connect_router
 from .cycle import router as cycle_router
 from .portal import router as portal_router
 from .companies import (
     CORS_ORIGINS,
-    Scope, StoredEditScope, StoredScope, company_error, edit_scope, gate, is_company, production_guard, require_signin,
+    Scope, Signed, StoredEditScope, StoredScope, company_error, edit_scope, gate, is_company, production_guard, require_signin,
     router as companies_router, signup_policy, stored_scope, who_asks,
 )
 from .working import PlanData, answer, is_ref, read as read_ref, respond, send
@@ -1364,6 +1365,44 @@ def post_accounting(ds: PlanData, period_start: dt.date | None = None, period_en
         except CurrencyPrecisionError as exc:
             raise HTTPException(409, str(exc)) from None
     return respond("accounting", ds, make, period_start, period_end)
+
+
+@app.post("/api/companies/{cid}/commands", response_model=CommandResult)
+def post_company_command(cid: str, req: CommandRequest, user: Signed) -> CommandResult:
+    """Post one operation against authoritative saved state, with atomic replay protection.
+
+    Reuse the same id and parameters after a transport failure. A replay reports
+    the original result and current company state, even after intervening saves.
+    """
+    adapters = {
+        "purchasing": (PoActionRequest, post_po_action),
+        "sales": (SalesActionRequest, post_sales_action),
+        "stock": (PostRequest, post_posting),
+        "transport": (TransportActionRequest, post_transport_action),
+        "intercompany": (IntercompanyActionRequest, post_intercompany_action),
+    }
+    schema, handler = adapters[req.kind]
+    unknown = set(req.parameters) - (set(schema.model_fields) - {"dataset", "action", "date"})
+    if unknown:
+        raise HTTPException(422, "unsupported command parameters: " + ", ".join(sorted(unknown)))
+
+    def operation(ds: Dataset):
+        try:
+            parsed = schema.model_validate({**req.parameters, "dataset": ds, "action": req.action, "date": req.posting_date})
+        except ValidationError as exc:
+            raise HTTPException(422, "invalid command: " + str(exc)) from None
+        response = handler(parsed)
+        if response.dataset is None:
+            raise RuntimeError("an authoritative command must produce a complete result")
+        return response.dataset, response.model_dump(mode="json", exclude={"dataset", "patch"})
+
+    return execute_command(get_companies(), user, cid, req, operation)
+
+
+@app.get("/api/companies/{cid}/commands", response_model=CommandRecord)
+def get_company_command(cid: str, id: str, user: Signed) -> CommandRecord:  # noqa: A002
+    """Reconcile a completed operation after a lost response without issuing another mutation."""
+    return command_record(get_companies(), user, cid, id)
 
 
 class AccountingExport(Out):

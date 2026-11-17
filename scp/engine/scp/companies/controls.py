@@ -26,22 +26,24 @@ def authorize(before: dict, after: dict, email: str) -> dict:
     actor = email.strip().lower()
     required = set()
     invoices = ("supplier_invoices", "invoices", "intercompany_invoices")
-    production_orders = {r.get("id") for r in [*(before.get("receipts") or []), *(after.get("receipts") or [])]
-                         if r.get("kind") == "production"}
+    receipts = [*(before.get("receipts") or []), *(after.get("receipts") or [])]
+    production_orders = {r.get("id") for r in receipts if r.get("kind") == "production" and r.get("id")}
+    stock_references = {r.get("id") for r in [*receipts, *(after.get("returns") or [])] if r.get("id")}
     for name, _key, old, new in changed_records(before, after):
         if name in invoices:
             a, b = old or {}, new or {}
             if not old or not new:
                 required.add("billing")
             else:
-                if a.get("payments", []) != b.get("payments", []):
-                    required.add("payments")
-                if (a.get("released_by"), a.get("released_on")) != (b.get("released_by"), b.get("released_on")):
-                    required.add("invoice_release")
                 lifecycle = {"payments", "released_by", "released_on", "note", "sent_on", "reminded_on", "reminder_level"}
                 if {k: v for k, v in a.items() if k not in lifecycle} != {
                         k: v for k, v in b.items() if k not in lifecycle}:
                     required.add("billing")
+            # A combined entry/payment or entry/release needs both grants too.
+            if (a.get("payments") or []) != (b.get("payments") or []):
+                required.add("payments")
+            if (a.get("released_by") or "", a.get("released_on")) != (b.get("released_by") or "", b.get("released_on")):
+                required.add("invoice_release")
             if len(b.get("payments") or []) > len(a.get("payments") or []) and finance.get("separate_payments"):
                 entrant = str(a.get("entered_by") or (actor if not old else "")).lower()
                 releaser = str(b.get("released_by") or "").lower()
@@ -64,6 +66,9 @@ def authorize(before: dict, after: dict, email: str) -> dict:
         elif name == "settings" and old and new and {k: v for k, v in old.items() if k != "planning_start"} == {
                 k: v for k, v in new.items() if k != "planning_start"}:
             required.add("planning")
+        elif name == "purchase_orders" and old and new and {k: v for k, v in old.items() if k != "fx_rate"} == {
+                k: v for k, v in new.items() if k != "fx_rate"}:
+            continue  # server-validated posting metadata, not a purchasing exposure edit
         else:
             department = "master_data" if name in MASTER else DEPARTMENTS.get(name, "master_data")
             if name == "receipts" and (new or {}).get("kind") == "production":
@@ -72,6 +77,11 @@ def authorize(before: dict, after: dict, email: str) -> dict:
             if name == "movements" and ((new or {}).get("type") == "issue"
                     or (new or {}).get("reference") in production_orders):
                 required.add("manufacturing")
+            if name == "movements" and (new or {}).get("type") in ("adjustment", "opening", "scrap"):
+                required.add("inventory_adjustment")
+            if (name == "movements" and (new or {}).get("type") == "receipt"
+                    and (new or {}).get("reference") not in stock_references):
+                required.add("inventory_adjustment")
     if roles:
         missing = sorted(op for op in required if actor not in {str(e).strip().lower() for e in roles.get(op, [])})
         if missing:

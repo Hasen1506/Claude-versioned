@@ -2612,6 +2612,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/companies/{cid}/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Company Command
+         * @description Reconcile a completed operation after a lost response without issuing another mutation.
+         */
+        get: operations["get_company_command_api_companies__cid__commands_get"];
+        put?: never;
+        /**
+         * Post Company Command
+         * @description Post one operation against authoritative saved state, with atomic replay protection.
+         *
+         *     Reuse the same id and parameters after a transport failure. A replay reports
+         *     the original result and current company state, even after intervening saves.
+         */
+        post: operations["post_company_command_api_companies__cid__commands_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/accounting/export": {
         parameters: {
             query?: never;
@@ -4734,6 +4761,78 @@ export interface components {
             changed: number;
             /** Items */
             items: components["schemas"]["ItemChange"][];
+        };
+        /** CommandRecord */
+        CommandRecord: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Action */
+            action: string;
+            /**
+             * Posting Date
+             * Format: date
+             */
+            posting_date: string;
+            /** Revision */
+            revision: number;
+            /** At */
+            at: string;
+            /** By */
+            by: string;
+            /** Engine Commit */
+            engine_commit: string;
+            /** Request Hash */
+            request_hash: string;
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            };
+        };
+        /** CommandRequest */
+        CommandRequest: {
+            /** Id */
+            id: string;
+            /** Base Revision */
+            base_revision: number;
+            /**
+             * Posting Date
+             * Format: date
+             * @description Explicit business date; never inferred from a planning scenario's start
+             */
+            posting_date: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "purchasing" | "sales" | "stock" | "transport" | "intercompany";
+            /** Action */
+            action: string;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+        };
+        /** CommandResult */
+        CommandResult: {
+            /** Id */
+            id: string;
+            /** Revision */
+            revision: number;
+            /** Duplicate */
+            duplicate: boolean;
+            /** Engine Commit */
+            engine_commit: string;
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            };
+            company: components["schemas"]["CompanyDoc"];
         };
         /** CompanyChoice */
         CompanyChoice: {
@@ -23644,6 +23743,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountingView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_company_command_api_companies__cid__commands_get: {
+        parameters: {
+            query: {
+                id: string;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_company_command_api_companies__cid__commands_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommandRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult"];
                 };
             };
             /** @description Validation Error */

@@ -82,6 +82,13 @@ CREATE TABLE IF NOT EXISTS company_log (
   detail TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS company_log_by_company ON company_log (company_id, seq);
+CREATE TABLE IF NOT EXISTS company_commands (
+  company_id TEXT NOT NULL REFERENCES companies(id), command_id TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id), kind TEXT NOT NULL, action TEXT NOT NULL,
+  request_hash TEXT NOT NULL, posting_date TEXT NOT NULL, revision INTEGER NOT NULL, at TEXT NOT NULL,
+  engine_commit TEXT NOT NULL DEFAULT '', parameters TEXT NOT NULL, result TEXT NOT NULL,
+  PRIMARY KEY (company_id, command_id)
+);
 CREATE TABLE IF NOT EXISTS change_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT, company_id TEXT NOT NULL REFERENCES companies(id), at TEXT NOT NULL,
   user_id TEXT NOT NULL, revision INTEGER NOT NULL, data BLOB NOT NULL, summary TEXT NOT NULL,
@@ -1823,6 +1830,12 @@ class Companies:
                                         "summary": x["summary"]} for x in self.db.execute(
                     "SELECT at, revision, action, summary FROM company_log WHERE company_id = ? AND user_id = ? "
                     "ORDER BY seq", (cid, user.id))]
+                one["your_commands"] = [{"id": x["command_id"], "kind": x["kind"], "action": x["action"],
+                                          "at": x["at"], "posting_date": x["posting_date"], "revision": x["revision"],
+                                          "engine_commit": x["engine_commit"], "parameters": json.loads(x["parameters"]),
+                                          "result": json.loads(x["result"])} for x in self.db.execute(
+                    "SELECT * FROM company_commands WHERE company_id = ? AND user_id = ? ORDER BY at, command_id",
+                    (cid, user.id))]
                 out["companies"].append(one)
             out["invitations_waiting"] = [{"company": x["name"], "role": x["role"], "at": x["at"]} for x in self.db.execute(
                 "SELECT c.name, i.role, i.at FROM invites i JOIN companies c ON c.id = i.company_id "
