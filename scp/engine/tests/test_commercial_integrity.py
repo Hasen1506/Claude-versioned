@@ -274,3 +274,14 @@ def test_unsupported_currency_precision_is_refused_instead_of_misstated(currency
     for endpoint in ("/api/accounting", "/api/accounting/export"):
         response = client.post(endpoint, json=x.model_dump(mode="json"))
         assert response.status_code == 409 and "two-decimal" in response.text
+
+
+def test_a_transfer_received_with_its_dispatch_can_be_persisted_as_one_material_document():
+    from scp.actuals.post import receive
+    x = received(group())
+    owner, _, cid = team(x)
+    received_transfer, _ = receive(x, "TR-1", on=date(2026, 1, 7))
+    response = save(owner, cid, received_transfer)
+    assert response.status_code == 200, response.text
+    saved = Dataset.model_validate(response.json().get("dataset") or received_transfer.model_dump(mode="json"))
+    assert all(c.ok for c in view(saved, period_end=date(2026, 1, 7)).checks)

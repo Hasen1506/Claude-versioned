@@ -221,8 +221,10 @@ def complete(ds: Dataset, moves: list[GoodsMovement], on: date, *, batch: str | 
     out = [x.model_copy(update={"standard_price": prices.get((x.location, x.product),
                 ds.product_by_id[x.product].standard_cost or 0.0)})
            if x.standard_price is None and x.product in ds.product_by_id else x for x in out]
+    dispatched = {x.reference for x in out if x.type is MovementType.TRANSFER_OUT}
     out = [x.model_copy(update={"transfer_price": posting_price(ds, prices, x)})
-           if x.transfer_price is None else x for x in out]
+           if x.transfer_price is None and not (x.type is MovementType.RECEIPT and x.reference in dispatched)
+           else x for x in out]
     if out and not any(m.opening_standards for m in ds.movements):
         opening: dict[str, dict[str, float]] = {}
         for lp in ds.location_products:
