@@ -60,6 +60,8 @@ jobs:
       - run: pip install --require-hashes -r ../engine/requirements-build.lock -r ../engine/requirements-dev.lock
       - run: pip install --no-deps --no-build-isolation -e "../engine[dev]"
       - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
       - name: API types match the engine (no drift)
         run: npm run gen:api && git diff --exit-code src/api/schema.d.ts
       - run: npm run build
