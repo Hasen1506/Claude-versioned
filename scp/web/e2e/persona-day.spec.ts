@@ -106,6 +106,9 @@ test("the accountant: what was shipped is invoiced, and Money shows what is left
   await home("the accountant");
   await work("Accounts").getByRole("link", { name: "₹33.24 L shipped and not invoiced (2 lines)" }).click();
   await expect(page.getByRole("tab", { name: /Invoices/, selected: true })).toBeVisible();
+  // These retained shipments are dated 30 September and 2 October. Billing
+  // cannot precede either shipment, even though the planning epoch is 28 September.
+  await page.getByLabel("Invoice date", { exact: true }).fill("2026-10-02");
   await page.getByRole("button", { name: /^Invoice ₹33,23,500/ }).click();
   await expect(done()).toContainText(/INV-/, { timeout: 45_000 });
 
