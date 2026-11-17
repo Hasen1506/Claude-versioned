@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import math
 import multiprocessing as mp
 import platform
 import queue
@@ -99,11 +100,12 @@ def contention(products: int, locations: int, workers: int, rounds: int, shared:
         c.db.close()
         durations = sorted(x for row in rows for x in row["seconds"])
         return {"mode": "same_company" if shared else "different_companies", "products": products,
+                "transaction_mix": "company-name edits on master data; no financial postings, HTTP or planning",
                 "locations": locations, "location_products": products * locations, "workers": workers,
                 "writes": len(durations), "document_bytes": len(json.dumps(doc).encode()),
                 "elapsed_seconds": elapsed, "writes_per_second": len(durations) / elapsed,
                 "operation_seconds_p50": statistics.median(durations),
-                "operation_seconds_p95": durations[max(0, int(len(durations) * .95) - 1)],
+                "operation_seconds_p95": durations[max(0, math.ceil(len(durations) * .95) - 1)],
                 "conflicts": sum(row["conflicts"] for row in rows),
                 "worker_max_rss_kib": max(row["max_rss_kib"] for row in rows),
                 "revision_and_audit_reconciliation": "passed"}

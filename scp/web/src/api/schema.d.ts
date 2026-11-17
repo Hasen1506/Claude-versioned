@@ -7554,6 +7554,11 @@ export interface components {
              */
             standard_price?: number | null;
             /**
+             * Transfer Price
+             * @description Posting-time inter-company transfer price, retained with the material document
+             */
+            transfer_price?: number | null;
+            /**
              * Opening Standards
              * @description Opening-stock prices captured by the first material posting, by location and product
              */

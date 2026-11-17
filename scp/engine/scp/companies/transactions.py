@@ -37,7 +37,7 @@ def protect(before: dict, after: dict, email: str) -> dict:
     # No financial records means incomplete master data can still be edited freely.
     if not any(before.get(n) or after.get(n) for n in names):
         return after
-    cost_lists = ("purchasing_sources", "production_sources", "resources", "lanes")
+    cost_lists = ("purchasing_sources", "production_sources", "resources", "lanes", "transfer_prices")
     def product_costs(doc):
         return {p.get("id"): (p.get("standard_cost"), p.get("price_control")) for p in doc.get("products") or []
                 if p.get("standard_cost") is not None or p.get("price_control") is not None}
@@ -123,7 +123,9 @@ def protect(before: dict, after: dict, email: str) -> dict:
 
         if old_moves:
             from ..actuals.valuation import standards
+            from ..actuals.transfer_price import posting_price, shipment_prices
             prices = standards(old_ds)
+            transfer_prices = shipment_prices(old_ds, prices)
             for mid, raw in old_moves.items():
                 if mid not in new_moves:
                     raise TransactionRefused(f"{mid}: a posted movement is retained; post a reversal instead")
@@ -134,7 +136,13 @@ def protect(before: dict, after: dict, email: str) -> dict:
                 if value is None:
                     value = prices.get((prior.location, prior.product),
                                        old_ds.product_by_id[prior.product].standard_cost or 0.0)
-                expected = prior.model_copy(update={"standard_price": value})
+                transfer = prior.transfer_price if prior.transfer_price is not None else (
+                    transfer_prices.get(mid) if mid in transfer_prices else posting_price(old_ds, prices, prior))
+                expected = prior.model_copy(update={"standard_price": value, "transfer_price": transfer})
+                if following.transfer_price is None and transfer is not None:
+                    following = following.model_copy(update={"transfer_price": transfer})
+                    new_moves[mid] = {**new_moves[mid], "transfer_price": transfer}
+                    replace("movements", new_moves)
                 if following.standard_price is None:
                     following = following.model_copy(update={"standard_price": value})
                     new_moves[mid] = {**new_moves[mid], "standard_price": value}
@@ -167,6 +175,15 @@ def protect(before: dict, after: dict, email: str) -> dict:
                 expected_price = original.standard_price if original.standard_price is not None else expected_price
             if movement.standard_price is not None and abs(movement.standard_price - expected_price) > 1e-9:
                 raise TransactionRefused(f"{mid}: posting prices are determined by the server, not a saved document")
+            from ..actuals.transfer_price import posting_price
+            expected_transfer = posting_price(ds, posting_prices, movement)
+            if movement.reversal_of in old_moves:
+                expected_transfer = new_moves[movement.reversal_of].get("transfer_price")
+            if movement.transfer_price is not None and movement.transfer_price != expected_transfer:
+                raise TransactionRefused(f"{mid}: transfer posting prices are determined by the server")
+            if movement.transfer_price is None and expected_transfer is not None:
+                new_moves[mid] = {**new_moves[mid], "transfer_price": expected_transfer}
+                replace("movements", new_moves)
             if movement.opening_standards:
                 previous_basis = next((m.opening_standards for m in old_ds.movements if m.opening_standards), None)
                 if previous_basis is None:

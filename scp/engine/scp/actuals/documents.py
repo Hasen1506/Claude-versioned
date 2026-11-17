@@ -217,9 +217,12 @@ def complete(ds: Dataset, moves: list[GoodsMovement], on: date, *, batch: str | 
     # Capture the accounting price independently of future planning/master-data changes.
     from .valuation import standards
     prices = standards(ds) if out else {}
+    from .transfer_price import posting_price
     out = [x.model_copy(update={"standard_price": prices.get((x.location, x.product),
                 ds.product_by_id[x.product].standard_cost or 0.0)})
            if x.standard_price is None and x.product in ds.product_by_id else x for x in out]
+    out = [x.model_copy(update={"transfer_price": posting_price(ds, prices, x)})
+           if x.transfer_price is None else x for x in out]
     if out and not any(m.opening_standards for m in ds.movements):
         opening: dict[str, dict[str, float]] = {}
         for lp in ds.location_products:

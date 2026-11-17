@@ -1489,7 +1489,7 @@ class Companies:
         # Legacy posting metadata is populated by the server, not an edit to
         # somebody else's plant. protect() separately rejects replacing its facts.
         def business(doc):
-            fields = {"movements": {"standard_price", "opening_standards"},
+            fields = {"movements": {"standard_price", "opening_standards", "transfer_price"},
                       "purchase_orders": {"fx_rate"}, "supplier_invoices": {"fx_rate", "entity"}}
             return {**doc, **{name: [{k: v for k, v in row.items() if k not in omit}
                                      if isinstance(row, dict) else row for row in doc[name]]

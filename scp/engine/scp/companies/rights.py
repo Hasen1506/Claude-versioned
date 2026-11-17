@@ -26,7 +26,7 @@ from .patch import _hashable, keys_of
 
 MASTER = ("calendars", "locations", "products", "customer_prices", "location_products", "resources",
           "production_sources", "purchasing_sources", "lanes", "vendors", "customers", "payment_terms", "contracts",
-          "changeovers",
+          "changeovers", "entities", "transfer_prices",
           *SINGLE)
 # settings that are working state rather than master data: moving the plan a week changes them
 WORKING = {"settings": ("planning_start",), "forecasting": ("released_inputs",)}

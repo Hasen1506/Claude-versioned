@@ -446,7 +446,7 @@ def bill(ds: Dataset, on: date | None = None, movements: list[str] | None = None
         if abs(due) <= EPS:
             continue
         if due > 0:
-            each = price(ds, std, m.location, to, m.product, m.date)[0]
+            each = m.transfer_price if m.transfer_price is not None else price(ds, std, m.location, to, m.product, m.date)[0]
             kind = "invoice"
         else:
             each = bp if bp is not None else price(ds, std, m.location, to, m.product, m.date)[0]

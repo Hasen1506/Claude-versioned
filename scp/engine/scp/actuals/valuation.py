@@ -425,7 +425,7 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
         elif kind == "transfer" and b.entity_books and crossing(b.ds, frm := source_of(b.ds, m) or "", loc) == "entity":
             # from another company with no shipment in the journal (on the way at go-live): at the transfer price,
             # billed by the old system
-            unit = price(b.ds, b.std, frm, loc, prod, day)[0]
+            unit = m.transfer_price if m.transfer_price is not None else price(b.ds, b.std, frm, loc, prod, day)[0]
             b.at_move[m.id] = b.into(day, loc, prod, q, unit, "transfer receipt", ref,
                                      "transfer from another company at its transfer price, against the standard")
         elif ref in b.returns:                             # a customer's return: back at what it left at

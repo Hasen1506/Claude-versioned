@@ -227,3 +227,38 @@ def test_separation_is_enforced_even_when_one_person_has_both_named_grants():
                         on=date(2026, 2, 10))
     result = save(buyer, cid, paid, 3)
     assert result.status_code == 403 and "different person" in result.text
+
+
+def test_transfer_price_edits_do_not_reprice_posted_stock_or_the_billing_still_due():
+    from scp.actuals.post import receive, ship as dispatch
+    x = received(group())
+    x, _ = dispatch(x, "TR-1", on=date(2026, 1, 6))
+    x, _ = receive(x, "TR-1", on=date(2026, 1, 7))
+    assert next(m for m in x.movements if m.type.value == "transfer_out").transfer_price == 12
+    old_books = view(x, period_end=date(2026, 1, 7)).model_dump(mode="json")
+    updated = x.model_copy(update={"transfer_prices": [p.model_copy(update={"price": 20}) for p in x.transfer_prices]})
+    assert view(updated, period_end=date(2026, 1, 7)).model_dump(mode="json") == old_books
+    billed, _ = ic.bill(updated, date(2026, 1, 7))
+    assert billed.intercompany_invoices[0].net == 600  # 50 × the posted 12, not today's 20
+    assert all(c.ok for c in view(billed, period_end=date(2026, 1, 7)).checks)
+
+
+def test_legacy_transfer_prices_are_frozen_from_the_saved_basis_before_a_rule_edit():
+    from scp.actuals.post import receive, ship as dispatch
+    x = received(group())
+    x, _ = dispatch(x, "TR-1", on=date(2026, 1, 6))
+    x, _ = receive(x, "TR-1", on=date(2026, 1, 7))
+    legacy = x.model_dump(mode="json")
+    for movement in legacy["movements"]:
+        movement.pop("transfer_price", None)
+    legacy = Dataset.model_validate(legacy)
+    old_books = view(legacy, period_end=date(2026, 1, 7)).model_dump(mode="json")
+    owner, _, cid = team(legacy)
+    updated = legacy.model_copy(update={"transfer_prices": [p.model_copy(update={"price": 20}) for p in legacy.transfer_prices]})
+    response = save(owner, cid, updated)
+    assert response.status_code == 200, response.text
+    saved = Dataset.model_validate(response.json()["dataset"])
+    assert view(saved, period_end=date(2026, 1, 7)).model_dump(mode="json") == old_books
+    forged = saved.model_dump(mode="json")
+    next(m for m in forged["movements"] if m["type"] == "transfer_out")["transfer_price"] = 20
+    assert save(owner, cid, forged, 2).status_code == 403

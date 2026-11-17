@@ -75,6 +75,8 @@ class GoodsMovement(Model):
     qty: float = Unit("qty", ge=None, description="Positive; signed only for adjustments")
     standard_price: float | None = Unit("money_per_unit", default=None,
                                        description="Posting-time standard price; historical stock is not repriced by planning edits")
+    transfer_price: float | None = Unit("money_per_unit", default=None,
+                                       description="Posting-time inter-company transfer price, retained with the material document")
     opening_standards: dict[str, dict[str, float]] = Field(default_factory=dict,
         description="Opening-stock prices captured by the first material posting, by location and product")
     reference: str | None = Field(None, max_length=64, description="Receipt or sales order id")
