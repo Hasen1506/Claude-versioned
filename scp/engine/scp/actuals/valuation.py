@@ -257,6 +257,17 @@ def run_books(ds: Dataset, day: date, books: str = "entity", watch=None) -> tupl
     """Every posting up to ``day`` through the books; what each movement was valued at is in ``at_move``. ``watch``
     (the accounting journal, Enterprise 7.4) is told of each movement and invoice before and after it is booked."""
     std = standards(ds)
+    # The earliest posted standard is authoritative for that node; planning rates
+    # and costs may change without rewriting historical postings.
+    posted: dict[Node, float] = {}
+    for m in ds.movements:
+        for loc, products in m.opening_standards.items():
+            for prod, value in products.items():
+                posted.setdefault((loc, prod), value)
+    for m in sorted(ds.movements, key=lambda m: m.date):
+        if m.date <= day and m.standard_price is not None:
+            posted.setdefault((m.location, m.product), m.standard_price)
+    std.update(posted)
     books_ = _Books(ds, std)
     lines = lines_index(ds, outside=False)
     po = {lid: _landed(ds, lid, ln) for lid, ln in lines.items() if ln.price is not None}
@@ -270,8 +281,14 @@ def run_books(ds: Dataset, day: date, books: str = "entity", watch=None) -> tupl
 
     events: list[tuple[date, int, int, object]] = [(m.date, 0, i, m) for i, m in enumerate(journal)]
     for i, inv in enumerate(ds.supplier_invoices):
-        if not inv.cancelled and inv.date <= day:
+        if inv.date <= day and (not inv.cancelled or inv.cancelled_on is not None):
             events.append((inv.date, 1, i, inv))
+            if inv.cancelled and inv.cancelled_on is not None and inv.cancelled_on <= day:
+                opposite = {"invoice": "credit_memo", "credit_memo": "invoice",
+                            "subsequent_debit": "subsequent_credit", "subsequent_credit": "subsequent_debit"}
+                reversal = inv.model_copy(update={"id": f"{inv.id}/REV", "date": inv.cancelled_on,
+                    "kind": opposite[inv.kind], "cancelled": False, "cancelled_on": None})
+                events.append((inv.cancelled_on, 1, len(ds.supplier_invoices) + i, reversal))
     events.sort(key=lambda e: (e[0], e[1], e[2]))
     if watch is not None:
         watch.start(books_, po, kinds, by_id)
@@ -293,7 +310,8 @@ def value_stock(ds: Dataset, as_of: date | None = None, limit: int = 500, books:
     earliest: the week under way is in the books): its quantity, value and price, the postings that moved the value,
     and the price differences booked aside. ``books``: "entity" (each company's own) or "group" (consolidated)."""
     day = as_of or max([ds.settings.planning_start, *(m.date for m in ds.movements),
-                        *(i.date for i in ds.supplier_invoices if not i.cancelled)])
+                        *(i.date for i in ds.supplier_invoices if not i.cancelled),
+                        *(i.cancelled_on for i in ds.supplier_invoices if i.cancelled_on is not None)])
     books_, std = run_books(ds, day, books)
     rows = []
     for (loc, prod), n in sorted(books_.nodes.items()):
@@ -327,7 +345,9 @@ def _landed(ds: Dataset, lid: str, ln) -> _Line:
     duty = pu.duty_rate if pu is not None else 0.0
     lane = supplier_lane(ds, ln.supplier, ln.location, ln.product) if ln.supplier else None
     fr = freight_per_unit(ds, lane.planning_mode, ln.product) if lane is not None else 0.0
-    base = (ln.price or 0.0) * fx(ds, ln.currency)
+    header = ds.purchase_order_by_id.get(ln.po or "")
+    rate = header.fx_rate if header is not None and header.fx_rate is not None else fx(ds, ln.currency)
+    base = (ln.price or 0.0) * rate
     return _Line(price=base * (1.0 + duty) + fr + handling(ds, ln.location), base=base, duty=duty)
 
 
@@ -449,7 +469,7 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
 
 
 def _invoice(b: _Books, ds: Dataset, inv, po: dict[str, _Line], lines) -> None:
-    rate = fx(ds, inv.currency)
+    rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
     total = sum(abs(ln.qty * ln.price) for ln in inv.lines) or 1.0
     for ln in inv.lines:
         info = lines.get(ln.order)

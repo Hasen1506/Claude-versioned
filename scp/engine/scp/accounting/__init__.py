@@ -298,12 +298,13 @@ class _Journal:
     # -- a supplier invoice --------------------------------------------------------------------------------------
     def _invoice(self, inv: SupplierInvoice, lines: list) -> None:
         ds = self.ds
-        rate = fx(ds, inv.currency)
+        rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
         sign = -1.0 if inv.credit else 1.0
         from ..purchasing.payables import lines_index
         every = lines_index(ds, {ln.order for ln in inv.lines})
         first = next((every[ln.order] for ln in inv.lines if ln.order in every), None)
-        co = entity_of(ds, first.location) if first is not None and _ours(ds, first.location) else ""
+        co = inv.entity if inv.entity is not None else (
+            entity_of(ds, first.location) if first is not None and _ours(ds, first.location) else "")
         own = []
         for ln in inv.lines:
             amt = ln.qty * ln.price * rate
@@ -365,9 +366,9 @@ class _Journal:
     def money(self, day: date) -> None:
         ds = self.ds
         for inv in ds.supplier_invoices:
-            if inv.cancelled or inv.date > day:
+            if not inv.active_at(day):
                 continue
-            rate = fx(ds, inv.currency)
+            rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
             sign = -1.0 if inv.credit else 1.0
             co = self._company_of_supplier_invoice(inv)
             for k, p in enumerate(inv.payments, 1):
@@ -466,6 +467,8 @@ class _Journal:
         return [(TAX_OUT.get(split) or "OUT_TAX", co, "", amt, "", "")]
 
     def _company_of_supplier_invoice(self, inv: SupplierInvoice) -> str:
+        if inv.entity is not None:
+            return inv.entity
         from ..purchasing.payables import lines_index
         every = lines_index(self.ds, {ln.order for ln in inv.lines})
         first = next((every[ln.order] for ln in inv.lines if ln.order in every), None)
@@ -494,6 +497,7 @@ def journal(ds: Dataset, day: date) -> tuple[list[Voucher], object]:
 def _day(ds: Dataset) -> date:
     return max([ds.settings.planning_start, *(m.date for m in ds.movements),
                 *(i.date for i in ds.supplier_invoices if not i.cancelled), *(i.date for i in ds.invoices),
+                *(i.cancelled_on for i in ds.supplier_invoices if i.cancelled_on is not None),
                 *(i.date for i in ds.intercompany_invoices),
                 *(p.date for i in [*ds.invoices, *ds.supplier_invoices, *ds.intercompany_invoices] for p in i.payments),
                 *(f.settled_on for f in ds.freight_orders if f.settled_on is not None)])
@@ -618,9 +622,10 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
     pay: dict[str, float] = defaultdict(float)
     j = _Journal(ds)
     for inv in ds.supplier_invoices:
-        if not inv.cancelled and inv.date <= day:
+        if inv.active_at(day):
             left = inv.total - sum(p.amount + p.discount for p in inv.payments if p.date <= day)
-            pay[j._company_of_supplier_invoice(inv)] += (-1 if inv.credit else 1) * left * fx(ds, inv.currency)
+            rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
+            pay[j._company_of_supplier_invoice(inv)] += (-1 if inv.credit else 1) * left * rate
     for fo in ds.freight_orders:
         if fo.status == "settled" and fo.billed is not None and fo.settled_on is not None and fo.settled_on <= day:
             pay[entity_of(ds, fo.ship_to if fo.purchases else fo.ship_from)] += fo.billed
@@ -634,17 +639,19 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
     billed: dict[str, float] = defaultdict(float)
     billed_at: dict[str, float] = {}                   # the price the line was last invoiced at
     for inv in sorted(ds.supplier_invoices, key=lambda i: i.date):
-        if not inv.cancelled and inv.date <= day and inv.bills_goods:
+        if inv.active_at(day) and inv.bills_goods:
             for ln in inv.lines:
                 billed[ln.order] += (-1 if inv.kind == "credit_memo" else 1) * ln.qty
                 if inv.kind == "invoice":
-                    billed_at[ln.order] = ln.price * fx(ds, inv.currency)
+                    billed_at[ln.order] = ln.price * (inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency))
     for lid in set(got) | set(billed):
         info = lines.get(lid)
         if info is None or info.price is None:
             continue
         open_ = got[lid] - billed[lid]                 # + received, not invoiced; − invoiced ahead of the goods
-        at = info.price * fx(ds, info.currency) if open_ >= 0 else billed_at.get(lid, info.price * fx(ds, info.currency))
+        header = ds.purchase_order_by_id.get(info.po or "")
+        rate = header.fx_rate if header is not None and header.fx_rate is not None else fx(ds, info.currency)
+        at = info.price * rate if open_ >= 0 else billed_at.get(lid, info.price * rate)
         grir[entity_of(ds, info.location)] -= open_ * at
     ic_rec: dict[str, float] = defaultdict(float)
     ic_pay: dict[str, float] = defaultdict(float)

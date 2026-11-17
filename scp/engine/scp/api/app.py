@@ -1371,6 +1371,10 @@ def post_accounting_export(ds: PlanData, format: Literal["tally", "csv"] = "tall
     """One company's vouchers of the period as Tally's import file, or the whole journal as a spreadsheet (CSV)."""
     def make() -> AccountingExport:
         v = acct.view(ds, period_start, period_end, limit=10**9)
+        failed = [c for c in v.checks if not c.ok]
+        if failed:
+            raise HTTPException(409, "the accounts do not reconcile: " + "; ".join(
+                f"{c.company or 'main'}: {c.what}" for c in failed))
         stem = f"journal-{v.period_start.isoformat()}-{v.period_end.isoformat()}"
         if format == "csv":
             buf = io.StringIO()

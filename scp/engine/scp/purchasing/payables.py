@@ -241,6 +241,16 @@ def _check_reference(ds: Dataset, supplier: str, reference: str, kind: str) -> N
         raise PayablesError(f"{who or supplier}'s {dup.reference} is already entered as {dup.id}")
 
 
+def invoice_entity(ds: Dataset, lines: list[SupplierInvoiceLine]) -> str:
+    """A supplier document belongs to one legal entity, even when a supplier serves several plants."""
+    from ..actuals.transfer_price import entity_of
+    index = lines_index(ds, {ln.order for ln in lines})
+    entities = {entity_of(ds, index[ln.order].location) for ln in lines if ln.order in index}
+    if len(entities) > 1:
+        raise PayablesError("one supplier invoice belongs to one legal entity: enter separate invoices for these orders")
+    return next(iter(entities), "")
+
+
 def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *, on: date | None = None,
                   reference: str = "", tax: float | None = None, kind: str = "invoice", po: str | None = None,
                   return_id: str | None = None, note: str = "", delivery_costs: float = 0.0
@@ -320,6 +330,7 @@ def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *
         due_date=on if credit else on + timedelta(days=terms.net_days),
         discount_date=on + timedelta(days=terms.discount_days) if terms.discount and not credit else None,
         discount=0.0 if credit else terms.discount, currency=None if cur == ds.settings.currency else cur,
+        fx_rate=fx(ds, cur), entity=invoice_entity(ds, got_lines),
         lines=got_lines, delivery_costs=round(delivery_costs, 2), tax=tax_amt, blocks=blocks, return_id=return_id,
         note=note[:400])
     rets = ds.supplier_returns
@@ -395,7 +406,8 @@ def _subsequent(ds: Dataset, supplier: str | None, lines: list[dict] | None, kin
     inv = SupplierInvoice(
         id=iid, kind=kind, supplier=supplier, reference=reference[:64], date=on,
         due_date=on + timedelta(days=terms.net_days) if debit else on, currency=None if cur == ds.settings.currency
-        else cur, lines=got_lines, delivery_costs=round(delivery_costs, 2), tax=tax_amt, blocks=blocks,
+        else cur, fx_rate=fx(ds, cur), entity=invoice_entity(ds, got_lines),
+        lines=got_lines, delivery_costs=round(delivery_costs, 2), tax=tax_amt, blocks=blocks,
         note=note[:400])
     c = cur or ds.settings.currency
     name = ds.location_by_id[supplier].name if supplier in ds.location_by_id else supplier
@@ -459,6 +471,8 @@ def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | N
     inv = _invoice(ds, iid)
     on = on or ds.settings.planning_start
     cur = inv.currency or ds.settings.currency
+    if on < inv.date:
+        raise PayablesError("a payment cannot be posted before its invoice")
     if inv.cancelled:
         raise PayablesError(f"{iid} is cancelled")
     if inv.open <= EPS:
@@ -486,14 +500,17 @@ def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | N
     return _replace(ds, new), ActionReport(ok=True, message=msg, id=iid)
 
 
-def cancel_invoice(ds: Dataset, iid: str) -> tuple[Dataset, ActionReport]:
+def cancel_invoice(ds: Dataset, iid: str, on: date | None = None) -> tuple[Dataset, ActionReport]:
     inv = _invoice(ds, iid)
     if inv.cancelled:
         raise PayablesError(f"{iid} is already cancelled")
     if inv.payments:
         raise PayablesError(f"{iid} has payments against it and cannot be cancelled")
+    on = on or max(ds.settings.planning_start, inv.date)
+    if on < inv.date:
+        raise PayablesError("an invoice cannot be cancelled before its posting date")
     rets = [r.model_copy(update={"credit_memo": None}) if r.credit_memo == iid else r for r in ds.supplier_returns]
-    new = _replace(ds, inv.model_copy(update={"cancelled": True})).model_copy(update={"supplier_returns": rets})
+    new = _replace(ds, inv.model_copy(update={"cancelled": True, "cancelled_on": on})).model_copy(update={"supplier_returns": rets})
     return new, ActionReport(ok=True, message=f"{iid} cancelled: its lines can be invoiced again.", id=iid)
 
 

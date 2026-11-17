@@ -39,7 +39,9 @@ from collections.abc import Callable
 from ..model.common import Out
 from ..versions.diff import diff_raw
 from ..versions.store import Store, get_store, sha
+from ..transactions import atomic
 from .guards import ReleaseRefused, check_releases, record_credit_releases
+from .transactions import TransactionRefused, protect
 from .merge import MergeReport, merge
 from .patch import PatchError, apply_patch, make_patch
 from . import twostep
@@ -1276,23 +1278,37 @@ class Companies:
                          "updated_at": r["updated_at"], "self": r["updated_by"] == user.id})
                 own = True
             doc = self._working_copy(cid, doc, patch, base_revision, current, r["revision"])
-            working = doc
+            if (role != "owner" and (current.get("finance") or {}).get("closed_through")
+                    != (doc.get("finance") or {}).get("closed_through")):
+                raise CompanyError("only a company owner may close an accounting period", 403)
+            if role != "owner" and any((current.get("purchasing") or {}).get(k)
+                    != (doc.get("purchasing") or {}).get(k) for k in ("approval_limit", "release_levels")):
+                raise CompanyError("only a company owner may change purchasing release policy", 403)
             self._within_rights(user, cid, current, doc)
-            guarded = doc
-            if action != "restored":     # a revision put back carries the releases it was saved with
-                try:
-                    check_releases(current, doc, user.email)
-                except ReleaseRefused as e:
-                    raise CompanyError(str(e), 403) from None
-                guarded = record_credit_releases(current, doc, user.email)
-            doc = guarded
             held: dict | None = None
             if r["approval"] and action != "approved":
                 doc, held = split_master(current, doc)
                 if not held["before"] and not held["after"]:
                     held = None
+            # Validate against the master data that will actually be committed,
+            # never a proposed rate or policy still waiting for approval.
+            effective = doc
+            guarded = doc
+            try:
+                guarded = protect(current, guarded, user.email)
+            except TransactionRefused as e:
+                raise CompanyError(str(e), 403) from None
+            doc = guarded
+            # Restoring history is another write, not permission to resurrect
+            # a release that the current policy would refuse.
+            try:
+                check_releases(current, doc, user.email)
+            except ReleaseRefused as e:
+                raise CompanyError(str(e), 403) from None
+            guarded = record_credit_releases(current, doc, user.email)
+            doc = guarded
             revived = self._revive_erp(cid, current, doc)
-            erp_changed = revived is not doc or guarded is not working
+            erp_changed = revived is not doc or guarded is not effective
             doc = revived
             text = _canonical(doc)
             now = _iso(_now())
@@ -1300,19 +1316,13 @@ class Companies:
                 if held is None:
                     return SaveReport(meta=self._meta(cid, role, user.id), saved=False, summary="nothing changed", own=own,
                                       dataset=doc if erp_changed else None)
-                self.db.execute("BEGIN")
-                try:
+                with atomic(self.db):
                     request = self._hold(cid, r["revision"], user, held, now)
-                    self.db.execute("COMMIT")
-                except Exception:
-                    self.db.execute("ROLLBACK")
-                    raise
                 return SaveReport(meta=self._meta(cid, role, user.id), saved=False, own=own, held=request, dataset=doc,
                                   summary=f"waiting for approval: {request.summary}")
             summary, changes = summarise(current, doc)
             rev = r["revision"] + 1
-            self.db.execute("BEGIN")
-            try:
+            with atomic(self.db):
                 # compare-and-swap: the row moves on only from the revision this save was checked against, whatever
                 # another server process did meanwhile (the lock across processes makes it the rule, this the proof)
                 moved = self.db.execute("UPDATE companies SET name = ?, updated_at = ?, updated_by = ?, revision = ?, "
@@ -1328,10 +1338,6 @@ class Companies:
                 self._document(cid, rev, user.id, now, current, doc)
                 self._withdraw(cid, user.id, now, current, doc)
                 request = self._hold(cid, rev, user, held, now) if held else None
-                self.db.execute("COMMIT")
-            except Exception:
-                self.db.execute("ROLLBACK")
-                raise
             return SaveReport(meta=self._meta(cid, role, user.id), saved=True, own=own, held=request,
                               dataset=doc if request or erp_changed else None,
                               summary=summary + (f"; waiting for approval: {request.summary}" if request else ""))
@@ -1461,7 +1467,15 @@ class Companies:
     # ---- rights, approval and change documents (Phase L) --------------------------------------------------------
     def _within_rights(self, user: User, cid: str, before: dict, after: dict) -> None:
         places, families = self._limits(user.id, cid)
-        bad = out_of_scope(before, after, places, families)
+        # Legacy posting metadata is populated by the server, not an edit to
+        # somebody else's plant. protect() separately rejects replacing its facts.
+        def business(doc):
+            fields = {"movements": {"standard_price", "opening_standards"},
+                      "purchase_orders": {"fx_rate"}, "supplier_invoices": {"fx_rate", "entity"}}
+            return {**doc, **{name: [{k: v for k, v in row.items() if k not in omit}
+                                     if isinstance(row, dict) else row for row in doc[name]]
+                             for name, omit in fields.items() if isinstance(doc.get(name), list)}}
+        bad = out_of_scope(business(before), business(after), places, families) if places or families else []
         if bad:
             limits = " and ".join(x for x in (
                 f"the places {', '.join(places)}" if places else "",

@@ -66,3 +66,32 @@ jobs:
         run: python -m pytest -q tests/test_prop_regressions.py -k ts05
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test --reporter=line
+
+  container:
+    runs-on: ubuntu-24.04
+    needs: [engine, web]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the deployable image
+        run: docker build --build-arg SCP_COMMIT=${{ github.sha }} -t scp:ci ./scp
+      - name: Boot the image and check readiness
+        run: |
+          docker run -d --name scp-ci -p 127.0.0.1:8767:8000 scp:ci
+          python3 - <<'PY'
+          import time
+          import urllib.request
+          for attempt in range(30):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:8767/api/health', timeout=2) as response:
+                      assert response.status == 200
+                  break
+              except OSError:
+                  time.sleep(1)
+          else:
+              raise SystemExit('container did not become ready')
+          PY
+      - name: Container logs and cleanup
+        if: always()
+        run: |
+          docker logs scp-ci || true
+          docker rm -f scp-ci || true

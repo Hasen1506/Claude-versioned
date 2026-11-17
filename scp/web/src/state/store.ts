@@ -422,7 +422,13 @@ async function saveNow(note = ""): Promise<void> {
           save: { ...state.save, status: "saved", at: now(), merged: heldNote(r.held.summary) } }); }
         return;
       }
-      setBase(ds, r.meta.revision);
+      // Posting-time metadata can be filled by the server when old company data
+      // is first posted. Keep the working copy on that authoritative basis too.
+      if (r.dataset && state.revision === rev) {
+        adopt(r.dataset as unknown as Dataset, r.meta, "");
+        return;
+      }
+      setBase((r.dataset as unknown as Dataset | null) ?? ds, r.meta.revision);
       set({ company: { ...state.company, revision: r.meta.revision, name: r.meta.name, role: r.meta.role, savedRevision: rev, ...fromMeta(r.meta) },
         save: { ...state.save, status: "saved", at: now(), error: null, newer: null } });
       persistCompany();

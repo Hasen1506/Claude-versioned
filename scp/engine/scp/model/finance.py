@@ -1,6 +1,7 @@
 """Finance overlay settings (blueprint P9): capacity investment options to appraise against the S&OP plan."""
 from __future__ import annotations
 
+import datetime as dt
 from pydantic import Field
 
 from .common import Id, Model, Ref, Unit
@@ -20,6 +21,7 @@ class CapacityOption(Model):
 
 
 class FinanceSettings(Model):
+    closed_through: dt.date | None = Field(None, description="Posted financial transactions on or before this date are closed")
     capacity_options: list[CapacityOption] = Field(default_factory=list)
     discount_rate: float | None = Unit("fraction", le=1, default=None,
                                        description="Per year for NPV; empty = the company WACC")

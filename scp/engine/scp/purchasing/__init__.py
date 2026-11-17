@@ -326,7 +326,8 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
             created.approved = False
             created.notes.append(why)
         headers.append(PurchaseOrder(id=pid, supplier=sup, location=loc, order_date=today,
-                                     currency=None if cur == ds.settings.currency else cur, approved=created.approved))
+                                     currency=None if cur == ds.settings.currency else cur,
+                                     fx_rate=fx(ds, cur), approved=created.approved))
         rep.created.append(created)
     rep.ok = True
     return ds.model_copy(update={"receipts": receipts, "purchase_orders": headers}), rep
@@ -376,7 +377,8 @@ def create_one_off_po(ds: Dataset, source_id: str, qty: float, due_date: date | 
         created.approved = False
         created.notes.append(why)
     header = PurchaseOrder(id=pid, supplier=pu.supplier, location=pu.location, order_date=today,
-                           currency=None if cur == ds.settings.currency else cur, approved=created.approved)
+                           currency=None if cur == ds.settings.currency else cur,
+                           fx_rate=fx(ds, cur), approved=created.approved)
     rep.created.append(created)
     rep.lines[source_id] = line.id
     rep.ok = True
@@ -591,6 +593,10 @@ def receive(ds: Dataset, po_id: str, lines: list[dict] | None, on: date | None =
     marked final and closes the line. ``lot``: the batch and serials of a one-line receipt. Batches, inspection and
     serial numbers follow the products (:func:`scp.actuals.documents.complete`)."""
     from ..actuals.documents import StockError, complete
+    header = ds.purchase_order_by_id.get(po_id)
+    if header is not None and header.fx_rate is None:
+        ds = ds.model_copy(update={"purchase_orders": _replace_header(ds,
+            header.model_copy(update={"fx_rate": fx(ds, header.currency)}))})
     on = on or ds.settings.planning_start
     got = received(ds)
     moves: list[GoodsMovement] = []
@@ -656,6 +662,8 @@ def change(ds: Dataset, po_id: str, lines: list[dict]) -> tuple[Dataset, ActionR
         due = date.fromisoformat(w["date"]) if isinstance(w.get("date"), str) else (w.get("date") or r.due_date)
         patch: dict = {"due_date": due}
         if w.get("price") is not None:
+            if before > EPS and r.price is not None and abs(float(w["price"]) - r.price) > EPS:
+                raise PurchasingError(f"{r.id}: goods are already received at this price; use a subsequent debit or credit")
             patch["price"] = float(w["price"])
         if abs(new_q - ordered) > EPS:
             open_q = new_q - (r.target_qty - r.qty)   # open = new order less what was already booked off it
@@ -729,7 +737,7 @@ def act(ds: Dataset, action: str, po_id: str = "", *, lines: list[dict] | None =
         if action == "pay_invoice":
             return pay_invoice(ds, po_id, kw.get("amount"), on, reference)
         if action == "cancel_invoice":
-            return cancel_invoice(ds, po_id)
+            return cancel_invoice(ds, po_id, on)
         if action == "return_goods":
             ln = (lines or [{}])[0]
             return return_goods(ds, ln.get("id") or po_id, ln.get("qty") or 0.0, on=on, reason=note,

@@ -73,6 +73,10 @@ class GoodsMovement(Model):
     location: str = Ref("location", description="Stocking location whose stock changes")
     product: str = Ref("product")
     qty: float = Unit("qty", ge=None, description="Positive; signed only for adjustments")
+    standard_price: float | None = Unit("money_per_unit", default=None,
+                                       description="Posting-time standard price; historical stock is not repriced by planning edits")
+    opening_standards: dict[str, dict[str, float]] = Field(default_factory=dict,
+        description="Opening-stock prices captured by the first material posting, by location and product")
     reference: str | None = Field(None, max_length=64, description="Receipt or sales order id")
     counterparty: str | None = Ref("location", default=None, description="Customer (sale) or supplier (receipt)")
     final: bool = Field(False, description="Delivery completed: closes the referenced order even if short")

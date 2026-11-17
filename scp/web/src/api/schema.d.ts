@@ -6771,6 +6771,11 @@ export interface components {
         };
         /** FinanceSettings */
         FinanceSettings: {
+            /**
+             * Closed Through
+             * @description Posted financial transactions on or before this date are closed
+             */
+            closed_through?: string | null;
             /** Capacity Options */
             capacity_options?: components["schemas"]["CapacityOption"][];
             /**
@@ -7513,6 +7518,20 @@ export interface components {
              * @description Positive; signed only for adjustments
              */
             qty: number;
+            /**
+             * Standard Price
+             * @description Posting-time standard price; historical stock is not repriced by planning edits
+             */
+            standard_price?: number | null;
+            /**
+             * Opening Standards
+             * @description Opening-stock prices captured by the first material posting, by location and product
+             */
+            opening_standards?: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
             /**
              * Reference
              * @description Receipt or sales order id
@@ -13026,6 +13045,11 @@ export interface components {
              */
             currency?: string | null;
             /**
+             * Fx Rate
+             * @description Company currency per order currency unit, frozen when ordered/first posted
+             */
+            fx_rate?: number | null;
+            /**
              * Approved
              * @description Released for sending (orders above the approval limit start unapproved)
              * @default true
@@ -16753,6 +16777,16 @@ export interface components {
              * @description Empty = company currency
              */
             currency?: string | null;
+            /**
+             * Fx Rate
+             * @description Posting exchange rate; later planning rates do not restate this invoice
+             */
+            fx_rate?: number | null;
+            /**
+             * Entity
+             * @description Posting legal entity; empty string is the main company
+             */
+            entity?: string | null;
             /** Lines */
             lines: components["schemas"]["SupplierInvoiceLine"][];
             /**
@@ -16791,6 +16825,8 @@ export interface components {
              * @default false
              */
             cancelled: boolean;
+            /** Cancelled On */
+            cancelled_on?: string | null;
             /**
              * Note
              * @default

@@ -214,6 +214,20 @@ def complete(ds: Dataset, moves: list[GoodsMovement], on: date, *, batch: str | 
     held = [f"{_n(x.qty)} of {_name(ds, x.product)} into quality inspection" for x in out
             if x.stock_type is StockType.QUALITY and x.type is MovementType.RECEIPT]
     notes += held
+    # Capture the accounting price independently of future planning/master-data changes.
+    from .valuation import standards
+    prices = standards(ds) if out else {}
+    out = [x.model_copy(update={"standard_price": prices.get((x.location, x.product),
+                ds.product_by_id[x.product].standard_cost or 0.0)})
+           if x.standard_price is None and x.product in ds.product_by_id else x for x in out]
+    if out and not any(m.opening_standards for m in ds.movements):
+        opening: dict[str, dict[str, float]] = {}
+        for lp in ds.location_products:
+            if lp.on_hand > EPS:
+                opening.setdefault(lp.location, {})[lp.product] = prices.get((lp.location, lp.product),
+                    ds.product_by_id[lp.product].standard_cost or 0.0)
+        if opening:
+            out[0] = out[0].model_copy(update={"opening_standards": opening})
     for x in out:
         if x.batch and x.type in OUT and (x.product, x.batch) in {(b.product, b.id) for b in ds.batches}:
             rec = next(b for b in ds.batches if (b.product, b.id) == (x.product, x.batch))

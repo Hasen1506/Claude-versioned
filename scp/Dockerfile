@@ -30,8 +30,8 @@ RUN apt-get update \
 # trusts that bundle even when the system store does not. Download the wheel with the system
 # store, check the published digest, then install it.
 COPY engine/pyproject.toml engine/
-RUN python -c 'import hashlib, urllib.request; url="https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl"; expected="fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"; data=urllib.request.urlopen(url, timeout=120).read(); digest=hashlib.sha256(data).hexdigest(); assert digest==expected, digest; open("/tmp/pip.whl","wb").write(data)' \
- && python -m pip install --no-cache-dir /tmp/pip.whl && rm /tmp/pip.whl \
+RUN python -c 'import hashlib, urllib.request; url="https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl"; expected="fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"; data=urllib.request.urlopen(url, timeout=120).read(); digest=hashlib.sha256(data).hexdigest(); assert digest==expected, digest; open("/tmp/pip-26.2.2-py3-none-any.whl","wb").write(data)' \
+ && python -m pip install --no-cache-dir /tmp/pip-26.2.2-py3-none-any.whl && rm /tmp/pip-26.2.2-py3-none-any.whl \
  && mkdir -p engine/scp && touch engine/scp/__init__.py \
  && pip install --no-cache-dir ./engine && pip uninstall -y scp
 COPY engine/ engine/
