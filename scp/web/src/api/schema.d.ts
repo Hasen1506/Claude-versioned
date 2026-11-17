@@ -1124,6 +1124,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/companies/{cid}/mail/{seq}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Mail */
+        post: operations["retry_mail_api_companies__cid__mail__seq__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/companies/{cid}/mail/reminders": {
         parameters: {
             query?: never;
@@ -6776,6 +6793,19 @@ export interface components {
              * @description Posted financial transactions on or before this date are closed
              */
             closed_through?: string | null;
+            /**
+             * Control Roles
+             * @description Named e-mail grants. Empty: legacy member roles. When configured, every operation requires its grant, including for owners and keys
+             */
+            control_roles?: {
+                [key: string]: string[];
+            };
+            /**
+             * Separate Payments
+             * @description A payer must differ from the invoice's recorded entrant and releaser
+             * @default false
+             */
+            separate_payments: boolean;
             /** Capacity Options */
             capacity_options?: components["schemas"]["CapacityOption"][];
             /**
@@ -7895,6 +7925,12 @@ export interface components {
              */
             date: string;
             /**
+             * Entered By
+             * @description Signed-in entrant, recorded by the company save boundary
+             * @default
+             */
+            entered_by: string;
+            /**
              * Seller
              * @description The company that shipped; empty = the company itself
              * @default
@@ -7924,6 +7960,8 @@ export interface components {
              * @default false
              */
             cancelled: boolean;
+            /** Cancelled On */
+            cancelled_on?: string | null;
             /**
              * Note
              * @default
@@ -8248,6 +8286,17 @@ export interface components {
              */
             due_date: string;
             /**
+             * Entered By
+             * @description Signed-in entrant, recorded by the company save boundary
+             * @default
+             */
+            entered_by: string;
+            /**
+             * Entity
+             * @description Frozen posting entity; empty string is the main company
+             */
+            entity?: string | null;
+            /**
              * Discount Date
              * @description Paid by this day, the cash discount applies
              */
@@ -8290,6 +8339,8 @@ export interface components {
              * @default false
              */
             cancelled: boolean;
+            /** Cancelled On */
+            cancelled_on?: string | null;
             /**
              * Note
              * @default
@@ -9778,7 +9829,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "sent" | "failed";
+            status: "sending" | "sent" | "failed" | "unknown";
             /** Error */
             error: string;
             /** Attachment */
@@ -11372,6 +11423,11 @@ export interface components {
              * @default 0
              */
             discount: number;
+            /**
+             * Fx Rate
+             * @description Company currency per invoice currency unit at settlement (supplier payments)
+             */
+            fx_rate?: number | null;
         };
         /**
          * PaymentTerms
@@ -13935,6 +13991,14 @@ export interface components {
             revision: number;
             /** Base Revision */
             base_revision: number;
+        };
+        /** RetryMail */
+        RetryMail: {
+            /**
+             * Acknowledge Possible Duplicate
+             * @default false
+             */
+            acknowledge_possible_duplicate: boolean;
         };
         /**
          * ReturnOrder
@@ -16811,6 +16875,12 @@ export interface components {
              * @default
              */
             released_by: string;
+            /**
+             * Entered By
+             * @description Signed-in entrant, recorded by the company save boundary
+             * @default
+             */
+            entered_by: string;
             /** Released On */
             released_on?: string | null;
             /** Payments */
@@ -20969,6 +21039,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MailRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_mail_api_companies__cid__mail__seq__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetryMail"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailRow"];
                 };
             };
             /** @description Validation Error */

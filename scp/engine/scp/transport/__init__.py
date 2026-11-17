@@ -586,6 +586,8 @@ def settle(ds: Dataset, fid: str, billed: float, bill: str = "", on: date | None
     if not math.isfinite(billed) or billed < 0:
         raise TransportError("the bill is an amount of 0 or more")
     day = on or ds.settings.planning_start
+    if f.shipped_on is None or day < f.shipped_on:
+        raise TransportError("a freight bill cannot be settled before shipment")
     new = f.model_copy(update={"status": "settled", "billed": round(billed, 2), "bill": bill, "settled_on": day})
     ds2 = _put(ds, new)
     diff = billed - f.planned_cost

@@ -1279,11 +1279,30 @@ class Companies:
                 own = True
             doc = self._working_copy(cid, doc, patch, base_revision, current, r["revision"])
             if (role != "owner" and (current.get("finance") or {}).get("closed_through")
-                    != (doc.get("finance") or {}).get("closed_through")):
+                    != (doc.get("finance") or {}).get("closed_through")
+                    and not (current.get("finance") or {}).get("control_roles")):
                 raise CompanyError("only a company owner may close an accounting period", 403)
             if role != "owner" and any((current.get("purchasing") or {}).get(k)
                     != (doc.get("purchasing") or {}).get(k) for k in ("approval_limit", "release_levels")):
                 raise CompanyError("only a company owner may change purchasing release policy", 403)
+            if role != "owner" and (
+                    ((current.get("finance") or {}).get("control_roles") or {}) != ((doc.get("finance") or {}).get("control_roles") or {})
+                    or bool((current.get("finance") or {}).get("separate_payments")) != bool((doc.get("finance") or {}).get("separate_payments"))):
+                raise CompanyError("only a company owner may change business-operation grants or separation policy", 403)
+            if any((current.get("finance") or {}).get(k) != (doc.get("finance") or {}).get(k)
+                   for k in ("control_roles", "separate_payments")):
+                from ..model.finance import FinanceSettings
+                try:
+                    FinanceSettings.model_validate(doc.get("finance") or {})
+                except ValueError as e:
+                    raise CompanyError(f"invalid financial control configuration: {e}", 403) from None
+            from .controls import authorize
+            submitted = doc
+            try:
+                doc = authorize(current, doc, user.email)
+            except ValueError as e:
+                raise CompanyError(str(e), 403) from None
+            identity_changed = doc is not submitted
             self._within_rights(user, cid, current, doc)
             held: dict | None = None
             if r["approval"] and action != "approved":
@@ -1308,7 +1327,7 @@ class Companies:
             guarded = record_credit_releases(current, doc, user.email)
             doc = guarded
             revived = self._revive_erp(cid, current, doc)
-            erp_changed = revived is not doc or guarded is not effective
+            erp_changed = revived is not doc or guarded is not effective or identity_changed
             doc = revived
             text = _canonical(doc)
             now = _iso(_now())

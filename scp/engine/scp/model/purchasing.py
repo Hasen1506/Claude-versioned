@@ -194,6 +194,7 @@ class SupplierInvoice(Model):
     tax: float = Unit("money", default=0.0, description="Tax on the invoice, as the supplier charged it")
     blocks: list[str] = Field(default_factory=list, description="Why it was blocked for payment when entered")
     released_by: str = Field("", max_length=200)
+    entered_by: str = Field("", max_length=200, description="Signed-in entrant, recorded by the company save boundary")
     released_on: dt.date | None = None
     payments: list[Payment] = Field(default_factory=list)
     return_id: str | None = Field(None, max_length=64, description="Credit memo: the return it credits")

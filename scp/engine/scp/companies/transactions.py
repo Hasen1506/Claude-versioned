@@ -11,9 +11,8 @@ from datetime import date
 from pydantic import ValidationError
 
 from ..model import GoodsMovement, MovementType, PurchaseOrder, SupplierInvoice
-from ..plan.costing import fx
 from ..purchasing.payables import (
-    PayablesError, cancel_invoice, enter_invoice, invoice_entity, lines_index, pay_invoice, release_invoice,
+    cancel_invoice, enter_invoice, invoice_entity, lines_index, pay_invoice, posting_rate, release_invoice,
 )
 from ..validate.lenient import lenient
 
@@ -34,7 +33,7 @@ def _rows(doc: dict, name: str) -> dict[str, dict]:
 
 def protect(before: dict, after: dict, email: str) -> dict:
     """Return a normalized document or refuse an invalid financial state transition."""
-    names = ("supplier_invoices", "movements", "purchase_orders")
+    names = ("supplier_invoices", "movements", "purchase_orders", "invoices", "intercompany_invoices", "freight_orders")
     # No financial records means incomplete master data can still be edited freely.
     if not any(before.get(n) or after.get(n) for n in names):
         return after
@@ -55,10 +54,22 @@ def protect(before: dict, after: dict, email: str) -> dict:
             and location_costs(before) == location_costs(after)
             and place_costs(before) == place_costs(after)
             and (before.get("finance") or {}).get("closed_through") == (after.get("finance") or {}).get("closed_through")):
+        if any(before.get(n) != after.get(n) for n in ("demand", "sales_orders", "returns")):
+            from .commercial import protect_commercial
+            try:
+                protect_commercial(lenient(before)[0], lenient(after)[0], lambda day: None)
+            except (ValueError, KeyError, TypeError) as exc:
+                raise TransactionRefused(f"financial transition refused: {exc}") from None
         return after
     try:
         old_ds = lenient(before)[0]
         ds = lenient(after)[0]
+        from ..model.sales import Invoice
+        from ..model.intercompany import IntercompanyInvoice
+        from ..model.transport import FreightOrder
+        for name, model in (("invoices", Invoice), ("intercompany_invoices", IntercompanyInvoice), ("freight_orders", FreightOrder)):
+            for raw in [*_rows(before, name).values(), *_rows(after, name).values()]:
+                model.model_validate(raw)
         old_inv, new_inv = _rows(before, "supplier_invoices"), _rows(after, "supplier_invoices")
         old_moves, new_moves = _rows(before, "movements"), _rows(after, "movements")
         old_pos, new_pos = _rows(before, "purchase_orders"), _rows(after, "purchase_orders")
@@ -78,15 +89,35 @@ def protect(before: dict, after: dict, email: str) -> dict:
             nonlocal result
             result = {**result, name: list(rows.values())}
 
+        from ..sales import posting_entity
+        normalized = [i.model_copy(update={"entity": posting_entity(old_ds, i.lines, i.reference)})
+                      if i.entity is None else i for i in old_ds.invoices]
+        old_ds = old_ds.model_copy(update={"invoices": normalized})
+        existing_sales = {i.id: i for i in normalized}
+        invoices = _rows(after, "invoices")
+        for iid, raw in invoices.items():
+            if iid in existing_sales and raw.get("entity") is None:
+                invoices[iid] = {**raw, "entity": existing_sales[iid].entity}
+                replace("invoices", invoices)
+
         for pid, raw in old_pos.items():
             if pid not in new_pos:
                 continue  # cancellation/roll may remove headers; related invoice/movement facts stay protected
             prior = PurchaseOrder.model_validate(raw)
             following = PurchaseOrder.model_validate(new_pos[pid])
-            rate = prior.fx_rate if prior.fx_rate is not None else fx(old_ds, prior.currency)
+            rate = prior.fx_rate if prior.fx_rate is not None else posting_rate(old_ds, prior.currency)
             if following.fx_rate is not None and abs(following.fx_rate - rate) > 1e-12:
                 raise TransactionRefused(f"{pid}: the posting exchange rate cannot be replaced")
             if following.fx_rate is None:
+                new_pos[pid] = {**new_pos[pid], "fx_rate": rate}
+                replace("purchase_orders", new_pos)
+
+        for pid in new_pos.keys() - old_pos.keys():
+            order = PurchaseOrder.model_validate(new_pos[pid])
+            rate = posting_rate(ds, order.currency)
+            if order.fx_rate is not None and abs(order.fx_rate - rate) > 1e-12:
+                raise TransactionRefused(f"{pid}: the order exchange rate is determined by the saved company")
+            if order.fx_rate is None:
                 new_pos[pid] = {**new_pos[pid], "fx_rate": rate}
                 replace("purchase_orders", new_pos)
 
@@ -116,6 +147,14 @@ def protect(before: dict, after: dict, email: str) -> dict:
         if new_ids:
             from ..actuals.valuation import standards
             posting_prices = standards(ds)
+            from ..actuals.documents import _negative
+            from ..actuals.stock import pending_openings
+            additions = [GoodsMovement.model_validate(raw) for mid, raw in new_moves.items() if mid in new_ids]
+            opening_nodes = {(m.location, m.product) for m in additions if m.type is MovementType.OPENING}
+            pending = [m for m in pending_openings(old_ds) if (m.location, m.product) not in opening_nodes]
+            # Inventory rules use the saved policy and opening balances, never a
+            # simultaneously inflated planning balance or relaxed stock policy.
+            _negative(old_ds, [*old_ds.movements, *pending], additions, min(m.date for m in additions))
         for mid in new_ids:
             movement = GoodsMovement.model_validate(new_moves[mid])
             open_period(movement.date)
@@ -169,10 +208,18 @@ def protect(before: dict, after: dict, email: str) -> dict:
                 raise TransactionRefused(f"{iid}: a posted supplier invoice is retained; cancel it with a date instead")
             prior = SupplierInvoice.model_validate(raw)
             following = SupplierInvoice.model_validate(new_inv[iid])
-            rate = prior.fx_rate if prior.fx_rate is not None else fx(old_ds, prior.currency)
+            rate = prior.fx_rate if prior.fx_rate is not None else posting_rate(old_ds, prior.currency)
             entity = prior.entity if prior.entity is not None else invoice_entity(old_ds, prior.lines)
             if following.fx_rate is None or following.entity is None:
                 new_inv[iid] = {**new_inv[iid], "fx_rate": rate, "entity": entity}
+                replace("supplier_invoices", new_inv)
+            # Pre-upgrade payments have no independently known bank rate. Retain
+            # their original invoice-rate treatment; only new settlements use today's rate.
+            payments = [p.model_copy(update={"fx_rate": p.fx_rate if p.fx_rate is not None else rate})
+                        for p in prior.payments]
+            if following.payments[:len(payments)] == prior.payments and payments != prior.payments:
+                new_inv[iid] = {**new_inv[iid], "payments": [
+                    p.model_dump(mode="json") for p in [*payments, *following.payments[len(payments):]]]}
                 replace("supplier_invoices", new_inv)
 
         # Use normalized facts, but no newly proposed invoices, as the replay base.
@@ -185,8 +232,10 @@ def protect(before: dict, after: dict, email: str) -> dict:
             if iid in old_inv:
                 prior = SupplierInvoice.model_validate(old_inv[iid])
                 prior = prior.model_copy(update={
-                    "fx_rate": prior.fx_rate if prior.fx_rate is not None else fx(old_ds, prior.currency),
+                    "fx_rate": prior.fx_rate if prior.fx_rate is not None else posting_rate(old_ds, prior.currency),
                     "entity": prior.entity if prior.entity is not None else invoice_entity(old_ds, prior.lines)})
+                prior = prior.model_copy(update={"payments": [p.model_copy(update={
+                    "fx_rate": p.fx_rate if p.fx_rate is not None else prior.fx_rate}) for p in prior.payments]})
                 if prior.model_dump(exclude=lifecycle) != target.model_dump(exclude=lifecycle):
                     raise TransactionRefused(f"{iid}: posted invoice facts cannot be replaced; use a dated correction")
                 working = working.model_copy(update={"supplier_invoices": [
@@ -203,7 +252,7 @@ def protect(before: dict, after: dict, email: str) -> dict:
                     delivery_costs=target.delivery_costs)
                 prior = working.supplier_invoices[-1].model_copy(update={"id": iid})
                 working = working.model_copy(update={"supplier_invoices": [*working.supplier_invoices[:-1], prior]})
-                if prior.model_dump(exclude=lifecycle | {"id"}) != target.model_dump(exclude=lifecycle | {"id"}):
+                if prior.model_dump(exclude=lifecycle | {"id", "entered_by"}) != target.model_dump(exclude=lifecycle | {"id", "entered_by"}):
                     raise TransactionRefused(f"{iid}: the saved invoice does not match its order, receipts and posting basis")
             if target.released_on != prior.released_on or target.released_by != prior.released_by:
                 if prior.released_on is not None or target.released_on is None or target.released_by.lower() != email.lower():
@@ -222,6 +271,14 @@ def protect(before: dict, after: dict, email: str) -> dict:
                     raise TransactionRefused(f"{iid}: cancellation requires a date and cannot be undone by a save")
                 open_period(target.cancelled_on)
                 working, _ = cancel_invoice(working, iid, target.cancelled_on)
+        from .commercial import protect_commercial
+        protect_commercial(old_ds, ds, open_period)
+        if ds.finance.closed_through is not None and ds.finance.closed_through != closed:
+            from ..accounting import view
+            books = view(ds, period_end=ds.finance.closed_through)
+            if any(not check.ok for check in books.checks) or any(
+                    row.account == "SUSPENSE" and abs(row.balance) >= .005 for row in books.balances):
+                raise TransactionRefused("reconcile the books and clear suspense before closing the accounting period")
         return result
-    except (PayablesError, ValidationError, KeyError, TypeError) as exc:
+    except (ValueError, ValidationError, KeyError, TypeError) as exc:
         raise TransactionRefused(f"financial transition refused: {exc}") from None

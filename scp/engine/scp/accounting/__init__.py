@@ -58,6 +58,8 @@ ACCOUNTS: dict[str, tuple[str, str, str]] = {
     "SALES": ("Sales", "Sales Accounts", "income"),
     "IC_SALES": ("Sales to group companies", "Sales Accounts", "income"),
     "DISC_RECEIVED": ("Cash discount received", "Indirect Incomes", "income"),
+    "FX_GAIN": ("Realized exchange gain", "Indirect Incomes", "income"),
+    "FX_LOSS": ("Realized exchange loss", "Indirect Expenses", "expense"),
     "COGS": ("Cost of goods sold", "Direct Expenses", "expense"),
     "IC_COGS": ("Cost of goods sold to group companies", "Direct Expenses", "expense"),
     "DELIVERY": ("Freight, duty and handling", "Direct Expenses", "expense"),
@@ -374,18 +376,23 @@ class _Journal:
             for k, p in enumerate(inv.payments, 1):
                 if p.date > day:
                     continue
+                settlement_rate = p.fx_rate if p.fx_rate is not None else rate
+                exchange = sign * (_r(p.amount * settlement_rate) - _r((p.amount + p.discount) * rate)
+                                   + _r(p.discount * rate))
                 self._post(p.date, f"{inv.id}/{k}", "Payment" if sign > 0 else "Receipt", inv.id,
                            f"{'paid to' if sign > 0 else 'refund from'} {_name(ds, inv.supplier)} for "
                            f"{inv.reference or inv.id}" + (f", {p.reference}" if p.reference else ""),
                            [("PAYABLES", co, inv.supplier, sign * (p.amount + p.discount) * rate, "", ""),
-                            ("BANK", co, "", -sign * p.amount * rate, "", ""),
-                            ("DISC_RECEIVED", co, "", -sign * p.discount * rate, "", "")], "SUSPENSE")
+                            ("BANK", co, "", -sign * p.amount * settlement_rate, "", ""),
+                            ("DISC_RECEIVED", co, "", -sign * p.discount * rate, "", ""),
+                            ("FX_LOSS" if exchange >= 0 else "FX_GAIN", co, "", exchange, "", "")], "SUSPENSE")
         moves = {m.id: m for m in ds.movements}
         by_ret = {r.id: r for r in ds.returns}
         by_inv: dict[str, str] = {}
         for inv in sorted(ds.invoices, key=lambda i: (i.kind != "invoice", i.date)):
-            if inv.cancelled or inv.date > day:
+            if inv.date > day or inv.cancelled and inv.cancelled_on is None:
                 continue
+            start = len(self.vouchers)
             co = ""
             for ln in inv.lines:
                 loc = next((moves[x].location for x in ln.movements if x in moves), None)
@@ -396,6 +403,8 @@ class _Journal:
                     break
             else:
                 co = by_inv.get(inv.reference or "", "")
+            if inv.entity is not None:
+                co = inv.entity
             by_inv[inv.id] = co
             s = -1.0 if inv.kind == "credit_note" else 1.0
             ls = [("RECEIVABLES", co, inv.customer, s * inv.total, "", "")]
@@ -413,15 +422,18 @@ class _Journal:
                            + (f", {p.reference}" if p.reference else ""),
                            [("BANK", co, "", s * p.amount, "", ""), ("DISC_ALLOWED", co, "", s * p.discount, "", ""),
                             ("RECEIVABLES", co, inv.customer, -s * (p.amount + p.discount), "", "")], "SUSPENSE")
+            self._reverse(start, inv.id, inv.cancelled_on if inv.cancelled else None, day)
         for inv in ds.intercompany_invoices:
-            if inv.cancelled or inv.date > day:
+            if inv.date > day or inv.cancelled and inv.cancelled_on is None:
                 continue
+            start = len(self.vouchers)
             s = inv.sign
             out = self._tax_lines(inv.split, inv.seller, -s * inv.tax)
             if inv.seller == inv.buyer:              # between two registrations of one company: the tax only
                 self._post(inv.date, inv.id, "Journal", inv.id,
                            f"tax on the transfer {inv.id}, {_name(ds, inv.ship_from)} to {_name(ds, inv.ship_to)}",
                            [("INPUT_TAX", inv.buyer, "", s * inv.tax, "", ""), *out], "SUSPENSE")
+                self._reverse(start, inv.id, inv.cancelled_on if inv.cancelled else None, day)
                 continue
             word = "invoice" if s > 0 else "credit note"
             self._post(inv.date, inv.id, "Sales" if s > 0 else "Credit Note", inv.id,
@@ -447,6 +459,7 @@ class _Journal:
                            f"{note}: paid back by {party(ds, inv.seller).name}",
                            [("IC_PAYABLES", inv.buyer, inv.seller, s * p.amount, "", ""),
                             ("BANK", inv.buyer, "", -s * p.amount, "", "")], "SUSPENSE")
+            self._reverse(start, inv.id, inv.cancelled_on if inv.cancelled else None, day)
         for fo in ds.freight_orders:
             if fo.status != "settled" or fo.billed is None or fo.settled_on is None or fo.settled_on > day:
                 continue
@@ -457,6 +470,16 @@ class _Journal:
                        f"{_name(ds, fo.ship_from)} to {_name(ds, fo.ship_to)}",
                        [("DELIVERY", co, "", fo.billed, fo.ship_from, ""),
                         ("PAYABLES", co, carrier, -fo.billed, "", "")], "SUSPENSE")
+
+    def _reverse(self, start: int, document: str, cancelled_on: date | None, through: date) -> None:
+        if cancelled_on is None or cancelled_on > through:
+            return
+        for voucher in self.vouchers[start:]:
+            self.vouchers.append(voucher.model_copy(update={
+                "number": f"{voucher.number}/REV", "date": cancelled_on, "document": document,
+                "narration": f"Reversal of {voucher.number}",
+                "lines": [line.model_copy(update={"debit": line.credit, "credit": line.debit})
+                          for line in voucher.lines]}))
 
     def _tax_lines(self, split: str, co: str, amt: float) -> list:
         if abs(amt) < 0.005:
@@ -497,7 +520,8 @@ def journal(ds: Dataset, day: date) -> tuple[list[Voucher], object]:
 def _day(ds: Dataset) -> date:
     return max([ds.settings.planning_start, *(m.date for m in ds.movements),
                 *(i.date for i in ds.supplier_invoices if not i.cancelled), *(i.date for i in ds.invoices),
-                *(i.cancelled_on for i in ds.supplier_invoices if i.cancelled_on is not None),
+                *(i.cancelled_on for i in [*ds.supplier_invoices, *ds.invoices, *ds.intercompany_invoices]
+                  if i.cancelled_on is not None),
                 *(i.date for i in ds.intercompany_invoices),
                 *(p.date for i in [*ds.invoices, *ds.supplier_invoices, *ds.intercompany_invoices] for p in i.payments),
                 *(f.settled_on for f in ds.freight_orders if f.settled_on is not None)])
@@ -573,7 +597,9 @@ def view(ds: Dataset, period_start: date | None = None, period_end: date | None 
                          f"{x.balance:,.2f}): goods were made without their parts issued to the order (receipts with "
                          "no backflush, or made before go-live), so what they cost is not matched yet.")
     from ..sales import to_bill
-    due = [b for b in to_bill(ds) if b.delivered_on <= end]
+    historical = ds.model_copy(update={"invoices": [i.model_copy(update={"cancelled": not i.active_at(end)})
+                                                    for i in ds.invoices]})
+    due = [b for b in to_bill(historical) if b.delivered_on <= end]
     if due:
         worth = sum(b.value or 0.0 for b in due)
         notes.append(f"{len(due)} deliveries are not invoiced yet" + (f" ({ds.settings.currency} {worth:,.2f} at their "
@@ -616,7 +642,7 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
         if v.type in ("Sales", "Credit Note") and any(ln.account == "RECEIVABLES" for ln in v.lines):
             by_inv[v.document] = v.company
     for inv in ds.invoices:
-        if not inv.cancelled and inv.date <= day:
+        if inv.active_at(day):
             left = inv.total - sum(p.amount + p.discount for p in inv.payments if p.date <= day)
             rec[by_inv.get(inv.id, "")] += left if inv.kind == "invoice" else -left
     pay: dict[str, float] = defaultdict(float)
@@ -656,7 +682,7 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
     ic_rec: dict[str, float] = defaultdict(float)
     ic_pay: dict[str, float] = defaultdict(float)
     for inv in ds.intercompany_invoices:
-        if not inv.cancelled and inv.date <= day and inv.seller != inv.buyer:
+        if inv.active_at(day) and inv.seller != inv.buyer:
             left = inv.total - sum(p.amount + p.discount for p in inv.payments if p.date <= day)
             ic_rec[inv.seller] += inv.sign * left
             ic_pay[inv.buyer] += inv.sign * left

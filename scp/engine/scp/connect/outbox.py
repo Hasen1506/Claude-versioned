@@ -27,6 +27,8 @@ import json
 import os
 import re
 from email.message import EmailMessage
+from email.parser import BytesParser
+from email import policy
 from email.utils import formataddr, make_msgid
 from typing import Any, Literal
 
@@ -36,6 +38,7 @@ from ..companies import CompanyError, Companies, User, mail
 from ..companies.store import EMAIL
 from ..model.common import Model, Out
 from ..model.tower import CATEGORIES
+from ..transactions import atomic
 from .imports import _zone, next_run, timezone
 from .pdf import html_to_pdf
 
@@ -47,6 +50,14 @@ CREATE TABLE IF NOT EXISTS mail_outbox (
   error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS mail_outbox_by_company ON mail_outbox (company_id, seq);
+CREATE TABLE IF NOT EXISTS mail_payloads (
+  mail_seq INTEGER PRIMARY KEY REFERENCES mail_outbox(seq) ON DELETE CASCADE,
+  payload BLOB NOT NULL, attachments TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mail_retries (
+  original_seq INTEGER PRIMARY KEY REFERENCES mail_outbox(seq) ON DELETE CASCADE,
+  retry_seq INTEGER NOT NULL REFERENCES mail_outbox(seq)
+);
 CREATE TABLE IF NOT EXISTS mail_settings (
   company_id TEXT PRIMARY KEY, reminders INTEGER NOT NULL DEFAULT 0, at TEXT NOT NULL DEFAULT '08:00',
   weekdays TEXT NOT NULL DEFAULT '[0,1,2,3,4]', next_run TEXT, last_run TEXT, set_by TEXT
@@ -75,7 +86,7 @@ class MailRow(Out):
     to: list[str]
     cc: list[str]
     subject: str
-    status: Literal["sent", "failed"]
+    status: Literal["sending", "sent", "failed", "unknown"]
     error: str
     attachment: str                # the attached files' names, if any ("PO-00001.pdf, PO-00001.html")
 
@@ -144,16 +155,84 @@ def _record(c: Companies, cid: str, uid: str, kind: str, ref: str, to: list[str]
 def _deliver(c: Companies, seq: int, to: list[str], cc: list[str], subject: str, text: str, reply_to: str = "",
              html: str = "", filename: str = "") -> MailRow:
     """Make and deliver a mail kept in the outbox as ``seq`` (the lock is not held), then say how it went."""
-    msg, names = _message(to, cc, subject, text, reply_to, html, filename)
+    names = []
+    try:
+        msg, names = _message(to, cc, subject, text, reply_to, html, filename)
+        # Preserve the complete MIME before the external effect. A retry reuses
+        # its attachments and Message-ID, never regenerates a changed document.
+        with c.lock, atomic(c.db):
+            c.db.execute("INSERT INTO mail_payloads (mail_seq, payload, attachments) VALUES (?, ?, ?)",
+                         (seq, msg.as_bytes(), ", ".join(names)))
+    except Exception as e:  # noqa: BLE001 - preparation failed before any SMTP attempt
+        return _finished(c, seq, "failed", f"message preparation: {e}"[:300], ", ".join(names))
+    return _send_prepared(c, seq, msg, ", ".join(names))
+
+
+def _finished(c: Companies, seq: int, status: str, error: str, names: str) -> MailRow:
+    with c.lock:
+        c.db.execute("UPDATE mail_outbox SET status = ?, error = ?, attachment = ? WHERE seq = ?",
+                     (status, error, names, seq))
+        return _row(c, c.db.execute("SELECT * FROM mail_outbox WHERE seq = ?", (seq,)).fetchone())
+
+
+def _send_prepared(c: Companies, seq: int, msg: EmailMessage, names: str) -> MailRow:
     status, error = "sent", ""
     try:
         mail.deliver(msg)
     except Exception as e:  # noqa: BLE001 - the outbox says why
         status, error = "failed", (str(e) or type(e).__name__)[:300]
+    return _finished(c, seq, status, error, names)
+
+
+class RetryMail(Model):
+    acknowledge_possible_duplicate: bool = False
+
+
+def retry_document(c: Companies, user: User, cid: str, seq: int, acknowledgement: RetryMail) -> MailRow:
+    """Operator-controlled at-least-once recovery. SMTP cannot guarantee exactly-once delivery."""
+    if not acknowledgement.acknowledge_possible_duplicate:
+        raise CompanyError("check the mail provider first; retry requires acknowledgement that delivery may duplicate", 409)
+    if not mail.mail_on():
+        raise CompanyError("this server sends no mail", 409)
+    if _open_signup() and os.environ.get("SCP_MAIL_OPEN_SIGNUP", "").strip().lower() not in ("1", "true", "yes", "on"):
+        raise CompanyError("document mail is disabled for open signup", 403)
     with c.lock:
-        c.db.execute("UPDATE mail_outbox SET status = ?, error = ?, attachment = ? WHERE seq = ?",
-                     (status, error, ", ".join(names), seq))
-        return _row(c, c.db.execute("SELECT * FROM mail_outbox WHERE seq = ?", (seq,)).fetchone())
+        _ensure(c)
+        c._need(user, cid, "owner")
+        if c.is_key(user) or not c._user(user.id).verified:
+            raise CompanyError("mail recovery requires a verified human owner", 403)
+        row = c.db.execute("SELECT * FROM mail_outbox WHERE company_id = ? AND seq = ?", (cid, seq)).fetchone()
+        if row is None:
+            raise CompanyError("there is no such outbox entry", 404)
+        replay = c.db.execute("SELECT retry_seq FROM mail_retries WHERE original_seq = ?", (seq,)).fetchone()
+        if replay is not None:
+            return _row(c, c.db.execute("SELECT * FROM mail_outbox WHERE seq = ?", (replay["retry_seq"],)).fetchone())
+        if row["status"] == "sent":
+            raise CompanyError("this outbox entry is already sent", 409)
+        if row["status"] == "sending" and row["at"] > _iso(_now() - dt.timedelta(minutes=10)):
+            raise CompanyError("this delivery may still be running; reconcile it after ten minutes", 409)
+        payload = c.db.execute("SELECT * FROM mail_payloads WHERE mail_seq = ?", (seq,)).fetchone()
+        if payload is None:
+            raise CompanyError("this interrupted or legacy entry has no recoverable MIME; review and send a new document", 409)
+        recipients, cc = json.loads(row["recipients"]), json.loads(row["cc"])
+        if any(a.lower() not in known(c, cid) for a in [*recipients, *cc]):
+            raise CompanyError("an original recipient is no longer known to the company", 403)
+        day = _iso(_now())[:10]
+        count = c.db.execute("SELECT COUNT(*) FROM mail_outbox WHERE company_id = ? AND at >= ?", (cid, day)).fetchone()[0]
+        mine = c.db.execute("SELECT COUNT(*) FROM mail_outbox WHERE user_id = ? AND at >= ?", (user.id, day)).fetchone()[0]
+        if count >= DAILY or mine >= _per_account():
+            raise CompanyError("the daily mail limit has been reached", 429)
+        with atomic(c.db):
+            new_seq = _record(c, cid, user.id, row["kind"], row["ref"], recipients, cc, row["subject"], row["body"])
+            c.db.execute("INSERT INTO mail_payloads (mail_seq, payload, attachments) VALUES (?, ?, ?)",
+                         (new_seq, payload["payload"], payload["attachments"]))
+            c.db.execute("INSERT INTO mail_retries (original_seq, retry_seq) VALUES (?, ?)", (seq, new_seq))
+            if row["status"] == "sending":
+                c.db.execute("UPDATE mail_outbox SET status = 'unknown', error = ? WHERE seq = ?",
+                             ("interrupted: delivery outcome reconciled by an owner before retry", seq))
+            c._log(cid, None, user.id, "mail", f"outbox #{seq} retried as #{new_seq}; possible duplicate acknowledged")
+        msg = BytesParser(policy=policy.default).parsebytes(bytes(payload["payload"]))
+    return _send_prepared(c, new_seq, msg, payload["attachments"])
 
 
 def _message(to: list[str], cc: list[str], subject: str, text: str, reply_to: str = "", html: str = "",

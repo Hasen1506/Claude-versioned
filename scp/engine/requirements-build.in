@@ -1,0 +1,3 @@
+# Build tooling installed with hashes before --no-build-isolation project installation.
+setuptools>=78.1.1
+wheel>=0.46

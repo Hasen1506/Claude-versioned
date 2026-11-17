@@ -1346,7 +1346,7 @@ def post_intercompany_action(req: IntercompanyActionRequest) -> IntercompanyActi
         else:
             if not req.id:
                 raise IntercompanyError("say which invoice")
-            new, r = (ic.cancel(ds, req.id) if req.action == "cancel"
+            new, r = (ic.cancel(ds, req.id, req.date) if req.action == "cancel"
                       else ic.pay(ds, req.id, req.amount, req.date, req.reference))
     except IntercompanyError as e:
         raise HTTPException(409, str(e)) from e

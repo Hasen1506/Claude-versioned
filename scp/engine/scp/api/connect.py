@@ -246,6 +246,11 @@ def mail_sent(cid: str, user: Signed, limit: int = 100, ref: str = "", before: i
     return outbox.outbox(get_companies(), user, cid, limit, ref, before)
 
 
+@router.post("/mail/{seq}/retry", response_model=outbox.MailRow)
+def retry_mail(cid: str, seq: int, body: outbox.RetryMail, user: Signed) -> outbox.MailRow:
+    return outbox.retry_document(get_companies(), user, cid, seq, body)
+
+
 @router.put("/mail/reminders", response_model=outbox.MailSetup)
 def mail_reminders(cid: str, body: outbox.ReminderSettings, user: Signed) -> outbox.MailSetup:
     """Worklist reminders: on which days and at what time each owner of open exceptions gets them by e-mail."""

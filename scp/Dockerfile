@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # SCP in one container: the engine (FastAPI) serves the API and the built web client on port 8000.
 # Build from this folder:  docker build -t scp .
 # See docs/DEPLOY.md for the database, mail, single sign-on, backups and a reverse proxy.
@@ -30,16 +31,21 @@ RUN apt-get update \
 # trusts that bundle even when the system store does not. Download the wheel with the system
 # store, check the published digest, then install it.
 COPY engine/pyproject.toml engine/
+COPY engine/requirements.lock engine/requirements-build.lock engine/
 RUN python -c 'import hashlib, urllib.request; url="https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl"; expected="fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"; data=urllib.request.urlopen(url, timeout=120).read(); digest=hashlib.sha256(data).hexdigest(); assert digest==expected, digest; open("/tmp/pip-26.2.2-py3-none-any.whl","wb").write(data)' \
  && python -m pip install --no-cache-dir /tmp/pip-26.2.2-py3-none-any.whl && rm /tmp/pip-26.2.2-py3-none-any.whl \
- && mkdir -p engine/scp && touch engine/scp/__init__.py \
- && pip install --no-cache-dir ./engine && pip uninstall -y scp
-COPY engine/ engine/
-COPY examples/ examples/
-RUN pip install --no-cache-dir --no-deps -e ./engine
-COPY --from=web /app/web/dist web/dist
-# Build contexts can have restrictive directory modes; the runtime user must be able to read the application.
-RUN chmod -R a+rX /app && useradd --system --uid 10001 --home /data scp && mkdir -p /data && chown scp /data
+ && pip install --no-cache-dir --require-hashes -r engine/requirements-build.lock -r engine/requirements.lock
+# Copy the application and install it in one layer. This also keeps native/VFS
+# builders from copying the scientific dependency tree once per small COPY/RUN.
+RUN --mount=type=bind,source=engine,target=/src/engine,readonly \
+    --mount=type=bind,source=examples,target=/src/examples,readonly \
+    --mount=type=bind,from=web,source=/app/web/dist,target=/src/web,readonly \
+    cp -a /src/engine/. engine/ \
+ && mkdir -p examples web/dist \
+ && cp -a /src/examples/. examples/ && cp -a /src/web/. web/dist/ \
+ && pip install --no-cache-dir --no-deps --no-build-isolation -e ./engine \
+ && chmod -R a+rX /app \
+ && useradd --system --uid 10001 --home /data scp && mkdir -p /data && chown scp /data
 USER scp
 VOLUME ["/data"]
 EXPOSE 8000
