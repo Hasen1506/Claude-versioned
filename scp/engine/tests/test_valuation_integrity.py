@@ -284,3 +284,37 @@ def test_a_foreign_receipt_retains_its_base_when_the_header_is_removed_and_plann
     kept = fetch(owner, cid)["dataset"]
     assert kept["purchase_valuation"][0]["base"] == 800
     assert amounts(kept) == {"STOCK": 1500, "GRIR": -80000, "OPENING": -700, "PRICE_DIFF": 79200}
+
+
+@pytest.mark.parametrize("route", ["whole", "patch", "merge"])
+@pytest.mark.parametrize("setting", ["procurement_policy", "supplier_block"])
+def test_indirect_rollup_changes_cannot_restate_openings_after_an_invoice(setting, route):
+    raw = company("standard", on_hand=0)
+    if setting == "supplier_block":
+        raw["products"][1]["standard_cost"] = None
+    x, _ = act(Dataset.model_validate(raw), "enter_invoice", "PO-00001", on=DAY,
+               lines=[{"order": "PO-00001-10", "qty": 100}])
+    owner, _, cid = team(x)
+    initial = fetch(owner, cid)["dataset"]
+    raw = deepcopy(initial)
+    if setting == "procurement_policy":
+        next(lp for lp in raw["location_products"] if lp["product"] == "A")["procurement"] = "external"
+    else:
+        raw["vendors"] = [{"supplier": "S", "blocked": True}]
+    result = save(owner, cid, raw, route=route, base=initial)
+    assert result.status_code == 200, result.text
+    kept = fetch(owner, cid)["dataset"]
+    opening = 740 if setting == "supplier_block" else 700
+    assert amounts(kept) == {"STOCK": opening, "PAYABLES": -1000, "GRIR": 1000, "OPENING": -opening}
+    assert view(Dataset.model_validate(kept), period_end=DAY).model_dump() == view(x, period_end=DAY).model_dump()
+
+
+@pytest.mark.parametrize("route", ["whole", "patch", "merge"])
+def test_posted_base_units_cannot_be_relabelled_by_master_edits(route):
+    owner, _, cid = team(posted())
+    initial = fetch(owner, cid)["dataset"]
+    raw = deepcopy(initial)
+    next(p for p in raw["products"] if p["id"] == "B")["base_uom"] = "KG"
+    result = save(owner, cid, raw, route=route, base=initial)
+    assert result.status_code == 403 and "base unit" in result.text, result.text
+    assert fetch(owner, cid)["meta"]["revision"] == 1

@@ -23,6 +23,9 @@ def retain_basis(old: Dataset, proposed: Dataset) -> list[PurchaseValuationBasis
     for product in posted_products:
         if control_of(old, product) is not control_of(proposed, product):
             raise ValueError(f"{product}: posted stock keeps its valuation method; a change requires a controlled migration")
+        prior, following = old.product_by_id.get(product), proposed.product_by_id.get(product)
+        if prior is not None and following is not None and prior.base_uom != following.base_uom:
+            raise ValueError(f"{product}: posted quantities keep their base unit; a change requires a controlled migration")
 
     bases = old.purchase_valuation_by_id
     requested = proposed.purchase_valuation_by_id

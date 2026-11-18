@@ -12,6 +12,8 @@ This continuation starts from merged main `8a5b6baa2db09d45ad3b49ba5f7839b51099d
 
 The implementation evidence is in `engine/scp/companies/valuation.py`, `companies/openings.py`, `companies/transactions.py`, `actuals/valuation.py` and `actuals/stock.py`. Executable negative, positive and invariant cases are in `tests/test_valuation_integrity.py`. Generated API types include the typed purchase valuation records.
 
+The dependency review also reproduced indirect restatement after an invoice before goods: changing procurement policy made opening stock 700 disappear; blocking the supplier changed 740 to 540. The financial dependency check now includes the complete location-product policies, supplier and entity masters, and non-display product inputs, preserving row order instead of collapsing duplicates. Posted quantities also retain their base unit; changing a product from EA to KG requires controlled migration. These checks extend the same retained-basis boundary rather than certifying the planning policy or unit-conversion system as a whole.
+
 ## Independent acceptance
 
 The small standard-cost fixture has 10 finished units at 70 and receives 100 components at standard 8 against a purchase price of 10. Expected stock is **1,500**, GR/IR **−1,000**, opening equity **−700**, and price difference **200**. Switching the valuation method must return 403 without changing the revision or these balances. Changing future duty/freight/handling must preserve the earlier report. The corresponding moving-average fixture is independently checked for historical immutability.

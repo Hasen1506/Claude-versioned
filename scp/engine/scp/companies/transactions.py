@@ -38,18 +38,19 @@ def protect(before: dict, after: dict, email: str) -> dict:
     # No financial records means incomplete master data can still be edited freely.
     if not any(before.get(n) or after.get(n) for n in names):
         return after
-    cost_lists = ("purchasing_sources", "production_sources", "resources", "lanes", "transfer_prices")
+    cost_lists = ("purchasing_sources", "production_sources", "resources", "lanes", "transfer_prices", "vendors", "entities")
     def product_costs(doc):
-        return {p.get("id"): (p.get("standard_cost"), p.get("price_control"), bool(p.get("serial_numbers")),
-                              p.get("weight_kg"), p.get("volume_m3")) for p in doc.get("products") or []
-                if any(p.get(k) is not None for k in ("standard_cost", "price_control", "weight_kg", "volume_m3"))
-                or p.get("serial_numbers")}
+        display = {"id", "name", "family", "price", "tax_rate", "barcode", "shelf_life_days", "batches",
+                   "inspect_on_receipt", "cold_chain", "whole_units"}
+        return [(p.get("id"), relevant) for p in doc.get("products") or []
+                if (relevant := {k: v for k, v in p.items() if k not in display})]
     def location_costs(doc):
-        return {(p.get("location"), p.get("product")): (p.get("unit_cost"), p.get("on_hand"), p.get("order_stock"))
-                for p in doc.get("location_products") or []}
+        # Procurement/phantom policy changes the graph used by the cost roll-up.
+        # Preserve row order too: collapsing duplicates could hide the row the engine uses.
+        return doc.get("location_products") or []
     def place_costs(doc):
-        return {p.get("id"): (p.get("entity"), p.get("type"), p.get("handling_cost_per_unit", 0))
-                for p in doc.get("locations") or []}
+        return [(p.get("id"), p.get("entity"), p.get("type"), p.get("handling_cost_per_unit", 0))
+                for p in doc.get("locations") or []]
     settings = ("currency", "fx_rates", "planning_start")
     if (all(before.get(n) == after.get(n) for n in (*names, "receipts", "closed_orders", *cost_lists))
             and all((before.get("settings") or {}).get(k) == (after.get("settings") or {}).get(k) for k in settings)
