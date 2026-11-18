@@ -5687,6 +5687,11 @@ export interface components {
             contracts?: components["schemas"]["PurchaseContract"][];
             /** Supplier Invoices */
             supplier_invoices?: components["schemas"]["SupplierInvoice"][];
+            /**
+             * Purchase Valuation
+             * @description Server-retained posted purchase valuation terms; planning master edits do not rewrite the books
+             */
+            purchase_valuation?: components["schemas"]["PurchaseValuationBasis"][];
             /** Supplier Returns */
             supplier_returns?: components["schemas"]["SupplierReturn"][];
             /** Sales Orders */
@@ -13274,6 +13279,42 @@ export interface components {
              * @description Cancelled line snapshots, retained so the ERP also receives their cancellation
              */
             cancelled_lines?: components["schemas"]["ScheduledReceipt"][];
+        };
+        /**
+         * PurchaseValuationBasis
+         * @description Server-retained landed-cost terms for a stock purchase line's first financial posting.
+         */
+        PurchaseValuationBasis: {
+            /** Id */
+            id: string;
+            /** Supplier */
+            supplier: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Currency */
+            currency: string;
+            /**
+             * Base
+             * @description Order price in company currency at posting
+             */
+            base: number;
+            /**
+             * Duty
+             * @description Duty on the purchase price at posting
+             */
+            duty: number;
+            /**
+             * Freight
+             * @description Planned inbound freight at posting
+             */
+            freight: number;
+            /**
+             * Handling
+             * @description Receiving handling cost at posting
+             */
+            handling: number;
         };
         /** PurchasingSettings */
         PurchasingSettings: {

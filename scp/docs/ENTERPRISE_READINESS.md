@@ -6,6 +6,8 @@ Assessment date: 17 November 2026. Repository: `Hasen1506/Claude-versioned`. Loc
 
 **Verdict: the repaired controls are suitable for further controlled evaluation; the application is not established as a general enterprise ERP or a SAP/Kinaxis replacement.** There are confirmed remaining finance and scale constraints, configuration-dependent controls, and departmental behavior that has not received the same adversarial investigation. A passing suite does not turn those areas into certified capabilities.
 
+**Further investigation, 18 November:** the outside-work fixes subsequently merged through [PR #41](https://github.com/Hasen1506/Claude-versioned/pull/41), main `8a5b6baa2db09d45ad3b49ba5f7839b51099d39c`, after all three CI jobs passed; the additional main-push run also passed. A subsequent adversarial trace reproduced historical restatement through valuation-method and landed-cost edits, and through generated setup openings. The focused investigation, repair and compatibility limits are in [VALUATION_BASIS_INTEGRITY.md](VALUATION_BASIS_INTEGRITY.md). These results extend the evidence; they do not close the original currency, manufacturing, scale or reference-system gates.
+
 At the 17 November checkpoint, the fixes were committed locally. GitHub rejected its configured token, and an unauthenticated push dry run could not obtain credentials. No publication or production deployment was claimed at that checkpoint. Publication has since completed as recorded above; no production deployment was performed.
 
 ## Reference and method

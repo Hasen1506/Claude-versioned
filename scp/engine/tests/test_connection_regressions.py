@@ -32,8 +32,10 @@ def test_csv_receipt_import_accepts_the_order_column(monkeypatch, tmp_path):
     r = client.post(f"/api/companies/{cid}/imports/{jid}/run", headers=h(owner))
     assert r.status_code == 200, r.text
     assert r.json()[0]["status"] == "applied", r.json()[0]["items"]
-    [movement] = doc_of(owner, cid)["dataset"]["movements"]
+    moves = doc_of(owner, cid)["dataset"]["movements"]
+    [movement] = [m for m in moves if m["erp_ref"]]
     assert (movement["qty"], movement["reference"], movement["erp_ref"]) == (10, "PO-00001-10", "GM-1")
+    assert {m["product"]: m["qty"] for m in moves if m["id"].startswith("OP-")} == {"A": 100, "B": 30}
 
 
 def test_an_acknowledged_purchase_order_exports_its_cancellation_and_takes_the_ack():

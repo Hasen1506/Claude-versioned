@@ -187,9 +187,10 @@ def test_shopify_fulfilments_are_deliveries_of_the_orders_lines_each_taken_once(
     assert row["status"] == "applied" and row["items"][0]["ref"] == "shopify-77/10", row
     d = doc_of(owner, cid)["dataset"]
     so = d["sales_orders"][-1]
-    [mv] = d["movements"]
+    [mv] = [m for m in d["movements"] if m["erp_ref"]]
     assert (mv["type"], mv["product"], mv["qty"], mv["date"], mv["reference"], mv["erp_ref"]) == \
         ("sale", "A", 2, "2026-01-06", f"{so['id']}/10", "shopify-77/10")
+    assert {m["product"]: m["qty"] for m in d["movements"] if m["id"].startswith("OP-")} == {"A": 100, "B": 30}
     [again] = run(owner, cid, j["id"])
     assert again["status"] == "duplicate"
 

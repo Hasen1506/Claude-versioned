@@ -34,27 +34,30 @@ def _rows(doc: dict, name: str) -> dict[str, dict]:
 def protect(before: dict, after: dict, email: str) -> dict:
     """Return a normalized document or refuse an invalid financial state transition."""
     names = ("supplier_invoices", "movements", "purchase_orders", "invoices", "intercompany_invoices", "freight_orders",
-             "inventory_docs", "challans", "third_party_orders")
+             "inventory_docs", "challans", "third_party_orders", "purchase_valuation")
     # No financial records means incomplete master data can still be edited freely.
     if not any(before.get(n) or after.get(n) for n in names):
         return after
-    cost_lists = ("purchasing_sources", "production_sources", "resources", "lanes", "transfer_prices")
+    cost_lists = ("purchasing_sources", "production_sources", "resources", "lanes", "transfer_prices", "vendors", "entities")
     def product_costs(doc):
-        return {p.get("id"): (p.get("standard_cost"), p.get("price_control"), bool(p.get("serial_numbers")))
-                for p in doc.get("products") or []
-                if p.get("standard_cost") is not None or p.get("price_control") is not None or p.get("serial_numbers")}
+        display = {"id", "name", "family", "price", "tax_rate", "barcode", "shelf_life_days", "batches",
+                   "inspect_on_receipt", "cold_chain", "whole_units"}
+        return [(p.get("id"), relevant) for p in doc.get("products") or []
+                if (relevant := {k: v for k, v in p.items() if k not in display})]
     def location_costs(doc):
-        return {(p.get("location"), p.get("product")): p["unit_cost"]
-                for p in doc.get("location_products") or [] if p.get("unit_cost") is not None}
+        # Procurement/phantom policy changes the graph used by the cost roll-up.
+        # Preserve row order too: collapsing duplicates could hide the row the engine uses.
+        return doc.get("location_products") or []
     def place_costs(doc):
-        return {p.get("id"): (p.get("entity"), p.get("type"), p.get("handling_cost_per_unit", 0))
-                for p in doc.get("locations") or []}
-    settings = ("currency", "fx_rates")
+        return [(p.get("id"), p.get("entity"), p.get("type"), p.get("handling_cost_per_unit", 0))
+                for p in doc.get("locations") or []]
+    settings = ("currency", "fx_rates", "planning_start")
     if (all(before.get(n) == after.get(n) for n in (*names, "receipts", "closed_orders", *cost_lists))
             and all((before.get("settings") or {}).get(k) == (after.get("settings") or {}).get(k) for k in settings)
             and product_costs(before) == product_costs(after)
             and location_costs(before) == location_costs(after)
             and place_costs(before) == place_costs(after)
+            and (before.get("execution") or {}).get("price_control") == (after.get("execution") or {}).get("price_control")
             and (before.get("finance") or {}).get("closed_through") == (after.get("finance") or {}).get("closed_through")):
         if any(before.get(n) != after.get(n) for n in ("demand", "sales_orders", "returns")):
             from .commercial import protect_commercial
@@ -66,6 +69,8 @@ def protect(before: dict, after: dict, email: str) -> dict:
     try:
         old_ds = lenient(before)[0]
         ds = lenient(after)[0]
+        from .openings import retain_openings
+        before, after, old_ds, ds = retain_openings(before, after, old_ds, ds)
         from ..model.currency import require_posting_currency
         require_posting_currency(ds.settings.currency)
         for invoice in ds.supplier_invoices:
@@ -75,9 +80,10 @@ def protect(before: dict, after: dict, email: str) -> dict:
         from ..model.transport import FreightOrder
         from ..model.actuals import InventoryDoc
         from ..model.outside import JobWorkChallan, ThirdPartyOrder
+        from ..model.purchasing import PurchaseValuationBasis
         for name, model in (("invoices", Invoice), ("intercompany_invoices", IntercompanyInvoice), ("freight_orders", FreightOrder),
                             ("inventory_docs", InventoryDoc), ("challans", JobWorkChallan),
-                            ("third_party_orders", ThirdPartyOrder)):
+                            ("third_party_orders", ThirdPartyOrder), ("purchase_valuation", PurchaseValuationBasis)):
             for raw in [*_rows(before, name).values(), *_rows(after, name).values()]:
                 model.model_validate(raw)
         old_inv, new_inv = _rows(before, "supplier_invoices"), _rows(after, "supplier_invoices")
@@ -99,6 +105,14 @@ def protect(before: dict, after: dict, email: str) -> dict:
         def replace(name: str, rows: dict[str, dict]) -> None:
             nonlocal result
             result = {**result, name: list(rows.values())}
+
+        from .valuation import retain_basis
+        basis = retain_basis(old_ds, ds)
+        if basis or after.get("purchase_valuation"):
+            values = [b.model_dump(mode="json") for b in basis]
+            if after.get("purchase_valuation") != values:
+                result = {**result, "purchase_valuation": values}
+            ds = ds.model_copy(update={"purchase_valuation": basis})
 
         from ..sales import posting_entity
         normalized = [i.model_copy(update={"entity": posting_entity(old_ds, i.lines, i.reference)})

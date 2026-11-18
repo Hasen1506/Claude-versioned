@@ -28,6 +28,7 @@ from ..network import Node, build_graph
 from ..plan.costing import freight_per_unit, fx, handling, roll_up
 from ..plan.leadtime import supplier_lane
 from ..purchasing.payables import lines_index
+from ..model.purchasing import PurchaseValuationBasis
 from .stock import before
 from .transfer_price import crossing, entity_of, price, shipment_prices, source_of
 
@@ -334,7 +335,7 @@ def value_stock(ds: Dataset, as_of: date | None = None, limit: int = 500, books:
         in_transit=round(sum(v for q, v in books_.shipped.values() if q > EPS), 2), notes=notes)
 
 
-def _landed(ds: Dataset, lid: str, ln) -> _Line:
+def purchase_basis(ds: Dataset, lid: str, ln) -> PurchaseValuationBasis:
     """A purchase line comes in at what it lands at, as planning values a purchase: the price in company currency
     with its duty, the freight per unit on the supplier's lane and the handling at the place (S/4: the delivery
     costs planned on the order are part of the receipt's value)."""
@@ -348,7 +349,15 @@ def _landed(ds: Dataset, lid: str, ln) -> _Line:
     header = ds.purchase_order_by_id.get(ln.po or "")
     rate = header.fx_rate if header is not None and header.fx_rate is not None else fx(ds, ln.currency)
     base = (ln.price or 0.0) * rate
-    return _Line(price=base * (1.0 + duty) + fr + handling(ds, ln.location), base=base, duty=duty)
+    return PurchaseValuationBasis(id=lid, supplier=ln.supplier, product=ln.product, location=ln.location,
+                                  currency=ln.currency or ds.settings.currency, base=base, duty=duty,
+                                  freight=fr, handling=handling(ds, ln.location))
+
+
+def _landed(ds: Dataset, lid: str, ln) -> _Line:
+    basis = ds.purchase_valuation_by_id.get(lid) or purchase_basis(ds, lid, ln)
+    return _Line(price=basis.base * (1.0 + basis.duty) + basis.freight + basis.handling,
+                 base=basis.base, duty=basis.duty)
 
 
 WORDS = {MovementType.OPENING: "opening balance", MovementType.RECEIPT: "receipt", MovementType.ISSUE: "issue to production",
