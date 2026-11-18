@@ -109,6 +109,29 @@ def main():
     request(f"/api/companies/{cid}", {"dataset": changed_control, "base_revision": revision}, method="PUT", expected=403)
     assert request(f"/api/companies/{cid}")["meta"]["revision"] == revision
 
+    # An advance invoice at 12 is cancelled before a receipt on the order at 10.
+    advance_doc = {**doc, "execution": {"price_control": "moving_average"}}
+    advance_cid = request("/api/companies", {"dataset": advance_doc})["id"]
+
+    def advance_command(identifier, action, day, revision, **parameters):
+        return request(f"/api/companies/{advance_cid}/commands", {
+            "id": identifier, "kind": "purchasing", "action": action, "posting_date": day,
+            "base_revision": revision, "parameters": parameters})
+
+    advance_command("advance", "enter_invoice", "2026-01-05", 1, po="PO-1", tax=0,
+                    lines=[{"order": "PO-1-10", "qty": 100, "price": 12}])
+    cancelled = advance_command("cancel-advance", "cancel_invoice", "2026-01-06", 2, po="SI-00001")
+    cancel_books = request("/api/accounting?period_end=2026-01-06", cancelled["company"]["dataset"])
+    assert all(row["balance"] == 0 for row in cancel_books["balances"]), cancel_books
+    incoming = advance_command("receipt", "receive", "2026-01-07", 3, po="PO-1",
+                               lines=[{"id": "PO-1-10", "qty": 100}])
+    advance_books = request("/api/accounting?period_end=2026-01-07", incoming["company"]["dataset"])
+    assert all(check["ok"] for check in advance_books["checks"]), advance_books
+    assert {row["account"]: row["balance"] for row in advance_books["balances"] if row["balance"]} == {
+        "STOCK": 1000, "GRIR": -1000}, advance_books
+    replayed_cancel = advance_command("cancel-advance", "cancel_invoice", "2026-01-06", 2, po="SI-00001")
+    assert replayed_cancel["duplicate"] and replayed_cancel["company"]["meta"]["revision"] == 4
+
     # Independent outsourced-production fixture: 20 components at 4 sent,
     # nine finished units at 10 returned, two components returned unused,
     # and a service charge of 9 * 2. The remaining stock is 418 and WIP clears.
@@ -160,6 +183,7 @@ def main():
                       "persisted_procure_to_pay": "passed", "company_revision": revision,
                       "posted_purchase_basis": "passed", "valuation_method_change": 403,
                       "forged_valuation_basis": 403,
+                      "advance_invoice_cancellation_and_replay": "passed",
                       "authoritative_commands_and_replay": "passed", "command_revision": live_revision,
                       "jobwork_commands_and_replay": "passed", "jobwork_revision": job_revision,
                       "jobwork_ledger": {k: job_balances.get(k, 0) for k in

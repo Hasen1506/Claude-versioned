@@ -19,6 +19,17 @@
 
 Supported kinds are `purchasing`, `sales`, `stock`, `transport`, `intercompany` and `outside`. Their actions and parameters use the existing action request schemas. `dataset`, `action` and `date` are not parameters: the company and action are selected by the command, and `posting_date` supplies the operation's date. This avoids silently posting on the start date of a planning scenario. The invoice model currently shares document and accounting dates; separate ERP document/posting-date semantics remain a finance fit-gap item.
 
+## Recovering after a release
+
+A binary rollback and a database restore are separate operations. Releases from `6f97187` can write `purchase_valuation` into saved companies. Release `8a5b6ba` rejects that field when it validates an upgraded document. A hotfix that retains the current schema can continue to read those company records. If an older binary is necessary, first validate a pre-upgrade backup with that binary in an isolated environment. The restored database represents the moment of the backup.
+
+1. Keep a copy of the current database and identify the snapshot boundary. Pause writers before a production recovery or traffic switch, including queued integrations.
+2. Inventory the transactions and authorized changes after that boundary. For authoritative commands, preserve their original IDs, business dates, parameters, company and actor. Identify any actions already performed by banks, suppliers or other external systems separately from their ERP entries. Legacy document saves and other effects require reconciliation from their own records.
+3. Restore into an isolated database first. Verify receipts for transactions already in the snapshot. Replay eligible missing commands in recorded order with the current restored revision. A retry uses the original command ID, date and parameters. Stop on any conflicting result or unexplained balance.
+4. Reconcile company revisions, physical quantities, invoices, clearing accounts, command receipts and external records. Reopen writers after acceptance against those records.
+
+The supplier invoice recovery test in `engine/tests/test_advance_cancellation.py` restores an isolated backup, detects the advance invoice already present, then replays the missing cancellation and receipt. It compares the final saved dataset and literal ledger balances to the uninterrupted path, and checks that retry adds no revision or command record. The check runs with SQLite and with PostgreSQL when the test fixture is configured. Production recovery still depends on a complete transaction inventory, a production-like restore exercise and measured recovery objectives.
+
 The operation reads authoritative state and commits its company effects, revision, audit trail and receipt in one database transaction. It refuses a stale base revision. It also refuses the whole operation if it needs a master-data change still awaiting approval; physical effects do not commit while a required master change is held. Invalid/incomplete saved data must be completed before executing a live command.
 
 After a lost response, reuse the **same id, posting date and parameters**. A completed command returns `duplicate: true` without executing again. Reusing its id with different business input returns 409. A failed/rolled-back command has no completed receipt and can be retried. Concurrent identical calls produce one effect; distinct commands based on the same stale revision cannot both commit.
