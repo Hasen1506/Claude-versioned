@@ -76,6 +76,20 @@ class Approval(Model):
     on: dt.date
 
 
+class PurchaseValuationBasis(Model):
+    """Server-retained landed-cost terms for a stock purchase line's first financial posting."""
+
+    id: Id
+    supplier: str = Ref("location")
+    location: str = Ref("location")
+    product: str = Ref("product")
+    currency: str = Field(min_length=3, max_length=3)
+    base: float = Unit("money_per_unit", description="Order price in company currency at posting")
+    duty: float = Unit("fraction", le=1, description="Duty on the purchase price at posting")
+    freight: float = Unit("money_per_unit", description="Planned inbound freight at posting")
+    handling: float = Unit("money_per_unit", description="Receiving handling cost at posting")
+
+
 class PurchaseOrder(Model):
     """A purchase order header (≈ EKKO). Lines are the purchase receipts whose ``po`` is this id.
 

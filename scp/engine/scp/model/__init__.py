@@ -18,7 +18,7 @@ from .promise import (
     Allocation, BopSegment, Confirmation, ConfirmationStrategy, PromiseSettings, Substitution,
 )
 from .purchasing import (
-    Approval, ContractLine, PriceScale, PurchaseContract, PurchaseOrder, PurchasingSettings, ReleaseLevel, SupplierInvoice,
+    Approval, ContractLine, PriceScale, PurchaseContract, PurchaseOrder, PurchaseValuationBasis, PurchasingSettings, ReleaseLevel, SupplierInvoice,
     SupplierInvoiceLine, SupplierReturn, Vendor,
 )
 from .sales import (
@@ -48,7 +48,7 @@ __all__ = [
     "Budget",
     "Customer", "Delivery", "DeliveryLine", "Invoice", "InvoiceLine", "PaymentTerms", "Payment", "QuoteLine",
     "Quotation", "ReturnOrder", "SalesOrder", "SalesSettings",
-    "Approval", "ContractLine", "PriceScale", "PurchaseContract", "PurchaseOrder", "PurchasingSettings", "ReleaseLevel",
+    "Approval", "ContractLine", "PriceScale", "PurchaseContract", "PurchaseOrder", "PurchaseValuationBasis", "PurchasingSettings", "ReleaseLevel",
     "ConfirmedDelivery", "SupplierInvoice", "SupplierInvoiceLine", "SupplierReturn", "Vendor",
     "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "CycleCounting", "PriceControl", "GoodsMovement", "MovementType", "RolledWeek", "Batch", "CountItem", "InventoryDoc", "NegativeStock", "StockType", "Reservation",
     "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "Substitution", "DemandEvent", "EventKind", "FamilyOverride", "ForecastModelId", "ForecastOverride", "ForecastPeriod", "ForecastSnapshot",

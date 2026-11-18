@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from datetime import date, timedelta
@@ -35,14 +36,16 @@ def pending_openings(ds: Dataset) -> list[GoodsMovement]:
     the day before the start. The roll-forward writes these into the journal, after which the journal alone decides."""
     start = ds.settings.planning_start
     seen = {(m.location, m.product) for m in ds.movements if m.date < start}
-    ids = movement_ids(ds)
-    out = [GoodsMovement(id=next(ids), date=start - timedelta(days=1), type=MovementType.OPENING, location=lp.location,
+    def identifier(location: str, product: str, order: str = "") -> str:
+        key = "\0".join((start.isoformat(), location, product, order))
+        return "OP-" + hashlib.sha256(key.encode()).hexdigest()[:32]
+    out = [GoodsMovement(id=identifier(lp.location, lp.product), date=start - timedelta(days=1), type=MovementType.OPENING, location=lp.location,
                          product=lp.product, qty=round(lp.on_hand, 6), note="Opening balance: stock entered at setup")
            for lp in ds.location_product_by_key.values()      # a record kept twice: the one planning uses
            if lp.on_hand > EPS and (lp.location, lp.product) not in seen]
     # stock held for a sales order, typed in at setup: its own opening, held for that order
     held = {(m.location, m.product, m.sales_order) for m in ds.movements if m.date < start and m.sales_order}
-    out += [GoodsMovement(id=next(ids), date=start - timedelta(days=1), type=MovementType.OPENING, location=lp.location,
+    out += [GoodsMovement(id=identifier(lp.location, lp.product, os_.order), date=start - timedelta(days=1), type=MovementType.OPENING, location=lp.location,
                           product=lp.product, qty=round(os_.qty, 6), sales_order=os_.order,
                           note=f"Opening balance: stock held for {os_.order}, entered at setup")
             for lp in ds.location_product_by_key.values() for os_ in lp.order_stock

@@ -30,6 +30,8 @@ def authorize(before: dict, after: dict, email: str) -> dict:
     production_orders = {r.get("id") for r in receipts if r.get("kind") == "production" and r.get("id")}
     stock_references = {r.get("id") for r in [*receipts, *(after.get("returns") or [])] if r.get("id")}
     for name, _key, old, new in changed_records(before, after):
+        if name == "purchase_valuation":
+            continue  # server-derived immutable metadata, checked independently by transactions.protect
         if name in invoices:
             a, b = old or {}, new or {}
             if not old or not new:

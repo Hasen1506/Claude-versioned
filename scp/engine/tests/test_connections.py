@@ -242,12 +242,13 @@ def test_a_purchase_order_goes_to_the_erp_comes_back_with_its_number_and_is_rece
     item = r.json()["message"]["items"][0]
     assert item["status"] == "applied" and "PO-00001" in item["message"], item
     moves = doc_of(owner, cid)["dataset"]["movements"]
-    assert [(m["type"], m["reference"], m["qty"], m["erp_ref"]) for m in moves] == [
+    assert [(m["type"], m["reference"], m["qty"], m["erp_ref"]) for m in moves if m["erp_ref"]] == [
         ("receipt", "PO-00001-10", 60, "5000000001")]
+    assert {m["product"]: m["qty"] for m in moves if m["id"].startswith("OP-")} == {"A": 100, "B": 30}
     # the same document again is a duplicate, whatever the message id
     r = client.post(f"/api/companies/{cid}/erp/postings", headers=h(key), json={"postings": [post]})
     assert r.json()["message"]["items"][0]["status"] == "duplicate"
-    assert len(doc_of(owner, cid)["dataset"]["movements"]) == 1
+    assert doc_of(owner, cid)["dataset"]["movements"] == moves
 
 
 def test_a_production_order_changed_after_the_erp_took_it_goes_to_it_again():

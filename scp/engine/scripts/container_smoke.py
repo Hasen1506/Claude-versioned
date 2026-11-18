@@ -90,6 +90,25 @@ def main():
     receipt = request(f"/api/companies/{live_id}/commands?id=payment-1")
     assert receipt["revision"] == 4 and receipt["engine_commit"] == health["commit"]
 
+    # New planning assumptions cannot turn the already paid 1,000 receipt into
+    # 1,400 of inventory or delivery costs. Posted terms remain the original ones.
+    changed = copy.deepcopy(paid)
+    changed["locations"][0]["handling_cost_per_unit"] = 2
+    changed["purchasing_sources"][0]["duty_rate"] = .2
+    frozen = persist(changed)
+    assert request("/api/accounting", frozen) == books
+    basis = frozen["purchase_valuation"][0]
+    assert (basis["base"], basis["duty"], basis["freight"], basis["handling"]) == (10, 0, 0, 0)
+    forged_basis = copy.deepcopy(frozen)
+    forged_basis["purchase_valuation"][0]["base"] = 999
+    request(f"/api/companies/{cid}", {"dataset": forged_basis, "base_revision": revision}, method="PUT", expected=403)
+    changed_control = copy.deepcopy(frozen)
+    current_control = changed_control.get("execution", {}).get("price_control", "standard")
+    changed_control.setdefault("execution", {})["price_control"] = (
+        "standard" if current_control == "moving_average" else "moving_average")
+    request(f"/api/companies/{cid}", {"dataset": changed_control, "base_revision": revision}, method="PUT", expected=403)
+    assert request(f"/api/companies/{cid}")["meta"]["revision"] == revision
+
     # Independent outsourced-production fixture: 20 components at 4 sent,
     # nine finished units at 10 returned, two components returned unused,
     # and a service charge of 9 * 2. The remaining stock is 418 and WIP clears.
@@ -139,6 +158,8 @@ def main():
     assert request(f"/api/companies/{blocked_id}")["meta"]["revision"] == 1
     print(json.dumps({"commit": health["commit"], "uid": os.geteuid(), "health": "passed", "web": "passed",
                       "persisted_procure_to_pay": "passed", "company_revision": revision,
+                      "posted_purchase_basis": "passed", "valuation_method_change": 403,
+                      "forged_valuation_basis": 403,
                       "authoritative_commands_and_replay": "passed", "command_revision": live_revision,
                       "jobwork_commands_and_replay": "passed", "jobwork_revision": job_revision,
                       "jobwork_ledger": {k: job_balances.get(k, 0) for k in

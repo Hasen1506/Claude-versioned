@@ -24,7 +24,7 @@ from .portal import ShippingNotice
 from .demand import DemandEvent, FamilyOverride, ForecastOverride, ForecastSettings, ForecastSnapshot, NpiRule
 from .inventory import InventorySettings
 from .purchasing import (
-    PurchaseContract, PurchaseOrder, PurchasingSettings, SupplierInvoice, SupplierReturn, Vendor,
+    PurchaseContract, PurchaseOrder, PurchaseValuationBasis, PurchasingSettings, SupplierInvoice, SupplierReturn, Vendor,
 )
 from .sales import Customer, Delivery, Invoice, PaymentTerms, Quotation, ReturnOrder, SalesOrder, SalesSettings
 from .promise import Allocation, Confirmation, PromiseSettings, Substitution
@@ -59,6 +59,8 @@ class Dataset(Model):
     purchasing: PurchasingSettings = Field(default_factory=PurchasingSettings)
     contracts: list[PurchaseContract] = Field(default_factory=list)
     supplier_invoices: list[SupplierInvoice] = Field(default_factory=list)
+    purchase_valuation: list[PurchaseValuationBasis] = Field(default_factory=list,
+        description="Server-retained posted purchase valuation terms; planning master edits do not rewrite the books")
     supplier_returns: list[SupplierReturn] = Field(default_factory=list)
     sales_orders: list[SalesOrder] = Field(default_factory=list)
     quotations: list[Quotation] = Field(default_factory=list)
@@ -168,6 +170,10 @@ class Dataset(Model):
     @cached_property
     def purchase_order_by_id(self) -> dict[str, PurchaseOrder]:
         return _index(self.purchase_orders)
+
+    @cached_property
+    def purchase_valuation_by_id(self) -> dict[str, PurchaseValuationBasis]:
+        return _index(self.purchase_valuation)
 
     def vendor(self, supplier: str) -> Vendor:
         """The supplier's purchasing data, or the defaults when none is kept."""

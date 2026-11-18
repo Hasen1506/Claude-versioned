@@ -146,7 +146,8 @@ def test_tallys_closing_stock_is_counted_at_the_place_named(monkeypatch):
     assert items["P / Steel-Tumbler-250-ml"]["status"] == "refused"    # not a product here
     assert "P / Old-Lid" not in items                                  # Tally gave it no balance
     moves = doc_of(owner, cid)["dataset"]["movements"]
-    assert [(m["product"], m["qty"]) for m in moves] == [("A", 96)]
+    assert [(m["product"], m["qty"]) for m in moves if not m["id"].startswith("OP-")] == [("A", 96)]
+    assert [(m["product"], m["qty"]) for m in moves if m["id"].startswith("OP-")] == [("B", 30)]
 
 
 def test_tallys_sales_orders_come_in_line_by_due_date_and_an_optional_voucher_is_not_read(monkeypatch):
