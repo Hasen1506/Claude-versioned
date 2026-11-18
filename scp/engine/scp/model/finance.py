@@ -1,6 +1,8 @@
 """Finance overlay settings (blueprint P9): capacity investment options to appraise against the S&OP plan."""
 from __future__ import annotations
 
+import datetime as dt
+from typing import Literal
 from pydantic import Field
 
 from .common import Id, Model, Ref, Unit
@@ -20,6 +22,14 @@ class CapacityOption(Model):
 
 
 class FinanceSettings(Model):
+    closed_through: dt.date | None = Field(None, description="Posted financial transactions on or before this date are closed")
+    control_roles: dict[Literal["master_data", "planning", "purchasing", "sales", "manufacturing", "warehouse",
+                                "transport", "billing", "payments", "invoice_release", "credit_release", "period_close",
+                                "inventory_adjustment"],
+                        list[str]] = Field(default_factory=dict, max_length=13,
+                                           description="Named e-mail grants. Empty: legacy member roles. When configured, "
+                                                       "every operation requires its grant, including for owners and keys")
+    separate_payments: bool = Field(False, description="A payer must differ from the invoice's recorded entrant and releaser")
     capacity_options: list[CapacityOption] = Field(default_factory=list)
     discount_rate: float | None = Unit("fraction", le=1, default=None,
                                        description="Per year for NPV; empty = the company WACC")

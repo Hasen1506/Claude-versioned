@@ -78,6 +78,7 @@ class IntercompanyInvoice(Model):
     id: str = Field(min_length=1, max_length=16, description="The invoice number (GST: up to 16 characters)")
     kind: Literal["invoice", "credit_note"] = "invoice"
     date: dt.date
+    entered_by: str = Field("", max_length=200, description="Signed-in entrant, recorded by the company save boundary")
     seller: str = Field("", max_length=64, description="The company that shipped; empty = the company itself")
     buyer: str = Field("", max_length=64, description="The company that received; empty = the company itself")
     ship_from: str = Ref("location")
@@ -86,9 +87,13 @@ class IntercompanyInvoice(Model):
                                                                     "IGST across; empty = one tax")
     lines: list[IntercompanyLine] = Field(min_length=1, max_length=500)
     cancelled: bool = False
+    cancelled_on: dt.date | None = None
     note: str = Field("", max_length=400)
     payments: list[Payment] = Field(default_factory=list, description="Settled between the companies: the buyer's "
                                                                        "payments (paid back, for a credit note)")
+
+    def active_at(self, day: dt.date) -> bool:
+        return self.date <= day and (not self.cancelled or self.cancelled_on is not None and day < self.cancelled_on)
 
     @property
     def net(self) -> float:

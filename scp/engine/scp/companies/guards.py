@@ -12,8 +12,8 @@ signed-in person who saves:
   loosen it first.
 * **Credit block release.** Who released a blocked sales order is recorded from the session, never from the document.
 
-Other state machines (invoice release and payment of supplier invoices) have no named-approver rule in the engine;
-they are not re-checked here.
+Invoice facts, releases, payments, dated cancellations and posted movements are
+checked separately by :mod:`scp.companies.transactions` on every persistence path.
 """
 from __future__ import annotations
 
@@ -90,7 +90,18 @@ def check_releases(before: dict, after: dict, email: str) -> None:
         prev = old.get(po["id"])
         mine, theirs = _approvals(po), _approvals(prev)
         if prev is not None and _released(po) == _released(prev) and mine == theirs:
-            continue                                   # nothing about its release changed
+            # The unchanged approval flag is not evidence that a changed exposure
+            # was authorized. A price/quantity increase must go through release again.
+            before_value, after_value = _value(before, prev), _value(after, po)
+            strategy = _levels(before.get("purchasing"))
+            if (before_value is not None and after_value is not None and _released(po)
+                    and after_value > before_value + EPS
+                    and any(after_value > _num(lv.get("above")) + EPS for lv in strategy)):
+                raise ReleaseRefused(f"{po['id']} increased in value and must be released again")
+            if (_released(po) and strategy and any(po.get(k) != prev.get(k)
+                    for k in ("supplier", "location", "currency", "product", "target_qty"))):
+                raise ReleaseRefused(f"{po['id']} changed its purchasing exposure and must be released again")
+            continue
         if prev is None and not _released(po) and not mine:
             continue                                   # a new order waiting for release
         if prev is not None and not _released(po) and all(a in theirs for a in mine):

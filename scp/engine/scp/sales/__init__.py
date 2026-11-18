@@ -848,12 +848,29 @@ def _dates(ds: Dataset, customer: str, terms_id: str | None, day: date) -> tuple
     return known, day + timedelta(days=t.net_days), disc_on, t.discount
 
 
+def posting_entity(ds: Dataset, lines: list[InvoiceLine], reference: str | None = None) -> str:
+    from ..actuals.transfer_price import entity_of
+    moves = {m.id: m for m in ds.movements}
+    returns = {r.id: r for r in ds.returns}
+    entities = {entity_of(ds, moves[mid].location) for ln in lines for mid in ln.movements if mid in moves}
+    entities |= {entity_of(ds, returns[ln.ret].location) for ln in lines if ln.ret in returns}
+    original = next((i for i in ds.invoices if i.id == reference), None)
+    if original is not None:
+        return original.entity if original.entity is not None else posting_entity(ds, original.lines)
+    if len(entities) > 1:
+        raise SalesError("a customer invoice cannot mix posting legal entities")
+    return next(iter(entities), "")
+
+
 def create_invoices(ds: Dataset, orders: list[str] | None = None, on: date | None = None
                     ) -> tuple[Dataset, SalesReport]:
     """Bill what was shipped and not billed (``orders``: only these order lines or order headers; None = all), one
     invoice per customer and payment terms."""
     day = _today(ds, on)
-    due = to_bill(ds)
+    basis = ds.model_copy(update={"invoices": [
+        i.model_copy(update={"cancelled": False}) if i.cancelled and i.cancelled_on is not None
+        and i.cancelled_on > day else i for i in ds.invoices]})
+    due = [b for b in to_bill(basis) if b.delivered_on <= day]
     if orders is not None:
         want = set(orders)
         due = [b for b in due if b.order in want or b.order.split("/")[0] in want]
@@ -862,14 +879,16 @@ def create_invoices(ds: Dataset, orders: list[str] | None = None, on: date | Non
     unpriced = [b for b in due if b.price is None]
     if unpriced:
         raise SalesError(f"{unpriced[0].order} has no price: give the order line or the product a price first")
-    groups: dict[tuple[str, str | None], list[ToBill]] = defaultdict(list)
+    groups: dict[tuple[str, str | None, str], list[ToBill]] = defaultdict(list)
     for b in due:
         d = line_record(ds, b.order)
         h = _header_of(ds, d) if d else None
-        groups[(b.customer, h.payment_terms if h else None)].append(b)
+        entity = posting_entity(ds, [InvoiceLine(order=b.order, product=b.product, qty=b.qty,
+                                                 price=b.price or 0.0, movements=b.movements)])
+        groups[(b.customer, h.payment_terms if h else None, entity)].append(b)
     ids = _invoice_ids(ds)
     made = []
-    for (cust, terms), bs in groups.items():
+    for (cust, terms, entity), bs in groups.items():
         iid = _next(ids, "INV")
         ids.append(iid)
         known, due_on, disc_on, disc = _dates(ds, cust, terms, day)
@@ -882,7 +901,7 @@ def create_invoices(ds: Dataset, orders: list[str] | None = None, on: date | Non
             else:
                 merged[k] = InvoiceLine(order=b.order, product=b.product, qty=b.qty, price=b.price or 0.0,
                                         movements=list(b.movements))
-        made.append(Invoice(id=iid, customer=cust, date=day, due_date=due_on, discount_date=disc_on, discount=disc,
+        made.append(Invoice(id=iid, customer=cust, date=day, due_date=due_on, discount_date=disc_on, discount=disc, entity=entity,
                             payment_terms=known, lines=[_rated(ds, cust, x) for x in merged.values()],
                             tax_rate=_tax_rate(ds, cust), tax_split=tax_split(ds, cust)))
     msg = "; ".join(f"{i.id} to {_name(ds, i.customer)}: {_m(ds, i.total)} due {_day(i.due_date)}" for i in made)
@@ -908,6 +927,8 @@ def pay(ds: Dataset, iid: str, amount: float | None = None, on: date | None = No
     left = inv.open
     if left <= 0.005:
         raise SalesError(f"{iid} is already settled")
+    if day < inv.date:
+        raise SalesError("a payment cannot be posted before its invoice")
     in_time = inv.discount > 0 and inv.discount_date is not None and day <= inv.discount_date and not inv.payments
     with_disc = round(inv.total * (1 - inv.discount), 2) if in_time else left
     amt = round(float(amount), 2) if amount is not None else with_disc
@@ -926,17 +947,22 @@ def pay(ds: Dataset, iid: str, amount: float | None = None, on: date | None = No
                                                                                           documents=[iid])
 
 
-def cancel_invoice(ds: Dataset, iid: str, reason: str = "") -> tuple[Dataset, SalesReport]:
+def cancel_invoice(ds: Dataset, iid: str, reason: str = "", on: date | None = None) -> tuple[Dataset, SalesReport]:
     """Take an invoice back (no payment on it yet): its goods are waiting to be billed again."""
     inv = _invoice(ds, iid)
+    day = _today(ds, on)
+    if day < inv.date:
+        raise SalesError("a cancellation cannot be posted before its invoice")
     if inv.payments:
         raise SalesError(f"{iid} has payments: put it right with a credit note instead")
+    if any(i.kind == "credit_note" and not i.cancelled and i.reference == iid for i in ds.invoices):
+        raise SalesError(f"{iid} has a credit note: cancel that credit first")
     if inv.kind == "credit_note":
         rets = {ln.ret for ln in inv.lines if ln.ret}
         returns = [r.model_copy(update={"credit_note": None}) if r.id in rets else r for r in ds.returns]
     else:
         returns = ds.returns
-    new = inv.model_copy(update={"cancelled": True, "note": (inv.note + (" · " if inv.note else "")
+    new = inv.model_copy(update={"cancelled": True, "cancelled_on": day, "note": (inv.note + (" · " if inv.note else "")
                                                              + f"Cancelled{': ' + reason if reason else ''}")[:400]})
     return (ds.model_copy(update={"invoices": _replace(ds.invoices, inv, new), "returns": returns}),
             SalesReport(message=f"{iid} cancelled" + (f" ({reason})" if reason else "")
@@ -1073,7 +1099,8 @@ def credit_return(ds: Dataset, rid: str, on: date | None = None) -> tuple[Datase
         cid = _next(ids, "CN")
         ids.append(cid)
         made.append(Invoice(id=cid, kind="credit_note", customer=r.customer, date=day, due_date=day, payment_terms=known,
-                            lines=lines, tax_rate=rate, tax_split=split, reference=reference, note=f"Return {rid}"))
+                            lines=lines, tax_rate=rate, tax_split=split, reference=reference, note=f"Return {rid}",
+                            entity=posting_entity(ds, lines, reference)))
     new = r.model_copy(update={"credit_note": made[0].id})
     notes = "; ".join(f"Credit note {cn.id} for {_name(ds, r.customer)}: {_m(ds, cn.total)}"
                       + (f" against {cn.reference}" if cn.reference else "") for cn in made)
@@ -1260,7 +1287,7 @@ def act(ds: Dataset, action: str, *, id: str | None = None, customer: str | None
     if action == "pay":
         return pay(ds, need(id, "invoice"), kw.get("amount"), on, kw.get("reference") or "")
     if action == "cancel_invoice":
-        return cancel_invoice(ds, need(id, "invoice"), kw.get("reason") or "")
+        return cancel_invoice(ds, need(id, "invoice"), kw.get("reason") or "", on)
     if action == "create_return":
         return create_return(ds, need(customer, "customer"), need(kw.get("product"), "product"),
                              float(kw.get("qty") or 0), order=kw.get("order"), location=kw.get("location"),

@@ -1124,6 +1124,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/companies/{cid}/mail/{seq}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Mail */
+        post: operations["retry_mail_api_companies__cid__mail__seq__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/companies/{cid}/mail/reminders": {
         parameters: {
             query?: never;
@@ -2589,6 +2606,33 @@ export interface paths {
          *     company's balances on the period's last day and its checks against the documents.
          */
         post: operations["post_accounting_api_accounting_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Company Command
+         * @description Reconcile a completed operation after a lost response without issuing another mutation.
+         */
+        get: operations["get_company_command_api_companies__cid__commands_get"];
+        put?: never;
+        /**
+         * Post Company Command
+         * @description Post one operation against authoritative saved state, with atomic replay protection.
+         *
+         *     Reuse the same id and parameters after a transport failure. A replay reports
+         *     the original result and current company state, even after intervening saves.
+         */
+        post: operations["post_company_command_api_companies__cid__commands_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4718,6 +4762,78 @@ export interface components {
             /** Items */
             items: components["schemas"]["ItemChange"][];
         };
+        /** CommandRecord */
+        CommandRecord: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Action */
+            action: string;
+            /**
+             * Posting Date
+             * Format: date
+             */
+            posting_date: string;
+            /** Revision */
+            revision: number;
+            /** At */
+            at: string;
+            /** By */
+            by: string;
+            /** Engine Commit */
+            engine_commit: string;
+            /** Request Hash */
+            request_hash: string;
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            };
+        };
+        /** CommandRequest */
+        CommandRequest: {
+            /** Id */
+            id: string;
+            /** Base Revision */
+            base_revision: number;
+            /**
+             * Posting Date
+             * Format: date
+             * @description Explicit business date; never inferred from a planning scenario's start
+             */
+            posting_date: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "purchasing" | "sales" | "stock" | "transport" | "intercompany";
+            /** Action */
+            action: string;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+        };
+        /** CommandResult */
+        CommandResult: {
+            /** Id */
+            id: string;
+            /** Revision */
+            revision: number;
+            /** Duplicate */
+            duplicate: boolean;
+            /** Engine Commit */
+            engine_commit: string;
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            };
+            company: components["schemas"]["CompanyDoc"];
+        };
         /** CompanyChoice */
         CompanyChoice: {
             /** Id */
@@ -6771,6 +6887,24 @@ export interface components {
         };
         /** FinanceSettings */
         FinanceSettings: {
+            /**
+             * Closed Through
+             * @description Posted financial transactions on or before this date are closed
+             */
+            closed_through?: string | null;
+            /**
+             * Control Roles
+             * @description Named e-mail grants. Empty: legacy member roles. When configured, every operation requires its grant, including for owners and keys
+             */
+            control_roles?: {
+                [key: string]: string[];
+            };
+            /**
+             * Separate Payments
+             * @description A payer must differ from the invoice's recorded entrant and releaser
+             * @default false
+             */
+            separate_payments: boolean;
             /** Capacity Options */
             capacity_options?: components["schemas"]["CapacityOption"][];
             /**
@@ -7514,6 +7648,25 @@ export interface components {
              */
             qty: number;
             /**
+             * Standard Price
+             * @description Posting-time standard price; historical stock is not repriced by planning edits
+             */
+            standard_price?: number | null;
+            /**
+             * Transfer Price
+             * @description Posting-time inter-company transfer price, retained with the material document
+             */
+            transfer_price?: number | null;
+            /**
+             * Opening Standards
+             * @description Opening-stock prices captured by the first material posting, by location and product
+             */
+            opening_standards?: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /**
              * Reference
              * @description Receipt or sales order id
              */
@@ -7876,6 +8029,12 @@ export interface components {
              */
             date: string;
             /**
+             * Entered By
+             * @description Signed-in entrant, recorded by the company save boundary
+             * @default
+             */
+            entered_by: string;
+            /**
              * Seller
              * @description The company that shipped; empty = the company itself
              * @default
@@ -7905,6 +8064,8 @@ export interface components {
              * @default false
              */
             cancelled: boolean;
+            /** Cancelled On */
+            cancelled_on?: string | null;
             /**
              * Note
              * @default
@@ -8229,6 +8390,17 @@ export interface components {
              */
             due_date: string;
             /**
+             * Entered By
+             * @description Signed-in entrant, recorded by the company save boundary
+             * @default
+             */
+            entered_by: string;
+            /**
+             * Entity
+             * @description Frozen posting entity; empty string is the main company
+             */
+            entity?: string | null;
+            /**
              * Discount Date
              * @description Paid by this day, the cash discount applies
              */
@@ -8271,6 +8443,8 @@ export interface components {
              * @default false
              */
             cancelled: boolean;
+            /** Cancelled On */
+            cancelled_on?: string | null;
             /**
              * Note
              * @default
@@ -9759,7 +9933,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "sent" | "failed";
+            status: "sending" | "sent" | "failed" | "unknown";
             /** Error */
             error: string;
             /** Attachment */
@@ -11353,6 +11527,11 @@ export interface components {
              * @default 0
              */
             discount: number;
+            /**
+             * Fx Rate
+             * @description Company currency per invoice currency unit at settlement (supplier payments)
+             */
+            fx_rate?: number | null;
         };
         /**
          * PaymentTerms
@@ -13026,6 +13205,11 @@ export interface components {
              */
             currency?: string | null;
             /**
+             * Fx Rate
+             * @description Company currency per order currency unit, frozen when ordered/first posted
+             */
+            fx_rate?: number | null;
+            /**
              * Approved
              * @description Released for sending (orders above the approval limit start unapproved)
              * @default true
@@ -13911,6 +14095,14 @@ export interface components {
             revision: number;
             /** Base Revision */
             base_revision: number;
+        };
+        /** RetryMail */
+        RetryMail: {
+            /**
+             * Acknowledge Possible Duplicate
+             * @default false
+             */
+            acknowledge_possible_duplicate: boolean;
         };
         /**
          * ReturnOrder
@@ -16753,6 +16945,16 @@ export interface components {
              * @description Empty = company currency
              */
             currency?: string | null;
+            /**
+             * Fx Rate
+             * @description Posting exchange rate; later planning rates do not restate this invoice
+             */
+            fx_rate?: number | null;
+            /**
+             * Entity
+             * @description Posting legal entity; empty string is the main company
+             */
+            entity?: string | null;
             /** Lines */
             lines: components["schemas"]["SupplierInvoiceLine"][];
             /**
@@ -16777,6 +16979,12 @@ export interface components {
              * @default
              */
             released_by: string;
+            /**
+             * Entered By
+             * @description Signed-in entrant, recorded by the company save boundary
+             * @default
+             */
+            entered_by: string;
             /** Released On */
             released_on?: string | null;
             /** Payments */
@@ -16791,6 +16999,8 @@ export interface components {
              * @default false
              */
             cancelled: boolean;
+            /** Cancelled On */
+            cancelled_on?: string | null;
             /**
              * Note
              * @default
@@ -20946,6 +21156,42 @@ export interface operations {
             };
         };
     };
+    retry_mail_api_companies__cid__mail__seq__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetryMail"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailRow"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     mail_reminders_api_companies__cid__mail_reminders_put: {
         parameters: {
             query?: never;
@@ -23497,6 +23743,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountingView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_company_command_api_companies__cid__commands_get: {
+        parameters: {
+            query: {
+                id: string;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_company_command_api_companies__cid__commands_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommandRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult"];
                 };
             };
             /** @description Validation Error */

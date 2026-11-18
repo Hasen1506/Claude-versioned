@@ -106,6 +106,8 @@ def diff_raw(da: dict, db: dict) -> DatasetDiff:
     extra = sorted(k for k in set(da) | set(db) if k not in KEYS and k not in SINGLE
                    and isinstance(da.get(k, db.get(k)), list))
     for name, fields in [*KEYS.items(), *((k, ("id",)) for k in extra)]:
+        if da.get(name) == db.get(name):
+            continue
         def records(rows, fields=fields):
             grouped: dict[str, list] = {}
             for i, r in enumerate(rows or []):
@@ -113,7 +115,8 @@ def diff_raw(da: dict, db: dict) -> DatasetDiff:
                 grouped.setdefault(k, []).append(r)
             result = {}
             for k, group in grouped.items():
-                for i, r in enumerate(sorted(group, key=lambda x: json.dumps(x, sort_keys=True))):
+                ordered = group if len(group) == 1 else sorted(group, key=lambda x: json.dumps(x, sort_keys=True))
+                for i, r in enumerate(ordered):
                     result[k if i == 0 else f"{k} | observation {i + 1}"] = r
             return result
         ra, rb = records(da.get(name)), records(db.get(name))

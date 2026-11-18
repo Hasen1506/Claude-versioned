@@ -213,6 +213,8 @@ class Payment(Model):
     amount: float = Unit("money", gt=0)
     reference: str = Field("", max_length=64, description="Bank reference")
     discount: float = Unit("money", default=0.0, description="Cash discount taken with this payment")
+    fx_rate: float | None = Unit("rate", gt=0, default=None,
+                                 description="Company currency per invoice currency unit at settlement (supplier payments)")
 
 
 class Invoice(Model):
@@ -224,6 +226,8 @@ class Invoice(Model):
     customer: str = Ref("location")
     date: dt.date
     due_date: dt.date
+    entered_by: str = Field("", max_length=200, description="Signed-in entrant, recorded by the company save boundary")
+    entity: str | None = Field(None, max_length=64, description="Frozen posting entity; empty string is the main company")
     discount_date: dt.date | None = Field(None, description="Paid by this day, the cash discount applies")
     discount: float = Unit("fraction", lt=1, default=0.0, description="Cash discount for paying by the discount date")
     payment_terms: str | None = Ref("payment_terms", default=None)
@@ -235,9 +239,13 @@ class Invoice(Model):
     reference: str | None = Field(None, max_length=64, description="Credit note: the invoice it credits")
     sent_on: dt.date | None = None
     cancelled: bool = Field(False, description="Cancelled: it no longer counts as owed")
+    cancelled_on: dt.date | None = None
     note: str = Field("", max_length=400)
     reminder_level: int = Field(0, ge=0, le=5, description="The last payment reminder sent for it: 1 the first, …")
     reminded_on: dt.date | None = Field(None, description="When that reminder was sent")
+
+    def active_at(self, day: dt.date) -> bool:
+        return self.date <= day and (not self.cancelled or self.cancelled_on is not None and day < self.cancelled_on)
 
     @property
     def net(self) -> float:

@@ -26,7 +26,7 @@ from .patch import _hashable, keys_of
 
 MASTER = ("calendars", "locations", "products", "customer_prices", "location_products", "resources",
           "production_sources", "purchasing_sources", "lanes", "vendors", "customers", "payment_terms", "contracts",
-          "changeovers",
+          "changeovers", "entities", "transfer_prices",
           *SINGLE)
 # settings that are working state rather than master data: moving the plan a week changes them
 WORKING = {"settings": ("planning_start",), "forecasting": ("released_inputs",)}
@@ -100,9 +100,10 @@ def _products_of(rec: dict) -> set[str]:
     for f in ("products",):
         if isinstance(rec.get(f), list):
             out |= {p for p in rec[f] if isinstance(p, str)}
-    for ln in rec.get("lines") or []:
-        if isinstance(ln, dict) and isinstance(ln.get("product"), str):
-            out.add(ln["product"])
+    for collection in ("lines", "items", "reservations", "original_reservations", "components", "co_products"):
+        for ln in rec.get(collection) or []:
+            if isinstance(ln, dict) and isinstance(ln.get("product"), str):
+                out.add(ln["product"])
     return out
 
 
@@ -120,8 +121,9 @@ def out_of_scope(before: dict, after: dict, places: list[str], families: list[st
         allowed |= {x for x in _allowed_places({**after, "locations": [{"id": i, "type": t} for i, t in new.items()]},
                                                places) if x in new}
         kind = {**new, **kind}
-    family = {p.get("id"): p.get("family") or "" for d in (before, after) for p in d.get("products") or []
-              if isinstance(p, dict)}
+    families_before, families_after = (
+        {p.get("id"): p.get("family") or "" for p in d.get("products") or [] if isinstance(p, dict)}
+        for d in (before, after))
     bad: list[str] = []
     for name, key, a, b in changed_records(before, after):
         if name in WORKING and isinstance(a, dict) and isinstance(b, dict) and all(
@@ -136,7 +138,11 @@ def out_of_scope(before: dict, after: dict, places: list[str], families: list[st
                 at = {rec[f] for f in PLACE_FIELDS if isinstance(rec.get(f), str)}
                 if name == "locations":
                     at = {rec.get("id")}
-                if not at & allowed:
+                if name == "inventory_docs":
+                    at = {item.get("location") for item in rec.get("items") or [] if isinstance(item, dict)}
+                    if not at or not at <= allowed:
+                        ok = False
+                elif not at & allowed:
                     ok = False
                 # a record added or changed (not one removed) may name as its supplier only an allowed place or a
                 # real supplier: a decoy "way to buy" from a plant outside the limits is refused (CV-H03)
@@ -145,6 +151,7 @@ def out_of_scope(before: dict, after: dict, places: list[str], families: list[st
                     ok = False
             if families:
                 prods = {rec.get("id")} if name == "products" else _products_of(rec)
+                family = families_before if rec is a else families_after
                 if not prods or any(family.get(p, "") not in families for p in prods):
                     ok = False
         if not ok:

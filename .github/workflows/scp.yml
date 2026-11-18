@@ -36,7 +36,8 @@ jobs:
         with: { python-version: "3.11" }
       - name: Upgrade pip past the compromised CA bundle
         run: 'python -m pip install "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"'
-      - run: pip install -e ".[dev]"
+      - run: pip install --require-hashes -r requirements-build.lock -r requirements-dev.lock
+      - run: pip install --no-deps --no-build-isolation -e ".[dev]"
       - name: Lint
         run: ruff check scp tests ../examples
       - name: Tests (parallel)
@@ -56,8 +57,11 @@ jobs:
         with: { node-version: "22.23.4", cache: npm, cache-dependency-path: scp/web/package-lock.json }
       - name: Upgrade pip past the compromised CA bundle
         run: 'python -m pip install "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"'
-      - run: pip install -e "../engine[dev]"
+      - run: pip install --require-hashes -r ../engine/requirements-build.lock -r ../engine/requirements-dev.lock
+      - run: pip install --no-deps --no-build-isolation -e "../engine[dev]"
       - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
       - name: API types match the engine (no drift)
         run: npm run gen:api && git diff --exit-code src/api/schema.d.ts
       - run: npm run build
@@ -66,3 +70,34 @@ jobs:
         run: python -m pytest -q tests/test_prop_regressions.py -k ts05
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test --reporter=line
+
+  container:
+    runs-on: ubuntu-24.04
+    needs: [engine, web]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the deployable image
+        run: docker build --build-arg SCP_COMMIT=${{ github.sha }} -t scp:ci ./scp
+      - name: Boot the image and check readiness
+        run: |
+          docker run -d --name scp-ci -e SCP_SIGNUP=open -e SCP_SCHEDULER=0 -p 127.0.0.1:8767:8000 scp:ci
+          python3 - <<'PY'
+          import time
+          import urllib.request
+          for attempt in range(30):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:8767/api/health', timeout=2) as response:
+                      assert response.status == 200
+                  break
+              except OSError:
+                  time.sleep(1)
+          else:
+              raise SystemExit('container did not become ready')
+          PY
+      - name: Check financial integrity inside the deployable image
+        run: docker exec scp-ci python /app/engine/scripts/container_smoke.py
+      - name: Container logs and cleanup
+        if: always()
+        run: |
+          docker logs scp-ci || true
+          docker rm -f scp-ci || true

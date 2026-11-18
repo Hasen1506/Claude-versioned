@@ -20,6 +20,7 @@ from ..companies.patch import PatchError, apply_patch, make_patch
 from ..model import Dataset
 from ..model.common import Out
 from ..validate.lenient import lenient_checked
+from ..transactions import atomic
 from .erp import ItemResult
 
 SCHEMA = """
@@ -31,6 +32,11 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_by_company ON messages (company_id, seq);
 CREATE INDEX IF NOT EXISTS messages_by_id ON messages (company_id, kind, message_id);
+CREATE TABLE IF NOT EXISTS inbound_receipts (
+  company_id TEXT NOT NULL, kind TEXT NOT NULL, message_id TEXT NOT NULL,
+  message_seq INTEGER NOT NULL REFERENCES messages(seq),
+  PRIMARY KEY (company_id, kind, message_id)
+);
 """
 
 MessageStatus = Literal["applied", "partly", "refused", "unchanged", "duplicate", "sent", "failed"]
@@ -172,6 +178,14 @@ def receive(c: Companies, user: User, cid: str, kind: str, message_id: str,
     message_id = (message_id or "").strip()[:100]
     with c.lock:
         _ensure(c)
+        return _receive(c, user, cid, kind, message_id, change, source, sample, dry_run)
+
+
+def _receive(c: Companies, user: User, cid: str, kind: str, message_id: str,
+             change: Callable[[Dataset], tuple[Dataset, list[ItemResult]]], source: str, sample: str,
+             dry_run: bool) -> MessageAnswer:
+    # The effect, revision/audit records, result and replay identity share one commit.
+    with atomic(c.db):
         c._need(user, cid, *CAN_EDIT)
         if message_id:
             seen = c.db.execute("SELECT * FROM messages WHERE company_id = ? AND kind = ? AND message_id = ? AND "
@@ -205,6 +219,9 @@ def receive(c: Companies, user: User, cid: str, kind: str, message_id: str,
                 summary += f"; master data waiting for approval: {held}"
         row = log(c, cid, user.id, "in", kind, message_id, status, summary,
                   rev if rev != r["revision"] else None, items, source, sample, dry_run=dry_run)
+        if message_id and not dry_run:
+            c.db.execute("INSERT INTO inbound_receipts (company_id, kind, message_id, message_seq) VALUES (?, ?, ?, ?)",
+                         (cid, kind, message_id, row.seq))
         return MessageAnswer(message=row, revision=rev, held=held)
 
 

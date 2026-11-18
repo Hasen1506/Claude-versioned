@@ -111,7 +111,17 @@ class Postgres:
         return got
 
     def close(self):
-        self.connection.close()
+        try:
+            if not self.connection.closed:
+                # A graceful leader handoff is acknowledged by PostgreSQL before
+                # returning. Closing only the socket leaves a short race before
+                # the server processes EOF and releases its session locks.
+                self.connection.execute('SELECT pg_advisory_unlock_all()')
+        except psycopg.Error:
+            pass  # a broken session loses its locks when PostgreSQL detects it
+        finally:
+            self.leading.clear()
+            self.connection.close()
 
     def execute(self, sql, args=()):
         if sql == 'PRAGMA foreign_keys = ON':

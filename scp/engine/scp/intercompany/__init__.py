@@ -431,7 +431,10 @@ def bill(ds: Dataset, on: date | None = None, movements: list[str] | None = None
     these shipments. ``invoice_id``: the number, when there is one document to make."""
     on = on or ds.settings.planning_start
     journal = [m for m in ds.movements if m.date <= on]
-    bills = billed(ds)
+    basis = ds.model_copy(update={"intercompany_invoices": [
+        i.model_copy(update={"cancelled": False}) if i.cancelled and i.cancelled_on is not None
+        and i.cancelled_on > on else i for i in ds.intercompany_invoices]})
+    bills = billed(basis)
     want = set(movements) if movements else None
     std = standards(ds)
     groups: dict[tuple, list[IntercompanyLine]] = defaultdict(list)
@@ -443,7 +446,7 @@ def bill(ds: Dataset, on: date | None = None, movements: list[str] | None = None
         if abs(due) <= EPS:
             continue
         if due > 0:
-            each = price(ds, std, m.location, to, m.product, m.date)[0]
+            each = m.transfer_price if m.transfer_price is not None else price(ds, std, m.location, to, m.product, m.date)[0]
             kind = "invoice"
         else:
             each = bp if bp is not None else price(ds, std, m.location, to, m.product, m.date)[0]
@@ -482,13 +485,16 @@ def bill(ds: Dataset, on: date | None = None, movements: list[str] | None = None
     return new, IntercompanyReport(message="Billed: " + "; ".join(parts) + ".", invoices=[i.id for i in made])
 
 
-def cancel(ds: Dataset, iid: str) -> tuple[Dataset, IntercompanyReport]:
+def cancel(ds: Dataset, iid: str, on: date | None = None) -> tuple[Dataset, IntercompanyReport]:
     """Cancel an inter-company invoice or credit note: its shipments are due again."""
     inv = next((i for i in ds.intercompany_invoices if i.id == iid), None)
     if inv is None:
         raise IntercompanyError(f"there is no inter-company invoice {iid}")
     if inv.cancelled:
         raise IntercompanyError(f"{iid} is already cancelled")
+    day = on or _day_of(ds, None)
+    if day < inv.date:
+        raise IntercompanyError("a cancellation cannot be posted before its invoice")
     later = [i.id for i in ds.intercompany_invoices if not i.cancelled and i.kind == "credit_note"
              and inv.kind == "invoice" and i.date >= inv.date and i.id != iid
              and {ln.movement for ln in i.lines} & {ln.movement for ln in inv.lines}]
@@ -496,7 +502,7 @@ def cancel(ds: Dataset, iid: str) -> tuple[Dataset, IntercompanyReport]:
         raise IntercompanyError(f"{', '.join(later)} credits shipments on {iid}: cancel it first")
     if inv.payments:
         raise IntercompanyError(f"{iid} has been settled in part or in full: it cannot be cancelled")
-    new = ds.model_copy(update={"intercompany_invoices": [i.model_copy(update={"cancelled": True}) if i.id == iid
+    new = ds.model_copy(update={"intercompany_invoices": [i.model_copy(update={"cancelled": True, "cancelled_on": day}) if i.id == iid
                                                           else i for i in ds.intercompany_invoices]})
     return new, IntercompanyReport(message=f"{iid} cancelled: its shipments are on the billing due list again.",
                                    invoices=[iid])

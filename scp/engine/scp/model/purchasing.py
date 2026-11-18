@@ -88,6 +88,8 @@ class PurchaseOrder(Model):
     location: str = Ref("location", description="Receiving location")
     order_date: dt.date
     currency: str | None = Field(None, min_length=3, max_length=3, description="Empty = company currency")
+    fx_rate: float | None = Unit("rate", gt=0, default=None,
+                                 description="Company currency per order currency unit, frozen when ordered/first posted")
     approved: bool = Field(True, description="Released for sending (orders above the approval limit start unapproved)")
     sent_on: dt.date | None = Field(None, description="When the order went to the supplier; empty = not sent yet")
     vendor_reference: str = Field("", max_length=64, description="The supplier's order confirmation number")
@@ -183,16 +185,21 @@ class SupplierInvoice(Model):
     discount_date: dt.date | None = None
     discount: float = Unit("fraction", lt=1, default=0.0)
     currency: str | None = Field(None, min_length=3, max_length=3, description="Empty = company currency")
+    fx_rate: float | None = Unit("rate", gt=0, default=None,
+                                 description="Posting exchange rate; later planning rates do not restate this invoice")
+    entity: str | None = Field(None, max_length=64, description="Posting legal entity; empty string is the main company")
     lines: list[SupplierInvoiceLine] = Field(min_length=1)
     delivery_costs: float = Unit("money", ge=0, default=0.0,
                                  description="Freight and other delivery costs billed that the order did not plan")
     tax: float = Unit("money", default=0.0, description="Tax on the invoice, as the supplier charged it")
     blocks: list[str] = Field(default_factory=list, description="Why it was blocked for payment when entered")
     released_by: str = Field("", max_length=200)
+    entered_by: str = Field("", max_length=200, description="Signed-in entrant, recorded by the company save boundary")
     released_on: dt.date | None = None
     payments: list[Payment] = Field(default_factory=list)
     return_id: str | None = Field(None, max_length=64, description="Credit memo: the return it credits")
     cancelled: bool = False
+    cancelled_on: dt.date | None = None
     note: str = Field("", max_length=400)
 
     @property
@@ -220,6 +227,16 @@ class SupplierInvoice(Model):
     @property
     def open(self) -> float:
         return 0.0 if self.cancelled else round(self.total - self.settled, 2)
+
+    def active_at(self, on: dt.date) -> bool:
+        """Legacy cancellations with no date remain excluded; new cancellations preserve earlier history."""
+        return self.date <= on and (not self.cancelled or self.cancelled_on is not None and on < self.cancelled_on)
+
+    @model_validator(mode="after")
+    def _cancellation_date(self) -> SupplierInvoice:
+        if self.cancelled_on is not None and (not self.cancelled or self.cancelled_on < self.date):
+            raise ValueError("an invoice cancellation is dated on or after the invoice and marks it cancelled")
+        return self
 
 
 class SupplierReturn(Model):

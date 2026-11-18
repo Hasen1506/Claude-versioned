@@ -156,5 +156,22 @@ def shipment_prices(ds: Dataset, std: dict, journal: list[GoodsMovement] | None 
         if crossing(ds, m.location, to) != "entity":
             continue
         b = bills.get(m.id)
-        out[m.id] = b[1] if b is not None else price(ds, std, m.location, to, m.product, m.date)[0]
+        out[m.id] = m.transfer_price if m.transfer_price is not None else (
+            b[1] if b is not None else price(ds, std, m.location, to, m.product, m.date)[0])
     return out
+
+
+def posting_price(ds: Dataset, std: dict, movement: GoodsMovement) -> float | None:
+    """Snapshot a cross-company shipment, or a transfer already in transit at go-live."""
+    if movement.type is MovementType.TRANSFER_OUT:
+        to = destination(ds, movement)
+        if crossing(ds, movement.location, to):
+            return price(ds, std, movement.location, to or "", movement.product, movement.date)[0]
+    elif movement.type is MovementType.RECEIPT:
+        transfer = any(r.id == movement.reference and r.kind.value == "transfer" for r in ds.receipts)
+        transfer |= any(c.id == movement.reference and c.kind == "transfer" for c in ds.closed_orders)
+        shipped = any(m.type is MovementType.TRANSFER_OUT and m.reference == movement.reference for m in ds.movements)
+        frm = source_of(ds, movement)
+        if transfer and not shipped and crossing(ds, frm, movement.location) == "entity":
+            return price(ds, std, frm or "", movement.location, movement.product, movement.date)[0]
+    return None
