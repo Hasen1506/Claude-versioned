@@ -74,6 +74,16 @@ def authorize(before: dict, after: dict, email: str) -> dict:
             if name == "receipts" and (new or {}).get("kind") == "production":
                 department = "manufacturing"
             required.add(department)
+            if name == "challans":
+                previous = (old or {}).get("returns") or []
+                returns = (new or {}).get("returns") or []
+                if not isinstance(previous, list) or not isinstance(returns, list) or any(
+                        not isinstance(r, dict) for r in returns):
+                    raise ValueError("job-work returns must be a list of custody records")
+                if any(r.get("kind") == "lost" for r in returns[len(previous):]):
+                    required.add("inventory_adjustment")
+            if name == "third_party_orders" and (new or {}).get("sent_on") != (old or {}).get("sent_on"):
+                required.add("purchasing")
             if name == "movements" and ((new or {}).get("type") == "issue"
                     or (new or {}).get("reference") in production_orders):
                 required.add("manufacturing")

@@ -18,6 +18,8 @@ def _signature(movement) -> str:
 
 
 def protect_materials(old: Dataset, proposed: Dataset, open_period: Callable[[date], None]) -> None:
+    from .reversals import protect_reversals
+    protect_reversals(old, proposed)
     old_ids = {m.id for m in old.movements}
     additions = [m for m in proposed.movements if m.id not in old_ids]
     original_order, proposed_order = defaultdict(list), defaultdict(list)
