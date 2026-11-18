@@ -60,6 +60,7 @@ ACCOUNTS: dict[str, tuple[str, str, str]] = {
     "DISC_RECEIVED": ("Cash discount received", "Indirect Incomes", "income"),
     "FX_GAIN": ("Realized exchange gain", "Indirect Incomes", "income"),
     "FX_LOSS": ("Realized exchange loss", "Indirect Expenses", "expense"),
+    "SETTLEMENT_ROUNDING": ("Settlement rounding", "Indirect Expenses", "expense"),
     "COGS": ("Cost of goods sold", "Direct Expenses", "expense"),
     "IC_COGS": ("Cost of goods sold to group companies", "Direct Expenses", "expense"),
     "DELIVERY": ("Freight, duty and handling", "Direct Expenses", "expense"),
@@ -357,19 +358,27 @@ class _Journal:
             rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
             sign = -1.0 if inv.credit else 1.0
             co = self._company_of_supplier_invoice(inv)
-            for k, p in enumerate(inv.payments, 1):
+            outstanding = _r((inv.net + inv.tax) * rate)
+            settled = 0.0
+            for k, p in sorted(enumerate(inv.payments, 1), key=lambda row: row[1].date):
                 if p.date > day:
-                    continue
+                    break
                 settlement_rate = p.fx_rate if p.fx_rate is not None else rate
-                exchange = sign * (_r(p.amount * settlement_rate) - _r((p.amount + p.discount) * rate)
-                                   + _r(p.discount * rate))
+                settled = _r(settled + p.amount + p.discount)
+                remaining = _r(_r(inv.total - settled) * rate)
+                clearing = _r(outstanding - remaining)
+                outstanding = remaining
+                individual = _r((p.amount + p.discount) * rate)
+                exchange = sign * (_r(p.amount * settlement_rate) - individual + _r(p.discount * rate))
+                rounding = sign * _r(individual - clearing)
                 self._post(p.date, f"{inv.id}/{k}", "Payment" if sign > 0 else "Receipt", inv.id,
                            f"{'paid to' if sign > 0 else 'refund from'} {_name(ds, inv.supplier)} for "
                            f"{inv.reference or inv.id}" + (f", {p.reference}" if p.reference else ""),
-                           [("PAYABLES", co, inv.supplier, sign * (p.amount + p.discount) * rate, "", ""),
+                           [("PAYABLES", co, inv.supplier, sign * clearing, "", ""),
                             ("BANK", co, "", -sign * p.amount * settlement_rate, "", ""),
                             ("DISC_RECEIVED", co, "", -sign * p.discount * rate, "", ""),
-                            ("FX_LOSS" if exchange >= 0 else "FX_GAIN", co, "", exchange, "", "")], "SUSPENSE")
+                            ("FX_LOSS" if exchange >= 0 else "FX_GAIN", co, "", exchange, "", ""),
+                            ("SETTLEMENT_ROUNDING", co, "", rounding, "", "")], "SUSPENSE")
         moves = {m.id: m for m in ds.movements}
         by_ret = {r.id: r for r in ds.returns}
         by_inv: dict[str, str] = {}
@@ -639,7 +648,7 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
         if inv.active_at(day):
             left = inv.total - sum(p.amount + p.discount for p in inv.payments if p.date <= day)
             rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
-            pay[j._company_of_supplier_invoice(inv)] += (-1 if inv.credit else 1) * left * rate
+            pay[j._company_of_supplier_invoice(inv)] += (-1 if inv.credit else 1) * _r(_r(left) * rate)
     for fo in ds.freight_orders:
         if fo.status == "settled" and fo.billed is not None and fo.settled_on is not None and fo.settled_on <= day:
             pay[entity_of(ds, fo.ship_to if fo.purchases else fo.ship_from)] += fo.billed
