@@ -198,3 +198,15 @@ def test_authoritative_jobwork_commands_and_replays_preserve_later_receipts_and_
     assert len(current.supplier_invoices) == 1
     balances = {r.account: r.balance for r in view(current, period_end=BILLED).balances}
     assert balances.get('WIP', 0) == 0 and balances['PAYABLES'] == -20
+
+
+@pytest.mark.parametrize('malformed', [None, {'kind': 'lost'}, [None]])
+def test_malformed_custody_records_are_refused_without_an_internal_error(malformed):
+    x, _ = jw.send(company(), 'MO-1', on=SENT)
+    owner, _, cid = team(x)
+    raw = x.model_dump(mode='json')
+    raw['challans'][0]['returns'] = malformed
+    response = client.put(f'/api/companies/{cid}', headers=h(owner), json={
+        'base_revision': 1, 'dataset': raw})
+    assert response.status_code in (403, 422), response.text
+    assert client.get(f'/api/companies/{cid}', headers=h(owner)).json()['meta']['revision'] == 1
