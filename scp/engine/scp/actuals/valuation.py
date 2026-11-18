@@ -19,7 +19,7 @@ as S/4 MRP does whatever the price control.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
 from ..model import Dataset, GoodsMovement, MovementType, PriceControl
@@ -28,7 +28,7 @@ from ..network import Node, build_graph
 from ..plan.costing import freight_per_unit, fx, handling, roll_up
 from ..plan.leadtime import supplier_lane
 from ..purchasing.payables import lines_index
-from ..model.purchasing import PurchaseValuationBasis
+from ..model.purchasing import PurchaseValuationBasis, SupplierInvoice
 from .stock import before
 from .transfer_price import crossing, entity_of, price, shipment_prices, source_of
 
@@ -107,6 +107,22 @@ class _Node:
 
 
 @dataclass
+class _Advance:
+    invoice: str
+    line: int
+    qty: float
+    billed_unit: float                     # company-currency GR/IR basis
+    landed_unit: float
+    sequence: int
+
+
+@dataclass
+class _ReceiptShare:
+    qty: float
+    invoice: _Advance | None
+
+
+@dataclass
 class _Line:
     """A purchase order line through time: received, invoiced, and invoiced ahead of the goods at what price."""
     price: float                           # what a unit lands at: the order's price, duty, freight and handling
@@ -114,7 +130,87 @@ class _Line:
     duty: float = 0.0                      # duty rate on the price
     received: float = 0.0
     invoiced: float = 0.0
-    ahead: list[list[float]] = field(default_factory=list)   # [qty, price] invoiced before the goods came
+    ahead: list[_Advance] = field(default_factory=list)
+    receipts: dict[str, list[_ReceiptShare]] = field(default_factory=dict)
+
+    def take_ahead(self, qty: float) -> list[_Advance]:
+        """Match advance invoice quantities in posting order."""
+        left = qty
+        matched = []
+        while left > EPS and self.ahead:
+            item = self.ahead[0]
+            take = min(left, item.qty)
+            matched.append(replace(item, qty=take))
+            left -= take
+            item.qty -= take
+            if item.qty <= EPS:
+                self.ahead.pop(0)
+        return matched
+
+    def receipt(self, mid: str, qty: float) -> tuple[float, float]:
+        matched = self.take_ahead(qty)
+        unmatched = qty - sum(item.qty for item in matched)
+        shares = [_ReceiptShare(item.qty, item) for item in matched]
+        if unmatched > EPS:
+            shares.append(_ReceiptShare(unmatched, None))
+        self.receipts[mid] = shares
+        self.received += qty
+        return (sum(item.qty * item.billed_unit for item in matched) + unmatched * self.base,
+                sum(item.qty * item.landed_unit for item in matched) + unmatched * self.price)
+
+    def cover(self, invoice: _Advance, qty: float) -> None:
+        """Attach a bill to the oldest available receipts on its order line."""
+        remaining = qty
+        for shares in self.receipts.values():
+            for i, share in enumerate(shares):
+                if remaining <= EPS:
+                    return
+                if share.invoice is not None:
+                    continue
+                take = min(remaining, share.qty)
+                shares[i] = _ReceiptShare(take, invoice)
+                if share.qty - take > EPS:
+                    shares.insert(i + 1, _ReceiptShare(share.qty - take, None))
+                remaining -= take
+
+    def reverse_receipt(self, mid: str, qty: float) -> tuple[float, float]:
+        """Unmatch the last units on this receipt and re-open their active advance invoices."""
+        left, billed, landed = qty, 0.0, 0.0
+        shares = self.receipts.get(mid, [])
+        while left > EPS and shares:
+            share = shares[-1]
+            take = min(left, share.qty)
+            invoice = share.invoice
+            if invoice is None:
+                billed += take * self.base
+                landed += take * self.price
+            else:
+                billed += take * invoice.billed_unit
+                landed += take * invoice.landed_unit
+                pending = next((item for item in self.ahead if item.sequence == invoice.sequence), None)
+                if pending is None:
+                    self.ahead.append(replace(invoice, qty=take))
+                else:
+                    pending.qty += take
+            left -= take
+            share.qty -= take
+            if share.qty <= EPS:
+                shares.pop()
+        self.ahead.sort(key=lambda item: item.sequence)
+        self.received -= qty
+        return billed + left * self.base, landed + left * self.price
+
+    def cancel_ahead(self, invoice: str, line: int) -> tuple[float, float]:
+        """Remove only this cancelled invoice line's surviving advance quantity."""
+        for shares in self.receipts.values():
+            for share in shares:
+                if share.invoice is not None and (share.invoice.invoice, share.invoice.line) == (invoice, line):
+                    share.invoice = None
+        for i, item in enumerate(self.ahead):
+            if item.invoice == invoice and item.line == line:
+                self.ahead.pop(i)
+                return item.qty, item.qty * item.billed_unit
+        return 0.0, 0.0
 
 
 def control_of(ds: Dataset, product: str) -> PriceControl:
@@ -146,6 +242,10 @@ class _Books:
         self.took: dict[str, tuple[float, float]] = {}   # transfer receipt → (qty, value per unit) it took off the road
         self.returns = {r.id: r.order or "" for r in ds.returns}   # a customer's return → the order line it was sold on
         self.sold_at: dict[str, float] = {}           # sales order line → value per unit its goods last left at
+        self.purchase_lines: dict[str, _Line] = {}
+        self.receipt_clearing = 0.0
+        self.invoice_clearings: list[float] = []
+        self.invoice_sequence = 0
 
     def node(self, loc: str, prod: str) -> _Node:
         n = self.nodes.get((loc, prod))
@@ -272,6 +372,7 @@ def run_books(ds: Dataset, day: date, books: str = "entity", watch=None) -> tupl
     books_ = _Books(ds, std)
     lines = lines_index(ds, outside=False)
     po = {lid: _landed(ds, lid, ln) for lid, ln in lines.items() if ln.price is not None}
+    books_.purchase_lines = po
     kinds = {r.id: r.kind.value for r in ds.receipts}
     kinds.update({c.id: c.kind for c in ds.closed_orders if c.id not in kinds})
     journal = before(ds, day + timedelta(days=1))
@@ -280,26 +381,28 @@ def run_books(ds: Dataset, day: date, books: str = "entity", watch=None) -> tupl
         books_.entity_books = True
         books_.ic_price = shipment_prices(ds, std, journal)
 
-    events: list[tuple[date, int, int, object]] = [(m.date, 0, i, m) for i, m in enumerate(journal)]
+    events: list[tuple[date, int, int, object, SupplierInvoice | None]] = [
+        (m.date, 0, i, m, None) for i, m in enumerate(journal)]
     for i, inv in enumerate(ds.supplier_invoices):
         if inv.date <= day and (not inv.cancelled or inv.cancelled_on is not None):
-            events.append((inv.date, 1, i, inv))
+            events.append((inv.date, 1, i, inv, None))
             if inv.cancelled and inv.cancelled_on is not None and inv.cancelled_on <= day:
                 opposite = {"invoice": "credit_memo", "credit_memo": "invoice",
                             "subsequent_debit": "subsequent_credit", "subsequent_credit": "subsequent_debit"}
                 reversal = inv.model_copy(update={"id": f"{inv.id}/REV", "date": inv.cancelled_on,
                     "kind": opposite[inv.kind], "cancelled": False, "cancelled_on": None})
-                events.append((inv.cancelled_on, 1, len(ds.supplier_invoices) + i, reversal))
+                events.append((inv.cancelled_on, 1, len(ds.supplier_invoices) + i, reversal, inv))
     events.sort(key=lambda e: (e[0], e[1], e[2]))
     if watch is not None:
         watch.start(books_, po, kinds, by_id)
-    for _day, kind, _, ev in events:
+    for _day, kind, _, ev, reversed_invoice in events:
+        books_.receipt_clearing = 0.0
         if watch is not None:
             watch.before(kind, ev)
         if kind == 0:
             _movement(books_, ev, po, kinds, by_id)        # type: ignore[arg-type]
         else:
-            _invoice(books_, ds, ev, po, lines)
+            _invoice(books_, ds, ev, po, lines, reversed_invoice)
         if watch is not None:
             watch.after(kind, ev)
 
@@ -378,10 +481,11 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
         ins = orig is not None and orig.signed > 0
         what = f"reversal of {m.reversal_of}"
         if ins:                                        # a receipt taken back leaves at what it came in at
+            if orig.type is MovementType.RECEIPT and orig.reference in po:
+                b.receipt_clearing, landed = po[orig.reference].reverse_receipt(orig.id, q)
+                unit = landed / q
             b.out(day, loc, prod, q, what, m.reversal_of, unit if b.node(loc, prod).control is not PriceControl.STANDARD
                   and unit is not None else None)
-            if orig is not None and orig.type is MovementType.RECEIPT and orig.reference in po:
-                po[orig.reference].received -= q
             took = b.took.get(m.reversal_of)
             if took is not None and orig is not None and orig.reference:   # a transfer receipt taken back: on the road again
                 back = min(q, took[0])
@@ -410,16 +514,7 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
         kind = kinds.get(ref)
         if ref in po:
             ln = po[ref]
-            unit_total, left = 0.0, q
-            while left > EPS and ln.ahead:                 # invoiced before the goods: they come in at that price
-                take = min(left, ln.ahead[0][0])
-                unit_total += take * ln.ahead[0][1]
-                ln.ahead[0][0] -= take
-                left -= take
-                if ln.ahead[0][0] <= EPS:
-                    ln.ahead.pop(0)
-            unit_total += left * ln.price
-            ln.received += q
+            b.receipt_clearing, unit_total = ln.receipt(m.id, q)
             b.at_move[m.id] = b.into(day, loc, prod, q, unit_total / q, "purchase receipt", ref,
                                      "purchase receipt at the order's price, against the standard")
         elif kind == "transfer" and b.shipped.get(ref):
@@ -477,31 +572,65 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
             b.shipped[m.reference] = [sq + q, sv + (q * tp if tp is not None else v)]
 
 
-def _invoice(b: _Books, ds: Dataset, inv, po: dict[str, _Line], lines) -> None:
+def _invoice(b: _Books, ds: Dataset, inv: SupplierInvoice, po: dict[str, _Line], lines,
+             reversed_invoice: SupplierInvoice | None) -> None:
     rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
     total = sum(abs(ln.qty * ln.price) for ln in inv.lines) or 1.0
-    for ln in inv.lines:
+    b.invoice_clearings = [0.0] * len(inv.lines)
+    cancelled_advances = {}
+    if reversed_invoice is not None and reversed_invoice.kind == "invoice":
+        for index, ln in enumerate(inv.lines):
+            if ln.order in po:
+                cancelled_advances[index] = po[ln.order].cancel_ahead(reversed_invoice.id, index)
+    for index, ln in enumerate(inv.lines):
         info = lines.get(ln.order)
         line = po.get(ln.order)
         if info is None or line is None:
             continue
         loc, prod, day = info.location, info.product, inv.date
         freight = inv.delivery_costs * rate * abs(ln.qty * ln.price) / total
-        if inv.kind in ("subsequent_debit", "subsequent_credit"):
-            amount = (1 if inv.kind == "subsequent_debit" else -1) * ln.qty * ln.price * rate * (1.0 + line.duty) + freight
+        sign = -1.0 if inv.credit else 1.0
+        if not inv.bills_goods:
+            amount = sign * (ln.qty * ln.price * rate * (1.0 + line.duty) + freight)
             b.reprice(day, loc, prod, ln.qty, amount, f"{inv.kind.replace('_', ' ')} {inv.id}", inv.id)
             continue
-        sign = -1.0 if inv.kind == "credit_memo" else 1.0
         price = ln.price * rate
         per = (price - line.base) * (1.0 + line.duty)        # the duty follows the price
-        if sign > 0:
-            covered = min(ln.qty, max(0.0, line.received - line.invoiced))
-            if ln.qty - covered > EPS:                  # billed before it came: it comes in at the invoice's price
-                line.ahead.append([ln.qty - covered, line.price + per])
+        if reversed_invoice is not None and reversed_invoice.kind == "invoice":
+            unmatched, billed = cancelled_advances[index]
+            covered = ln.qty - unmatched
+            line.invoiced -= ln.qty
+            clearing = -(billed + covered * line.base)
+            b.reprice(day, loc, prod, covered, -per * covered - freight,
+                      f"cancellation of {reversed_invoice.id}", inv.id)
+            # Receipts released by a cancellation can cover still-outstanding advances.
+            matched = line.take_ahead(covered)
+            quantity = sum(item.qty for item in matched)
+            clearing += sum(item.qty * (line.base - item.billed_unit) for item in matched)
+            for item in matched:
+                line.cover(item, item.qty)
+            b.reprice(day, loc, prod, quantity, sum(item.qty * (item.landed_unit - line.price) for item in matched),
+                      f"advance invoices matched after cancellation of {reversed_invoice.id}", inv.id)
+            b.invoice_clearings[index] = clearing
+        elif reversed_invoice is not None and reversed_invoice.kind == "credit_memo":
             line.invoiced += ln.qty
+            b.invoice_clearings[index] = ln.qty * line.base
+            b.reprice(day, loc, prod, ln.qty, per * ln.qty + freight,
+                      f"cancellation of {reversed_invoice.id}", inv.id)
+        elif sign > 0:
+            covered = min(ln.qty, max(0.0, line.received - line.invoiced))
+            b.invoice_sequence += 1
+            advance = _Advance(inv.id, index, ln.qty - covered, price, line.price + per, b.invoice_sequence)
+            if covered > EPS:
+                line.cover(advance, covered)
+            if ln.qty - covered > EPS:                  # billed before it came: it comes in at the invoice's price
+                line.ahead.append(advance)
+            line.invoiced += ln.qty
+            b.invoice_clearings[index] = covered * line.base + (ln.qty - covered) * price
             b.reprice(day, loc, prod, covered, per * covered + freight,
                       f"invoice {inv.id} at {price:.2f} against {line.base:.2f}", inv.id)
         else:
             line.invoiced -= ln.qty
+            b.invoice_clearings[index] = -ln.qty * line.base
             b.reprice(day, loc, prod, ln.qty, -per * ln.qty - freight,
                       f"credit memo {inv.id} at {price:.2f} against {line.base:.2f}", inv.id)

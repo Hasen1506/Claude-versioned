@@ -182,7 +182,6 @@ class _Journal:
         self.ds = ds
         self.vouchers: list[Voucher] = []
         self.contra: dict[str, list[tuple[str, str, str, float]]] = {}   # movement → its other side, for a reversal
-        self.state: dict[str, list] = {}   # purchase line → [received, invoiced, [[qty, GR/IR per unit] ahead]]
         self.returns = {r.id for r in ds.returns}
         self.third = {t.id for t in ds.third_party_orders}
         self.jobs = {c.id for c in ds.challans}
@@ -228,29 +227,20 @@ class _Journal:
         if m.reversal_of:
             orig = self.by_id.get(m.reversal_of)
             f = q / abs(orig.qty) if orig is not None and abs(orig.qty) > EPS else 0.0
+            purchase_receipt = orig is not None and orig.type is MovementType.RECEIPT and orig.reference in self.po
             for acc, c, pa, amt in self.contra.get(m.reversal_of, []):
+                if purchase_receipt and acc == "GRIR":
+                    continue
                 own.append((acc, c, pa, -amt * f, m.location, m.product))
-            if orig is not None and orig.reference in self.state:
-                st = self.state[orig.reference]
-                st[0] += -q if orig.type is MovementType.RECEIPT else q
+            if purchase_receipt:
+                own.append(("GRIR", co, self._supplier(ref), self.b.receipt_clearing, m.location, m.product))
             rest, what = "PRICE_DIFF", f"reversal of {m.reversal_of}"
         elif m.type is MovementType.OPENING:
             rest, what = "OPENING", "opening balance"
         elif m.type is MovementType.RECEIPT:
             kind = self.kinds.get(ref)
             if ref in self.po:
-                st = self.state.setdefault(ref, [0.0, 0.0, []])
-                left, g = q, 0.0
-                while left > EPS and st[2]:
-                    take = min(left, st[2][0][0])
-                    g += take * st[2][0][1]
-                    st[2][0][0] -= take
-                    left -= take
-                    if st[2][0][0] <= EPS:
-                        st[2].pop(0)
-                g += left * self.po[ref].base
-                st[0] += q
-                own.append(("GRIR", co, self._supplier(ref), -g, m.location, m.product))
+                own.append(("GRIR", co, self._supplier(ref), -self.b.receipt_clearing, m.location, m.product))
                 rest, what = "DELIVERY", f"purchase receipt on {ref}"
             elif kind == "transfer" and abs(road) > 0.004:
                 own.append(("TRANSIT", co, "", road, m.location, m.product))
@@ -274,8 +264,6 @@ class _Journal:
         elif m.type is MovementType.RETURN:
             what = "return to supplier" + (f" on {ref}" if ref else "")
             if ref in self.po:
-                st = self.state.setdefault(ref, [0.0, 0.0, []])
-                st[0] -= q
                 own.append(("GRIR", co, self._supplier(ref), q * self.po[ref].base, m.location, m.product))
                 rest = "DELIVERY"
         elif m.type is MovementType.TRANSFER_OUT:
@@ -315,23 +303,12 @@ class _Journal:
         co = inv.entity if inv.entity is not None else (
             entity_of(ds, first.location) if first is not None and _ours(ds, first.location) else "")
         own = []
-        for ln in inv.lines:
+        for ln, clearing in zip(inv.lines, self.b.invoice_clearings, strict=True):
             amt = ln.qty * ln.price * rate
             info = every.get(ln.order)
             loc = info.location if info is not None else ""
             if ln.order in self.po and inv.bills_goods:
-                st = self.state.setdefault(ln.order, [0.0, 0.0, []])
-                base = self.po[ln.order].base
-                if sign > 0:
-                    covered = min(ln.qty, max(0.0, st[0] - st[1]))
-                    if ln.qty - covered > EPS:
-                        st[2].append([ln.qty - covered, ln.price * rate])
-                    st[1] += ln.qty
-                    own.append(("GRIR", co, inv.supplier, covered * base + (ln.qty - covered) * ln.price * rate, loc,
-                                ln.product))
-                else:
-                    st[1] -= ln.qty
-                    own.append(("GRIR", co, inv.supplier, -ln.qty * base, loc, ln.product))
+                own.append(("GRIR", co, inv.supplier, clearing, loc, ln.product))
             elif ln.order in self.po:
                 pass                                 # a subsequent debit or credit: on the stock, or a price difference
             elif ln.order in self.third:             # bought for a customer, shipped by the supplier: cost of a sale
@@ -683,13 +660,15 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
                     billed_at[ln.order] = ln.price * (inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency))
     for lid in set(got) | set(billed):
         info = lines.get(lid)
-        if info is None or info.price is None:
+        purchase = b.purchase_lines.get(lid)
+        if info is None or purchase is None:
             continue
         open_ = got[lid] - billed[lid]                 # + received, not invoiced; − invoiced ahead of the goods
-        header = ds.purchase_order_by_id.get(info.po or "")
-        rate = header.fx_rate if header is not None and header.fx_rate is not None else fx(ds, info.currency)
-        at = info.price * rate if open_ >= 0 else billed_at.get(lid, info.price * rate)
-        grir[entity_of(ds, info.location)] -= open_ * at
+        if open_ < 0 and abs(sum(item.qty for item in purchase.ahead) + open_) <= EPS:
+            grir[entity_of(ds, info.location)] += sum(item.qty * item.billed_unit for item in purchase.ahead)
+        else:
+            at = purchase.base if open_ >= 0 else billed_at.get(lid, purchase.base)
+            grir[entity_of(ds, info.location)] -= open_ * at
     ic_rec: dict[str, float] = defaultdict(float)
     ic_pay: dict[str, float] = defaultdict(float)
     for inv in ds.intercompany_invoices:
@@ -711,7 +690,7 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
         add(co, "Suppliers against the open invoices and freight bills", -bal(co, "PAYABLES"), pay.get(co, 0.0),
             "a supplier invoice, payment or freight bill without its voucher")
         add(co, "GR/IR against the goods received and not invoiced", bal(co, "GRIR"), grir.get(co, 0.0),
-            "a receipt or invoice without its voucher, or goods invoiced ahead at more than one price")
+            "a receipt or invoice without its matching clearing value or voucher")
         if ds.entities:
             add(co, "Group companies owe it, against the open inter-company invoices", bal(co, "IC_RECEIVABLES"),
                 ic_rec.get(co, 0.0), "an inter-company invoice or settlement without its voucher")
