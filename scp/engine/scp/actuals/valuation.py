@@ -244,6 +244,7 @@ class _Books:
         self.sold_at: dict[str, float] = {}           # sales order line → value per unit its goods last left at
         self.purchase_lines: dict[str, _Line] = {}
         self.receipt_clearing = 0.0
+        self.reversed_receipt_cost = 0.0
         self.invoice_clearings: list[float] = []
         self.invoice_sequence = 0
 
@@ -397,6 +398,7 @@ def run_books(ds: Dataset, day: date, books: str = "entity", watch=None) -> tupl
         watch.start(books_, po, kinds, by_id)
     for _day, kind, _, ev, reversed_invoice in events:
         books_.receipt_clearing = 0.0
+        books_.reversed_receipt_cost = 0.0
         if watch is not None:
             watch.before(kind, ev)
         if kind == 0:
@@ -483,6 +485,7 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
         if ins:                                        # a receipt taken back leaves at what it came in at
             if orig.type is MovementType.RECEIPT and orig.reference in po:
                 b.receipt_clearing, landed = po[orig.reference].reverse_receipt(orig.id, q)
+                b.reversed_receipt_cost = landed
                 unit = landed / q
             b.out(day, loc, prod, q, what, m.reversal_of, unit if b.node(loc, prod).control is not PriceControl.STANDARD
                   and unit is not None else None)

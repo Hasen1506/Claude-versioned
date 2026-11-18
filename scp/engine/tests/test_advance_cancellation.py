@@ -84,8 +84,13 @@ def test_cancellation_releases_receipts_to_another_advance_at_its_own_price():
 
 @pytest.mark.parametrize("cancel_first", [False, True])
 @pytest.mark.parametrize("control", ["moving_average", "standard"])
-def test_receipt_reversal_and_invoice_cancellation_reconcile_in_both_orders(cancel_first, control):
-    x = receive(bill(buy(control), 100, 12, 5), 40, 6)
+@pytest.mark.parametrize("landed_costs", [False, True])
+def test_receipt_reversal_and_invoice_cancellation_reconcile_in_both_orders(cancel_first, control, landed_costs):
+    raw = buy(control).model_dump(mode="json")
+    if landed_costs:
+        raw["purchasing_sources"][0]["duty_rate"] = .2
+        raw["locations"][0]["handling_cost_per_unit"] = 2
+    x = receive(bill(Dataset.model_validate(raw), 100, 12, 5), 40, 6)
     receipt = next(m.id for m in x.movements if m.type is MovementType.RECEIPT)
     if cancel_first:
         x, _ = act(x, "cancel_invoice", "SI-00001", on=day(7))

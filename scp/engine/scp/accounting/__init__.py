@@ -230,11 +230,15 @@ class _Journal:
             f = q / abs(orig.qty) if orig is not None and abs(orig.qty) > EPS else 0.0
             purchase_receipt = orig is not None and orig.type is MovementType.RECEIPT and orig.reference in self.po
             for acc, c, pa, amt in self.contra.get(m.reversal_of, []):
-                if purchase_receipt and acc == "GRIR":
+                if purchase_receipt and acc in ("GRIR", "DELIVERY"):
                     continue
                 own.append((acc, c, pa, -amt * f, m.location, m.product))
             if purchase_receipt:
                 own.append(("GRIR", co, self._supplier(ref), self.b.receipt_clearing, m.location, m.product))
+                # Duty follows the current invoice match. If it was cancelled,
+                # reverse the surviving delivery accrual at the order's basis.
+                delivery = self.b.reversed_receipt_cost - self.b.receipt_clearing
+                own.append(("DELIVERY", co, "", delivery, m.location, m.product))
             rest, what = "PRICE_DIFF", f"reversal of {m.reversal_of}"
         elif m.type is MovementType.OPENING:
             rest, what = "OPENING", "opening balance"
