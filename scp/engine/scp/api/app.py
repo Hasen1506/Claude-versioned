@@ -1380,6 +1380,7 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
         "stock": (PostRequest, post_posting),
         "transport": (TransportActionRequest, post_transport_action),
         "intercompany": (IntercompanyActionRequest, post_intercompany_action),
+        "outside": (OutsideActionRequest, post_outside_action),
     }
     schema, handler = adapters[req.kind]
     unknown = set(req.parameters) - (set(schema.model_fields) - {"dataset", "action", "date"})

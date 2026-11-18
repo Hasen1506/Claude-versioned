@@ -17,7 +17,7 @@
 }
 ```
 
-Supported kinds are `purchasing`, `sales`, `stock`, `transport` and `intercompany`. Their actions and parameters use the existing action request schemas. `dataset`, `action` and `date` are not parameters: the company and action are selected by the command, and `posting_date` supplies the operation's date. This avoids silently posting on the start date of a planning scenario. The invoice model currently shares document and accounting dates; separate ERP document/posting-date semantics remain a finance fit-gap item.
+Supported kinds are `purchasing`, `sales`, `stock`, `transport`, `intercompany` and `outside`. Their actions and parameters use the existing action request schemas. `dataset`, `action` and `date` are not parameters: the company and action are selected by the command, and `posting_date` supplies the operation's date. This avoids silently posting on the start date of a planning scenario. The invoice model currently shares document and accounting dates; separate ERP document/posting-date semantics remain a finance fit-gap item.
 
 The operation reads authoritative state and commits its company effects, revision, audit trail and receipt in one database transaction. It refuses a stale base revision. It also refuses the whole operation if it needs a master-data change still awaiting approval; physical effects do not commit while a required master change is held. Invalid/incomplete saved data must be completed before executing a live command.
 
@@ -44,3 +44,13 @@ Existing posted material facts and their same-day posting order are retained. St
 Serialised movements require one serial per whole unit. A serial cannot be held in multiple places or stock types, issued from a place that does not hold it, or issued before receipt. Atomic transfer/status documents can move a serial between places/types. Its serial profile cannot be disabled while stock remains. Invalid legacy serial/opening data needs controlled migration rather than fabricated history.
 
 Known currencies requiring other than two decimal places remain blocked for financial posting and ledger export. This prevents silent misstatement; it does not implement full currency/minor-unit/rounding support. Statutory finance, reference-system outcomes, representative performance, real interface certification and infrastructure recovery still require the independent acceptance described in `ENTERPRISE_READINESS.md`.
+
+## Outside work and reversals
+
+The `outside` command kind accepts the existing outside-action schema: `send_parts`, `back_processed`, `back_unused`, `write_off`, `cancel_challan`, and direct-ship order/send/dispatch actions. It uses the command's explicit business date, authoritative company state, revision check and atomic retry receipt. Retried dispatch does not replace intervening receipts or billing.
+
+Sent job-work quantities, values, parties, source order, charge and original custody events are retained. Unused returns and cancellation require matching material reversals; a worker cannot consume, lose or return more than was sent. Closed/cancelled records cannot reopen. Loss requires both manufacturing and inventory-adjustment authority. Sending a direct-ship supplier order additionally requires purchasing authority when the matrix is configured.
+
+A custody event cannot precede dispatch or an earlier recorded return. When a legacy action omits its date, its fallback is at least the most recent custody event, rather than silently preceding dispatch at the planning epoch. Explicit dated custody views exclude future returns and cancellations; their planning-worklist section still describes the current scenario. Period dispatch rows retain a challan cancelled after the requested period. These behaviors do not establish statutory acceptance of the generated forms or complete snapshots of jurisdiction-specific party/product tax master data.
+
+A reversal retains its original material identity and cumulative reversals cannot exceed the original quantity. The journal now reverses the actual original contra account as well as stock, including balancing WIP/COGS/scrap/count entries. This corrects previously misclassified derived reports: reconcile existing reversal periods and obtain controller acceptance before replacing previously approved external books. Source movements and invoices are retained; unknown legacy facts are not fabricated.

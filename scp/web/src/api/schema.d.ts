@@ -4810,7 +4810,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "purchasing" | "sales" | "stock" | "transport" | "intercompany";
+            kind: "purchasing" | "sales" | "stock" | "transport" | "intercompany" | "outside";
             /** Action */
             action: string;
             /** Parameters */

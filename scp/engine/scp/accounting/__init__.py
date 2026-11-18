@@ -289,9 +289,16 @@ class _Journal:
             elif abs(road) > 0.004:
                 own.append(("TRANSIT", to_co, "", road, to or "", m.product))
                 rest = "PRICE_DIFF"                  # what is left is the rounding of the value on the road
-        self.contra[m.id] = [(a, c, pa, amt) for a, c, pa, amt, _l, _p in own]
+        start = len(self.vouchers)
         self._post(m.date, m.id, "Journal", m.id, f"{what}: {_n(q)} {m.product} at {_name(ds, m.location)}",
                    lines + own, rest, m.location, m.product)
+        # The balancing account is part of the original posting too. Retaining
+        # only explicit `own` lines lost WIP/COGS/scrap/count contra entries and
+        # sent their reversals to price differences. Stock and valuation
+        # differences are supplied by the stock books on both postings.
+        self.contra[m.id] = [(ln.account, v.company, ln.party, ln.debit - ln.credit)
+                             for v in self.vouchers[start:] for ln in v.lines
+                             if ln.account not in ("STOCK", "PRICE_DIFF")]
 
     def _supplier(self, lid: str) -> str:
         info = self.lines.get(lid)

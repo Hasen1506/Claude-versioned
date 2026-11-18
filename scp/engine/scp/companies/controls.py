@@ -74,6 +74,11 @@ def authorize(before: dict, after: dict, email: str) -> dict:
             if name == "receipts" and (new or {}).get("kind") == "production":
                 department = "manufacturing"
             required.add(department)
+            if name == "challans" and any(r.get("kind") == "lost" for r in
+                    (new or {}).get("returns", [])[len((old or {}).get("returns", [])):]):
+                required.add("inventory_adjustment")
+            if name == "third_party_orders" and (new or {}).get("sent_on") != (old or {}).get("sent_on"):
+                required.add("purchasing")
             if name == "movements" and ((new or {}).get("type") == "issue"
                     or (new or {}).get("reference") in production_orders):
                 required.add("manufacturing")

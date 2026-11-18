@@ -90,6 +90,46 @@ def main():
     receipt = request(f"/api/companies/{live_id}/commands?id=payment-1")
     assert receipt["revision"] == 4 and receipt["engine_commit"] == health["commit"]
 
+    # Independent outsourced-production fixture: 20 components at 4 sent,
+    # nine finished units at 10 returned, two components returned unused,
+    # and a service charge of 9 * 2. The remaining stock is 418 and WIP clears.
+    job_doc = {"settings": {"planning_start": "2026-01-05", "horizon_days": 28, "currency": "INR"},
+               "locations": [{"id": "P", "type": "plant"}, {"id": "S", "type": "supplier"}],
+               "products": [{"id": "A", "type": "FG", "standard_cost": 10},
+                            {"id": "B", "type": "RM", "standard_cost": 4}],
+               "location_products": [{"location": "P", "product": "A", "on_hand": 0},
+                                     {"location": "P", "product": "B", "on_hand": 100}],
+               "production_sources": [{"id": "MAKE-A", "location": "P", "product": "A", "output_qty": 1,
+                   "components": [{"product": "B", "qty": 2}],
+                   "operations": [{"seq": 10, "subcontract": {"supplier": "S", "workdays": 1, "cost_per_unit": 2}}]}],
+               "receipts": [{"id": "MO-1", "kind": "production", "location": "P", "product": "A", "qty": 10,
+                             "start_date": "2026-01-05", "due_date": "2026-01-06", "source": "MAKE-A"}]}
+    job_id = request("/api/companies", {"dataset": job_doc})["id"]
+    job_revision = 1
+
+    def job_command(identifier, kind, action, day, **parameters):
+        nonlocal job_revision
+        result = request(f"/api/companies/{job_id}/commands", {
+            "id": identifier, "kind": kind, "action": action, "posting_date": day,
+            "base_revision": job_revision, "parameters": parameters})
+        job_revision = result["company"]["meta"]["revision"]
+        return result
+
+    job_command("send-1", "outside", "send_parts", "2026-01-05", production_order="MO-1")
+    job_command("processed-1", "outside", "back_processed", "2026-01-06", id="JW-00001", qty=9)
+    job_command("unused-1", "outside", "back_unused", "2026-01-07", id="JW-00001", product="B", qty=2)
+    job_command("job-invoice-1", "purchasing", "enter_invoice", "2026-01-07", lines=[{"order": "JW-00001"}])
+    job_command("job-payment-1", "purchasing", "pay_invoice", "2026-01-08", po="SI-00001")
+    replay = job_command("send-1", "outside", "send_parts", "2026-01-05", production_order="MO-1")
+    assert replay["duplicate"] and job_revision == 6
+    job_saved = replay["company"]["dataset"]
+    job_books = request("/api/accounting?period_end=2026-01-09", job_saved)
+    job_balances = {r["account"]: r["balance"] for r in job_books["balances"] if r["company"] == ""}
+    for account, expected in {"STOCK": 418, "WIP": 0, "PAYABLES": 0, "BANK": -18, "SUSPENSE": 0, "PRICE_DIFF": 0}.items():
+        assert abs(job_balances.get(account, 0) - expected) < .005, (account, job_balances)
+    removed = {**job_saved, "challans": []}
+    request(f"/api/companies/{job_id}", {"dataset": removed, "base_revision": job_revision}, method="PUT", expected=403)
+
     blocked = act(received, "enter_invoice", lines=[{"order": "PO-1-10", "qty": 100, "price": 11}])
     request("/api/purchasing/act", {"dataset": blocked, "action": "pay_invoice", "po": "SI-00001"}, expected=409)
     blocked_id = request("/api/companies", {"dataset": blocked})["id"]
@@ -100,6 +140,10 @@ def main():
     print(json.dumps({"commit": health["commit"], "uid": os.geteuid(), "health": "passed", "web": "passed",
                       "persisted_procure_to_pay": "passed", "company_revision": revision,
                       "authoritative_commands_and_replay": "passed", "command_revision": live_revision,
+                      "jobwork_commands_and_replay": "passed", "jobwork_revision": job_revision,
+                      "jobwork_ledger": {k: job_balances.get(k, 0) for k in
+                                        ("STOCK", "WIP", "PAYABLES", "BANK", "SUSPENSE", "PRICE_DIFF")},
+                      "posted_challan_removal": 403,
                       "ledger": {k: balances.get(k, 0) for k in ("STOCK", "INPUT_TAX", "BANK", "PAYABLES", "GRIR")},
                       "blocked_payment_action": 409, "forged_payment_save": 403}, indent=2))
 

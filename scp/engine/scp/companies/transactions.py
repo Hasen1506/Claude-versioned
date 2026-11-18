@@ -34,7 +34,7 @@ def _rows(doc: dict, name: str) -> dict[str, dict]:
 def protect(before: dict, after: dict, email: str) -> dict:
     """Return a normalized document or refuse an invalid financial state transition."""
     names = ("supplier_invoices", "movements", "purchase_orders", "invoices", "intercompany_invoices", "freight_orders",
-             "inventory_docs")
+             "inventory_docs", "challans", "third_party_orders")
     # No financial records means incomplete master data can still be edited freely.
     if not any(before.get(n) or after.get(n) for n in names):
         return after
@@ -74,14 +74,17 @@ def protect(before: dict, after: dict, email: str) -> dict:
         from ..model.intercompany import IntercompanyInvoice
         from ..model.transport import FreightOrder
         from ..model.actuals import InventoryDoc
+        from ..model.outside import JobWorkChallan, ThirdPartyOrder
         for name, model in (("invoices", Invoice), ("intercompany_invoices", IntercompanyInvoice), ("freight_orders", FreightOrder),
-                            ("inventory_docs", InventoryDoc)):
+                            ("inventory_docs", InventoryDoc), ("challans", JobWorkChallan),
+                            ("third_party_orders", ThirdPartyOrder)):
             for raw in [*_rows(before, name).values(), *_rows(after, name).values()]:
                 model.model_validate(raw)
         old_inv, new_inv = _rows(before, "supplier_invoices"), _rows(after, "supplier_invoices")
         old_moves, new_moves = _rows(before, "movements"), _rows(after, "movements")
         old_pos, new_pos = _rows(before, "purchase_orders"), _rows(after, "purchase_orders")
-        if old_ds.settings.currency != ds.settings.currency and (old_inv or old_moves):
+        if old_ds.settings.currency != ds.settings.currency and (old_inv or old_moves or any(
+                t.sent_on is not None or t.shipments for t in old_ds.third_party_orders)):
             raise TransactionRefused("posted records keep their company currency; use a controlled migration to change it")
         closed = old_ds.finance.closed_through
         if closed is not None and (ds.finance.closed_through is None or ds.finance.closed_through < closed):
@@ -298,6 +301,8 @@ def protect(before: dict, after: dict, email: str) -> dict:
                 working, _ = cancel_invoice(working, iid, target.cancelled_on)
         from .commercial import protect_commercial
         protect_commercial(old_ds, ds, open_period)
+        from .outside import protect_outside
+        protect_outside(old_ds, ds, open_period)
         from .materials import protect_materials
         protect_materials(old_ds, ds, open_period)
         if ds.finance.closed_through is not None and ds.finance.closed_through != closed:

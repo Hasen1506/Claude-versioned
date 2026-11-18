@@ -62,6 +62,14 @@ def _today(ds: Dataset, on: date | None) -> date:
     return on or ds.settings.planning_start
 
 
+def _custody_day(ds: Dataset, c: JobWorkChallan, on: date | None) -> date:
+    latest = max([c.sent_on, *(r.date for r in c.returns)])
+    day = on if on is not None else max(ds.settings.planning_start, latest)
+    if day < latest:
+        raise JobWorkError(f"{c.id}: a custody event is dated on or after dispatch and its previous return ({latest})")
+    return day
+
+
 def uqc(ds: Dataset, product: str) -> str:
     """The GST unit quantity code of the product's unit."""
     p = ds.product_by_id.get(product)
@@ -293,7 +301,7 @@ def receive(ds: Dataset, cid: str, qty: float, *, on: date | None = None, refere
     rc = next((r for r in ds.receipts if r.id == c.order and r.kind is ReceiptKind.PRODUCTION), None)
     if rc is None and post:
         raise JobWorkError(f"{c.order} is no longer open: record the goods without receiving them on it")
-    day = _today(ds, on)
+    day = _custody_day(ds, c, on)
     first = c.processed <= EPS
     need = _needs(ds, rc) if rc is not None else {}
     said = used or {}
@@ -404,7 +412,7 @@ def return_unused(ds: Dataset, cid: str, product: str, qty: float | None = None,
     if (inv := blocked_by_count(ds, (ln.location, product))) is not None:
         raise JobWorkError(f"{_name(ds, product)} at {_name(ds, ln.location)} is being counted ({inv.id}): post the "
                            "count first, or cancel it")
-    day = _today(ds, on)
+    day = _custody_day(ds, c, on)
     moves = _take_back(ds, c, ln, q, day, f"Back unused from {_name(ds, c.job_worker)} on challan {cid}")
     r = ChallanReturn(date=day, kind="unused", product=product, qty=round(q, 6), reference=reference[:64],
                       movements=[m.id for m in moves])
@@ -429,7 +437,7 @@ def write_off(ds: Dataset, cid: str, product: str, qty: float | None = None, *, 
                            else "the quantity written off must be more than 0")
     if q > there + EPS:
         raise JobWorkError(f"only {_qty(ds, product, there)} of {cid} is at {_name(ds, c.job_worker)}")
-    day = _today(ds, on)
+    day = _custody_day(ds, c, on)
     r = ChallanReturn(date=day, kind="lost", product=product, qty=round(q, 6), reference=reference[:64])
     new = _with_return(c, r, day)
     msg = (f"{cid}: {_qty(ds, product, q)} written off at {_name(ds, c.job_worker)} on {_day(day)}"
@@ -445,7 +453,7 @@ def cancel(ds: Dataset, cid: str, on: date | None = None) -> tuple[Dataset, JobW
         raise JobWorkError(f"{cid} is already cancelled")
     if c.returns:
         raise JobWorkError(f"goods have come back on {cid}: take back the rest as unused instead")
-    day = _today(ds, on)
+    day = _custody_day(ds, c, on)
     moves: list[GoodsMovement] = []
     work = ds
     for ln in c.lines:
@@ -606,7 +614,7 @@ def _state(lo) -> str:
 def itc04(ds: Dataset, start: date, end: date) -> list[Itc04Row]:
     out = []
     for c in ds.challans:
-        if c.cancelled:
+        if c.cancelled and (c.closed_on is None or c.closed_on <= end):
             continue
         lo = ds.location_by_id.get(c.job_worker)
         gstin, state = (lo.tax_id if lo else ""), _state(lo)
@@ -640,6 +648,13 @@ def view(ds: Dataset, on: date | None = None, period_start: date | None = None,
     stock: dict[tuple[str, str], StockAtJobWorker] = {}
     deemed: list[DeemedSupply] = []
     for c in sorted(ds.challans, key=lambda x: (x.sent_on, x.id), reverse=True):
+        if on is not None:
+            if c.sent_on > day:
+                continue
+            c = c.model_copy(update={
+                "returns": [r for r in c.returns if r.date <= day],
+                "cancelled": c.cancelled and (c.closed_on is None or c.closed_on <= day),
+                "closed_on": c.closed_on if c.closed_on is not None and c.closed_on <= day else None})
         jw, sf = ds.location_by_id.get(c.job_worker), ds.location_by_id.get(c.ship_from)
         prod = order_product(ds, c.order)
         lines = []
