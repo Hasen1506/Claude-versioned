@@ -778,10 +778,11 @@ export const store = {
     return store.captureWorking();
   },
 
-  async postCompanyCommand(command: Omit<CompanyCommand, "base_revision">) {
+  async postCompanyCommand(companyId: string, command: Omit<CompanyCommand, "base_revision">) {
     const before = await store.savedWorkingCopy();
+    store.assertWorking(before, true);
     const company = state.company;
-    if (!company?.live) throw new Error("Open the live company to post a transaction.");
+    if (!company?.live || company.id !== companyId) throw new Error("Open the original live company to post this transaction.");
     const result = await api.companyCommand(company.id, { ...command, base_revision: company.revision });
     if (store.currentContext(before, true) && !unsaved(state) && state.company?.revision === company.revision) {
       adopt(result.company.dataset as unknown as Dataset, result.company.meta, null);

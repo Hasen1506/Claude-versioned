@@ -40,6 +40,8 @@ The response's `revision` identifies the original completed command. Its `compan
 
 The typed browser API client exposes `companyCommand` and `companyCommandRecord`. Existing planning/scenario action APIs and the browser's preview/edit/save workflow remain compatible. Their company saves continue to enforce transaction rules. The new endpoint provides an authoritative operation contract for live integrations; its existence does not imply that every legacy screen has been migrated to command execution.
 
+The live supplier payment screen records payments and supplier refunds through `purchasing/pay_invoice`. The UI confirms after the server commits. If the response is lost, re-enter the original posting date, amount and reference in the same tab to recover the result with the same command ID. A payment entry records the accounting event. Bank execution and reconciliation use the organization's bank process.
+
 ## Business authorization
 
 An empty `finance.control_roles` matrix preserves legacy owner/planner/viewer semantics. Once configured, omitted grants deny that operation, including for owners and keys. Configure and independently test the approved matrix before relying on separation of duties. Owners administer policy but do not bypass operational grants. `finance.separate_payments` requires a payer different from the recorded invoice entrant and releaser. Unknown legacy entrants require reviewed migration evidence.

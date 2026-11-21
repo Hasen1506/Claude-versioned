@@ -30,6 +30,65 @@ async function open(page:Page) {
 
 const done=(page:Page)=>page.locator('.banner[role="status"]').last();
 
+test("a live partial payment can be retried after a reload without posting twice", async ({ page }) => {
+  await page.goto("/");
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Import a file", exact: true }).click();
+  const company = {
+    ...fixture(),
+    purchase_orders: [{ id: "PO-00001", supplier: "SHARMA", location: "PUNE", order_date: "2026-01-02",
+      sent_on: "2026-01-02", approved: true }],
+    receipts: [{ id: "PO-00001-10", kind: "purchase", product: "TIN", location: "PUNE", qty: 10,
+      po: "PO-00001", source: "PIR-TIN", due_date: "2026-01-05", price: 10 }],
+    movements: [{ id: "GR-1", type: "receipt", date: "2026-01-05", location: "PUNE", product: "TIN",
+      reference: "PO-00001-10", qty: 10 }],
+    supplier_invoices: [{ id: "SI-00001", supplier: "SHARMA", date: "2026-01-05", due_date: "2026-02-04",
+      tax: 10, lines: [{ order: "PO-00001-10", product: "TIN", qty: 10, price: 10 }] }],
+  };
+  await (await chooser).setFiles({ name: "payment.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(company)) });
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  await page.goto("/#/account");
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill(`payments-${Date.now()}@example.invalid`);
+  await page.getByLabel("Your name").fill("Accounts payable");
+  await page.getByLabel(/^Password/).fill("fixture-only-north-clover");
+  await page.getByRole("button", { name: "Make the account", exact: true }).click();
+  await page.getByRole("button", { name: "Keep it on the server", exact: true }).click();
+  await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+  await page.goto("/#/buying/invoices/SI-00001");
+
+  let companyUrl = "";
+  const attempts: string[] = [];
+  await page.route("**/api/companies/*/commands", async (route) => {
+    attempts.push(route.request().postDataJSON().id);
+    if (attempts.length === 1) {
+      companyUrl = route.request().url().replace(/\/commands$/, "");
+      const committed = await route.fetch();
+      expect(committed.ok()).toBe(true);
+      return route.abort("failed");
+    }
+    await route.continue();
+  });
+  const enterPayment = async () => {
+    await page.getByLabel("Paid on").fill("2026-01-06");
+    await page.getByLabel("Amount paid").fill("40");
+    await page.getByLabel("Bank reference").fill("BANK-FIXTURE-1");
+    await page.getByRole("button", { name: /^Pay ₹40\.00$/ }).click();
+  };
+  await enterPayment();
+  await expect(page.getByRole("alert")).toContainText("Payment confirmation is unavailable");
+  await page.reload();
+  await enterPayment();
+  await expect(done(page)).toContainText("INR 70.00 still open");
+  expect(attempts).toHaveLength(2);
+  expect(attempts[0]).toBe(attempts[1]);
+  const saved = await (await page.request.get(companyUrl)).json();
+  expect(saved.meta.revision).toBe(2);
+  expect(saved.dataset.supplier_invoices[0].payments).toMatchObject([
+    { amount: 40, date: "2026-01-06", reference: "BANK-FIXTURE-1" },
+  ]);
+});
+
 test('procure to pay: firmed and sent, released at two levels, confirmed in two deliveries, invoiced, blocked, paid, partly returned and credited',async ({page})=>{
   test.setTimeout(240000);
   await open(page);
