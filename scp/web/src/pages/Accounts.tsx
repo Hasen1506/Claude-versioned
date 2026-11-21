@@ -112,7 +112,7 @@ function ProductionWip({ ds, v, co }: { ds: Dataset; v: AccountingView; co: stri
   const minor = decimal ? Number(decimal[1]) * 100 + Number((decimal[2] ?? "").padEnd(2, "0")) : 0;
 
   const post = async (action: "conversion" | "settle" | "reverse") => {
-    if (!current || !reference.trim() || pending) return;
+    if (!company || !current || !reference.trim() || pending) return;
     const parameters = { order, reference: reference.trim(), ...(action === "conversion" ? { amount_minor: minor } : {}),
       ...(action === "reverse" ? { posting: reversal } : {}), ...(action === "settle" ? { confirm_actuals: reviewed } : {}) };
     const key = JSON.stringify([company?.id, action, postingDate, parameters]);
@@ -122,7 +122,7 @@ function ProductionWip({ ds, v, co }: { ds: Dataset; v: AccountingView; co: stri
     setStatus("");
     setError("");
     try {
-      const result = await store.postCompanyCommand({ id: attempt.id, kind: "production_cost", action,
+      const result = await store.postCompanyCommand(company.id, { id: attempt.id, kind: "production_cost", action,
         posting_date: postingDate, parameters });
       retry.current = null;
       setStatus(`Posted ${order} at company revision ${result.revision}.`);

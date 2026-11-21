@@ -1,8 +1,8 @@
 // Phase N on the Buying page: supplier invoices checked against the order and the goods received, what is owed to
 // whom, returns to suppliers and contracts. Every step is an engine action (/api/purchasing/act).
-import { useMemo, useState } from "react";
-import { api } from "../api/client";
-import type { Dataset, PoAction, PoActionInput, PurchasingView, StockType, SupplierInvoiceView } from "../api/types";
+import { useMemo, useRef, useState } from "react";
+import { api, ApiError } from "../api/client";
+import type { Dataset, PoAction, PoActionInput, PoActionResponse, PurchasingView, StockType, SupplierInvoiceView } from "../api/types";
 import { Badge, Edits, Empty, Panel, Reading, StatTile } from "../components/ui";
 import { day, exactMoney, qty, unitMoney } from "../lib/format";
 import { Loc, Msg, Prod, namesOf } from "../lib/names";
@@ -35,14 +35,55 @@ export function poAct(action: PoAction, po: string, extra: PoActionInput = {}) {
   return applyPurchasing((dataset) => api.poAction(dataset, action, po, extra));
 }
 
+type PaymentAttempt = { key: string; id: string; details: string };
+
 export function usePoAction() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const payment = useRef<PaymentAttempt | null>(null);
+  const payLive = async (companyId: string, userId: string, po: string, extra: PoActionInput) => {
+    if (!extra.date) throw new Error("Choose the payment posting date.");
+    const parameters = { po, amount: extra.amount ?? null, reference: extra.reference?.trim() ?? "" };
+    const key = `scp.payment.pending.v1:${companyId}:${userId}:${po}`;
+    const details = JSON.stringify([extra.date, parameters]);
+    let previous = payment.current?.key === key ? payment.current : null;
+    try {
+      const saved = sessionStorage.getItem(key);
+      if (!previous && saved) previous = JSON.parse(saved) as PaymentAttempt;
+    } catch { /* continue with this screen's attempt if tab storage is unavailable */ }
+    if (previous && previous.details !== details) {
+      throw new Error("An earlier payment lacks confirmation. Retry with its original date, amount and bank reference first.");
+    }
+    const attempt = previous ?? { key, id: crypto.randomUUID(), details };
+    payment.current = attempt;
+    try { sessionStorage.setItem(key, JSON.stringify(attempt)); } catch { /* the screen retains the attempt */ }
+    const forget = () => {
+      payment.current = null;
+      try { sessionStorage.removeItem(key); } catch { /* tab storage unavailable */ }
+    };
+    let reply;
+    try {
+      reply = await store.postCompanyCommand(companyId, { kind: "purchasing", action: "pay_invoice",
+        id: attempt.id, posting_date: extra.date, parameters });
+    } catch (error) {
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+        if (!previous || error.status === 409 || error.status === 422) forget();
+        throw error;
+      }
+      throw new Error("Payment confirmation is unavailable. Retry with the same details to check or finish the posting.");
+    }
+    forget();
+    await Promise.allSettled([store.run("purchasing"), store.run("plan")]);
+    return { dataset: reply.company.dataset as unknown as Dataset, report: (reply.result as Pick<PoActionResponse, "report">).report };
+  };
   const run = async (action: PoAction, po: string, extra: PoActionInput = {}, after?: () => void) => {
     setBusy(true); setErr(null); setMsg(null);
     try {
-      const out = await poAct(action, po, extra);
+      const { company, session } = store.get();
+      const livePayment = action === "pay_invoice" && company?.live;
+      if (livePayment && !session) throw new Error("Sign in again before posting the payment.");
+      const out = livePayment && session ? await payLive(company.id, session.user.id, po, extra) : await poAct(action, po, extra);
       setMsg(out.report.message);
       after?.();
       return out;
