@@ -40,7 +40,7 @@ from ..demand.result import FoundationStatus
 from ..inventory import InventoryResult, PlacementApplied, apply_placement, run_inventory
 from ..inventory.policy import PolicyError, PolicyView, apply_policy, policy_view
 from ..model import Dataset, DemandRecord, ForecastModelId, StockType
-from ..model.common import Out
+from ..model.common import Id, Model, Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
 from ..plan.mrp import with_kept_plan
@@ -1367,6 +1367,15 @@ def post_accounting(ds: PlanData, period_start: dt.date | None = None, period_en
     return respond("accounting", ds, make, period_start, period_end)
 
 
+class ProductionCostCommand(Model):
+    action: Literal["conversion", "settle", "reverse"]
+    order: Id
+    reference: str = Field(min_length=1, max_length=120)
+    amount_minor: int | None = Field(None, gt=0, le=999_999_999_999, strict=True)
+    posting: Id | None = None
+    confirm_actuals: bool = Field(False, strict=True)
+
+
 @app.post("/api/companies/{cid}/commands", response_model=CommandResult)
 def post_company_command(cid: str, req: CommandRequest, user: Signed) -> CommandResult:
     """Post one operation against authoritative saved state, with atomic replay protection.
@@ -1374,6 +1383,26 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
     Reuse the same id and parameters after a transport failure. A replay reports
     the original result and current company state, even after intervening saves.
     """
+    if req.kind == "production_cost":
+        from uuid import NAMESPACE_URL, uuid5
+        from ..accounting.production import post
+        if "action" in req.parameters:
+            raise HTTPException(422, "unsupported command parameter: action")
+        try:
+            cost = ProductionCostCommand.model_validate({**req.parameters, "action": req.action})
+        except ValidationError as exc:
+            raise HTTPException(422, "invalid production cost command: " + str(exc)) from None
+
+        def post_cost(ds: Dataset):
+            try:
+                # A recovered command must regenerate the document number that subsequent reversals cite.
+                entry_id = f"PC-{uuid5(NAMESPACE_URL, f'scp/companies/{cid}/production-cost/{req.id}').hex}"
+                out, entry = post(ds, day=req.posting_date, entry_id=entry_id, **cost.model_dump())
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from None
+            return out, {"posting": entry.model_dump(mode="json")}
+
+        return execute_command(get_companies(), user, cid, req, post_cost)
     adapters = {
         "purchasing": (PoActionRequest, post_po_action),
         "sales": (SalesActionRequest, post_sales_action),

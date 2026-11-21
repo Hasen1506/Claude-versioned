@@ -14,6 +14,7 @@ DEPARTMENTS = {
     "supplier_returns": "purchasing", "shipping_notices": "purchasing", "receipts": "purchasing",
     "challans": "manufacturing", "movements": "warehouse", "batches": "warehouse", "inventory_docs": "warehouse",
     "warehouse_tasks": "warehouse", "waves": "warehouse", "freight_orders": "transport",
+    "production_cost_postings": "production_cost",
     "history": "planning", "accuracy": "planning", "rolled_weeks": "planning", "closed_orders": "planning",
     "confirmations": "planning", "allocations": "planning", "forecast_snapshots": "planning",
     "events": "planning", "overrides": "planning", "family_overrides": "planning", "stock_targets": "planning",

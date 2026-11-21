@@ -3,7 +3,7 @@
 // bill is a voucher with its debits and credits. Each company of the group keeps its own; the page shows the balances,
 // who owes what, the journal itself and its checks against the documents, and makes Tally's import file.
 // Engine: scp/accounting.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { AccountingView, Dataset, Voucher } from "../api/types";
 import { Badge, Edits, Empty, Panel, StageHeader, StatTile, Tabs } from "../components/ui";
@@ -13,7 +13,7 @@ import { go, href } from "../lib/router";
 import { download } from "../lib/tabular";
 import { store, useStore } from "../state/store";
 
-type View = "balances" | "parties" | "journal" | "checks" | "tally";
+type View = "balances" | "parties" | "journal" | "checks" | "production" | "tally";
 const NATURE: Record<string, string> = { asset: "What the company has", liability: "What it owes",
   equity: "Capital", income: "Income", expense: "Expenses" };
 
@@ -68,6 +68,7 @@ export function Accounts({ route }: { route: string[] }) {
         { id: "parties", label: "Who owes what", count: v ? v.parties.filter((p) => p.company === (company?.id ?? "") && Math.abs(p.balance) > 0.005).length || undefined : undefined },
         { id: "journal", label: "Journal", count: v ? v.vouchers.filter((x) => x.company === (company?.id ?? "")).length || undefined : undefined },
         { id: "checks", label: "Checks", count: bad.length || undefined },
+        { id: "production", label: "Production WIP" },
         { id: "tally", label: "Tally" },
       ]} />
       {err && <div className="banner error" role="alert"><Badge sev="error">Could not make the journal</Badge>{err}</div>}
@@ -77,9 +78,113 @@ export function Accounts({ route }: { route: string[] }) {
       {v && company && view === "parties" && <Parties v={v} co={company.id} cur={cur} />}
       {v && company && view === "journal" && <Journal v={v} co={company.id} cur={cur} />}
       {v && view === "checks" && <Checks v={v} cur={cur} />}
+      {v && company && view === "production" && <ProductionWip ds={ds} v={v} co={company.id} />}
       {v && company && view === "tally" && <Tally ds={ds} v={v} co={company.id} start={start} end={end} />}
     </div></div>
   );
+}
+
+function ProductionWip({ ds, v, co }: { ds: Dataset; v: AccountingView; co: string }) {
+  const company = useStore((s) => s.company);
+  const actor = useStore((s) => s.session?.user.email);
+  const grants = ds.finance?.control_roles ?? {};
+  const canPost = company?.live && (Object.keys(grants).length
+    ? (grants.production_cost ?? []).some((email) => email.trim().toLowerCase() === actor?.trim().toLowerCase())
+    : company.role === "owner");
+  const nm = useNames();
+  const [order, setOrder] = useState("");
+  const [on, setOn] = useState("");
+  const [reference, setReference] = useState("");
+  const [amount, setAmount] = useState("");
+  const [reversal, setReversal] = useState("");
+  const [reviewed, setReviewed] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+  const retry = useRef<{ key: string; id: string } | null>(null);
+  const rows = (v.production_wip ?? []).filter((row) => row.company === co);
+  const current = rows.find((row) => row.order === order);
+  const entries = (ds.production_cost_postings ?? []).filter((row) => row.order === order);
+  const reversed = new Set(entries.map((row) => row.reversal_of));
+  const originals = entries.filter((row) => !row.reversal_of && !reversed.has(row.id));
+  const postingDate = on || v.period_end;
+  const decimal = /^(\d{1,10})(?:\.(\d{1,2}))?$/.exec(amount.trim());
+  const minor = decimal ? Number(decimal[1]) * 100 + Number((decimal[2] ?? "").padEnd(2, "0")) : 0;
+
+  const post = async (action: "conversion" | "settle" | "reverse") => {
+    if (!current || !reference.trim() || pending) return;
+    const parameters = { order, reference: reference.trim(), ...(action === "conversion" ? { amount_minor: minor } : {}),
+      ...(action === "reverse" ? { posting: reversal } : {}), ...(action === "settle" ? { confirm_actuals: reviewed } : {}) };
+    const key = JSON.stringify([company?.id, action, postingDate, parameters]);
+    const attempt = retry.current?.key === key ? retry.current : { key, id: crypto.randomUUID() };
+    retry.current = attempt;
+    setPending(true);
+    setStatus("");
+    setError("");
+    try {
+      const result = await store.postCompanyCommand({ id: attempt.id, kind: "production_cost", action,
+        posting_date: postingDate, parameters });
+      retry.current = null;
+      setStatus(`Posted ${order} at company revision ${result.revision}.`);
+      setAmount(""); setReference(""); setReversal(""); setReviewed(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPending(false);
+    }
+  };
+  if (!rows.length) return <Empty title="No production orders">Production WIP becomes available when a production order exists.</Empty>;
+  const disabled = pending || !current || !postingDate || !reference.trim();
+  return <>
+    <Panel flush title="Work in progress by production order">
+      <div className="table-wrap"><table className="t" aria-label="Work in progress by production order">
+        <thead><tr><th>Order</th><th>Plant</th><th>Product</th><th>Completed</th><th className="num">WIP</th><th>Settlement</th></tr></thead>
+        <tbody>{rows.map((row) => <tr key={row.order}>
+          <td>{row.order}</td><td>{nm.loc(row.location)}</td><td>{nm.prod(row.product)}</td>
+          <td>{row.completed_on ? day(row.completed_on) : "Open"}</td>
+          <td className="num">{balance(row.balance_minor / 100, v.currency)}</td>
+          <td>{row.other_company_wip ? "Cross-company costs to reconcile"
+            : row.settlement && (!row.completed_on || row.balance_minor !== 0) ? "Review settlement"
+            : row.settlement ?? (row.completed_on && row.balance_minor ? "To settle" : "—")}</td>
+        </tr>)}</tbody>
+      </table></div>
+    </Panel>
+    {canPost && <Panel title="Post production costs">
+      <Edits><div className="stack">
+        <div className="row wrap">
+          <label>Production order <select className="input sm" aria-label="Production order" value={order} disabled={pending}
+            onChange={(e) => { setOrder(e.target.value); setReversal(""); setReviewed(false); }}>
+            <option value="">Choose an order</option>
+            {rows.map((row) => <option key={row.order} value={row.order}>{row.order}</option>)}
+          </select></label>
+          <label>Posting date <input className="input sm" type="date" value={postingDate} disabled={pending}
+            onChange={(e) => setOn(e.target.value)} /></label>
+          <label>Source or review reference <input className="input sm" required maxLength={120} value={reference}
+            disabled={pending} onChange={(e) => setReference(e.target.value)} /></label>
+        </div>
+        <div className="row wrap">
+          <label>Actual conversion cost ({v.currency}) <input className="input sm" inputMode="decimal" value={amount}
+            disabled={pending} onChange={(e) => setAmount(e.target.value)} /></label>
+          <button className="btn sm" disabled={disabled || minor <= 0 || !!current?.settlement}
+            onClick={() => void post("conversion")}>Post conversion cost</button>
+          <label><input type="checkbox" checked={reviewed} disabled={pending || !current?.completed_on}
+            onChange={(e) => setReviewed(e.target.checked)} /> Actual costs reviewed</label>
+          <button className="btn sm" disabled={disabled || !current?.completed_on || !current.balance_minor
+            || !!current.settlement || current.other_company_wip || !reviewed} onClick={() => void post("settle")}>Settle WIP</button>
+        </div>
+        {originals.length > 0 && <div className="row wrap">
+          <label>Posting to reverse <select className="input sm" aria-label="Posting to reverse" value={reversal} disabled={pending}
+            onChange={(e) => setReversal(e.target.value)}>
+            <option value="">Choose a posting</option>
+            {originals.map((row) => <option key={row.id} value={row.id}>{row.date} · {row.kind} · {row.reference}</option>)}
+          </select></label>
+          <button className="btn sm" disabled={disabled || !reversal} onClick={() => void post("reverse")}>Reverse posting</button>
+        </div>}
+        {status && <div className="banner ok" role="status">{status}</div>}
+        {error && <div className="banner error" role="alert">{error}</div>}
+      </div></Edits>
+    </Panel>}
+  </>;
 }
 
 function Balances({ v, co, cur }: { v: AccountingView; co: string; cur: string }) {

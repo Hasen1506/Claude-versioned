@@ -3151,6 +3151,8 @@ export interface components {
             voucher_count: number;
             /** Checks */
             checks: components["schemas"]["AccountCheck"][];
+            /** Production Wip */
+            production_wip: components["schemas"]["ProductionWip"][];
             /**
              * Notes
              * @default []
@@ -4810,7 +4812,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "purchasing" | "sales" | "stock" | "transport" | "intercompany" | "outside";
+            kind: "purchasing" | "sales" | "stock" | "transport" | "intercompany" | "outside" | "production_cost";
             /** Action */
             action: string;
             /** Parameters */
@@ -5780,6 +5782,11 @@ export interface components {
             rolled_weeks?: components["schemas"]["RolledWeek"][];
             execution?: components["schemas"]["ExecutionSettings"];
             finance?: components["schemas"]["FinanceSettings"];
+            /**
+             * Production Cost Postings
+             * @description Dated actual conversion and variance postings. Changes to live books use production commands.
+             */
+            production_cost_postings?: components["schemas"]["ProductionCostPosting"][];
             tower?: components["schemas"]["TowerSettings"];
         };
         /** DatasetDiff */
@@ -8969,6 +8976,11 @@ export interface components {
              * @default
              */
             product: string;
+            /**
+             * Production Order
+             * @default
+             */
+            production_order: string;
             /**
              * Debit
              * @default 0
@@ -12772,6 +12784,41 @@ export interface components {
          */
         ProductType: "FG" | "SFG" | "RM" | "PKG";
         /**
+         * ProductionCostPosting
+         * @description A dated WIP debit or credit for one production order, in company-currency minor units.
+         */
+        ProductionCostPosting: {
+            /** Id */
+            id: string;
+            /** Order */
+            order: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Entity
+             * @default
+             */
+            entity: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "conversion" | "variance";
+            /** Amount Minor */
+            amount_minor: number;
+            /** Reference */
+            reference: string;
+            /** Reversal Of */
+            reversal_of?: string | null;
+        };
+        /**
          * ProductionSource
          * @description How to make a product at a plant: BOM + routing (≈ S/4 production version).
          */
@@ -12864,6 +12911,25 @@ export interface components {
             order: string;
             /** Qty */
             qty?: number | null;
+        };
+        /** ProductionWip */
+        ProductionWip: {
+            /** Order */
+            order: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Company */
+            company: string;
+            /** Completed On */
+            completed_on: string | null;
+            /** Balance Minor */
+            balance_minor: number;
+            /** Other Company Wip */
+            other_company_wip: boolean;
+            /** Settlement */
+            settlement: string | null;
         };
         /** Profile */
         Profile: {

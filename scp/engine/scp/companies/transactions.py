@@ -31,10 +31,10 @@ def _rows(doc: dict, name: str) -> dict[str, dict]:
     return out
 
 
-def protect(before: dict, after: dict, email: str) -> dict:
+def protect(before: dict, after: dict, email: str, *, allow_production_posting: bool = False) -> dict:
     """Return a normalized document or refuse an invalid financial state transition."""
     names = ("supplier_invoices", "movements", "purchase_orders", "invoices", "intercompany_invoices", "freight_orders",
-             "inventory_docs", "challans", "third_party_orders", "purchase_valuation")
+             "inventory_docs", "challans", "third_party_orders", "purchase_valuation", "production_cost_postings")
     # No financial records means incomplete master data can still be edited freely.
     if not any(before.get(n) or after.get(n) for n in names):
         return after
@@ -99,6 +99,15 @@ def protect(before: dict, after: dict, email: str) -> dict:
         def open_period(on: date) -> None:
             if closed is not None and on <= closed:
                 raise TransactionRefused(f"the accounting period through {closed} is closed")
+
+        old_costs = list(_rows(before, "production_cost_postings").values())
+        new_costs = list(_rows(after, "production_cost_postings").values())
+        if new_costs != old_costs:
+            if (not allow_production_posting or len(new_costs) != len(old_costs) + 1
+                    or new_costs[:-1] != old_costs):
+                raise TransactionRefused("production cost postings are retained; use a production cost command")
+            from ..model.finance import ProductionCostPosting
+            open_period(ProductionCostPosting.model_validate(new_costs[-1]).date)
 
         # Copy only lists that acquire legacy posting metadata; never mutate a caller's working copy.
         result = after
@@ -319,9 +328,16 @@ def protect(before: dict, after: dict, email: str) -> dict:
         protect_outside(old_ds, ds, open_period)
         from .materials import protect_materials
         protect_materials(old_ds, ds, open_period)
+        from ..accounting.production import protect_orders
+        protect_orders(old_ds, ds)
         if ds.finance.closed_through is not None and ds.finance.closed_through != closed:
             from ..accounting import view
+            from ..accounting.production import unsettled
             books = view(ds, period_end=ds.finance.closed_through)
+            outstanding = unsettled(books.production_wip)
+            if outstanding:
+                raise TransactionRefused("reconcile production WIP before closing the accounting period: "
+                                         + ", ".join(outstanding[:10]))
             if any(not check.ok for check in books.checks) or any(
                     row.account == "SUSPENSE" and abs(row.balance) >= .005 for row in books.balances):
                 raise TransactionRefused("reconcile the books and clear suspense before closing the accounting period")

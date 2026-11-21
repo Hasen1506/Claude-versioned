@@ -17,7 +17,7 @@
 }
 ```
 
-Supported kinds are `purchasing`, `sales`, `stock`, `transport`, `intercompany` and `outside`. Their actions and parameters use the existing action request schemas. `dataset`, `action` and `date` are not parameters: the company and action are selected by the command, and `posting_date` supplies the operation's date. This avoids silently posting on the start date of a planning scenario. The invoice model currently shares document and accounting dates; separate ERP document/posting-date semantics remain a finance fit-gap item.
+Supported kinds are `purchasing`, `sales`, `stock`, `transport`, `intercompany`, `outside` and `production_cost`. Business parameters describe the event. The envelope supplies the company, action and explicit posting date. The invoice model currently shares document and accounting dates; separate ERP document/posting-date semantics remain a finance fit-gap item.
 
 ## Recovering after a release
 
@@ -44,9 +44,19 @@ The typed browser API client exposes `companyCommand` and `companyCommandRecord`
 
 An empty `finance.control_roles` matrix preserves legacy owner/planner/viewer semantics. Once configured, omitted grants deny that operation, including for owners and keys. Configure and independently test the approved matrix before relying on separation of duties. Owners administer policy but do not bypass operational grants. `finance.separate_payments` requires a payer different from the recorded invoice entrant and releaser. Unknown legacy entrants require reviewed migration evidence.
 
-Available grants are `master_data`, `planning`, `purchasing`, `sales`, `manufacturing`, `warehouse`, `transport`, `billing`, `payments`, `invoice_release`, `credit_release`, `period_close` and `inventory_adjustment`. The last covers opening balances, adjustments, scrap and unplanned receipts; a warehouse picking grant alone does not authorize those effects. An operation touching several departments can require several grants. Server-validated posting metadata does not grant authority over another department's business fields.
+Available grants include `master_data`, `planning`, `purchasing`, `sales`, `manufacturing`, `warehouse`, `transport`, `billing`, `payments`, `invoice_release`, `credit_release`, `period_close`, `production_cost` and `inventory_adjustment`. The inventory adjustment grant covers opening balances, adjustments, scrap and unplanned receipts. An operation touching several departments can require several grants.
 
 Plant/product-group limits further restrict changes. Existing and proposed product-family ownership are checked separately, so changing a family cannot widen the same write's rights. Physical inventory documents must stay wholly inside the member's plants and product groups. These are write limits; they do not establish departmental confidentiality over every company read model.
+
+## Production cost and period close
+
+Use Accounts → Production WIP in a live company. The order shows material issues, receipts, subcontract charges and production cost postings in the books through the selected date. The manufacturing order and plant appear on the WIP report. The journal retains the order link on each WIP line. The period close checks each completed order separately. Open orders can carry WIP, and a reopened order with an active settlement requires review.
+
+Record actual internal conversion in company currency with the payroll, machine or other source reference. The `production_cost` command's `conversion` action takes `order`, `reference` and integer `amount_minor`. This debits WIP and credits `CONVERSION_ABSORPTION`. Capture the underlying expenditure in its source ledger. The planner's rates contribute to inventory estimates and create no conversion posting.
+
+Once the order is complete, reconcile materials, actual conversion and subcontract bills. `settle` takes `order`, `reference` and `confirm_actuals: true`. It clears the derived WIP balance to `PRODUCTION_VARIANCE`. An open order or an order carrying WIP in another entity requires separate reconciliation. A later correction can use `reverse` with the original posting ID as `posting`, followed by new postings in the open period. Posted cost records stay in the audit trail. Review the ledger mappings for conversion applied and production variance before exporting.
+
+Give the cost accountant the `production_cost` grant and the period approver the `period_close` grant. With an empty matrix company owners can post and close. Use a current reader for company snapshots with the new `production_cost_postings` field. Reuse the command ID during recovery to regenerate the same document number and keep any later reversal linked to its original. Reconcile postings and command receipts after restoring.
 
 ## Retained physical facts
 

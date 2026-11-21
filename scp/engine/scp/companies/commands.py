@@ -68,7 +68,7 @@ class CommandRequest(Model):
     id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:/-]+$")
     base_revision: int = Field(ge=1)
     posting_date: date = Field(description="Explicit business date; never inferred from a planning scenario's start")
-    kind: Literal["purchasing", "sales", "stock", "transport", "intercompany", "outside"]
+    kind: Literal["purchasing", "sales", "stock", "transport", "intercompany", "outside", "production_cost"]
     action: str = Field(min_length=1, max_length=64)
     parameters: dict[str, Any] = Field(default_factory=dict, max_length=40)
 
@@ -143,7 +143,8 @@ def execute(c: Companies, user: User, cid: str, req: CommandRequest,
             baseline = ds.model_dump(mode="json")
             changed, result = operation(ds)
             document = _changes(current.dataset, baseline, changed.model_dump(mode="json"))
-            saved = c.save(user, cid, document, req.base_revision, action="posted")
+            saved = c.save(user, cid, document, req.base_revision, action="posted",
+                           allow_production_posting=req.kind == "production_cost")
             if saved.held is not None:
                 raise CompanyError("this command needs a master-data change that has not been approved; approve it "
                                    "before posting the transaction", 409)
