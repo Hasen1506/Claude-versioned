@@ -383,6 +383,7 @@ export const unsaved = (s: State) => !!s.company?.live && s.company.savedRevisio
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let saving: Promise<void> | null = null;
+let revisionBeforeNormalization = -1;
 
 /** Save the working copy to the server company shortly (autosave). */
 function scheduleSave(delay = SAVE_DELAY) {
@@ -425,6 +426,7 @@ async function saveNow(note = ""): Promise<void> {
       // Posting-time metadata can be filled by the server when old company data
       // is first posted. Keep the working copy on that authoritative basis too.
       if (r.dataset && state.revision === rev) {
+        revisionBeforeNormalization = rev;
         adopt(r.dataset as unknown as Dataset, r.meta, "");
         return;
       }
@@ -761,6 +763,20 @@ export const store = {
 
   /** Save now (and wait): before signing out, or when the planner asks. */
   saveNow: (note = "") => saveNow(note),
+
+  /** Start a purchasing preview after any earlier edits have reached the live company. */
+  async savedWorkingCopy(): Promise<WorkingSnapshot> {
+    const before = store.captureWorking();
+    if (!unsaved(state)) return before;
+    await saveNow();
+    // An older save may have been in flight. Save the clicked copy if it is still queued and intact.
+    if (store.currentContext(before, true) && state.save.status === "pending") await saveNow();
+    store.assertWorking(before);
+    const normalized = revisionBeforeNormalization === before.revision && state.revision === before.revision + 1;
+    if (!normalized) store.assertWorking(before, true);
+    if (unsaved(state)) throw new Error(state.save.error ?? "Save the preceding changes to the company before continuing.");
+    return store.captureWorking();
+  },
 
   /** After a conflict: save the working copy over the colleague's save (theirs stays in the history). */
   async keepMine() {

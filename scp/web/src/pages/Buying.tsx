@@ -14,7 +14,7 @@ import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useFreshResult, useStore } from "../state/store";
 import { LotFields, lotExtra, NO_LOT, ShortOrders, type LotInput } from "./ExecutionStock";
-import { Contracts, Invoices, Owed, Returns, usePoAction } from "./BuyingPay";
+import { applyPurchasing, Contracts, Invoices, Owed, Returns, usePoAction } from "./BuyingPay";
 import { PortalTab } from "./BuyingPortal";
 
 type View = "order" | "orders" | "invoices" | "owed" | "returns" | "contracts" | "suppliers" | "spend" | "portal";
@@ -25,15 +25,6 @@ const STATUS_SEV: Record<string, Sev> = {
   "partly received": "info", received: "ok", closed: "ok", overdue: "error", "confirmed late": "warning",
   "confirmed short": "warning", open: "info",
 };
-
-/** Run an engine write on the dataset, then refresh what it changes. */
-async function apply<T extends { dataset: Dataset }>(fn: () => Promise<T>): Promise<T> {
-  const before = store.get().dataset!;
-  const out = await fn();
-  store.replace(out.dataset, before);
-  await Promise.all([store.run("purchasing"), store.run("plan")]);
-  return out;
-}
 
 export function Buying({ route }: { route: string[] }) {
   const run = useStore((s) => s.runs.purchasing);
@@ -133,7 +124,7 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
     setBusy(true); setErr(null); setMsg(null);
     try {
       const lines = picked.map((r) => ({ id: r.id, source_id: source[r.id] ?? null, qty: null }));
-      const out = await apply(() => api.createPurchaseOrders(ds, lines, orderDate));
+      const out = await applyPurchasing((dataset) => api.createPurchaseOrders(dataset, lines, orderDate));
       const rep = out.report;
       setPick(null); setSource({});
       setMsg(<>
@@ -248,7 +239,7 @@ function OneOffPo({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
   const create = async () => {
     setBusy(true); setMsg(null);
     try {
-      const out = await apply(() => api.oneOffPo(ds, src, q, due || null));
+      const out = await applyPurchasing((dataset) => api.oneOffPo(dataset, src, q, due || null));
       const po = out.report.created[0];
       setMsg(`${po.id} created${po.approved ? "" : ", needs approval"}.` + po.notes.map((x) => " " + nm.text(x)).join(""));
       setN(""); setDue("");
@@ -358,7 +349,7 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
           : { id: x.id, qty: Number(e.qty), date: e.date, price: e.price === "" ? null : Number(e.price), final: false };
       });
       if (lines && lines.length === 0) throw new Error("Tick at least one line");
-      const out = await apply(() => api.poAction(ds, action, po.id, { lines, date: action === "send" || action === "receive" ? on : undefined,
+      const out = await applyPurchasing((dataset) => api.poAction(dataset, action, po.id, { lines, date: action === "send" || action === "receive" ? on : undefined,
         reference: action === "confirm" ? text : undefined, note: action === "receive" ? text : undefined }));
       setMsg(namesOf(out.dataset).text(out.report.message));
       setShort(out.report.short_orders ?? []);

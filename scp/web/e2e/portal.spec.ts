@@ -35,6 +35,56 @@ async function ownerOnServer(page: Page) {
 
 const done = (page: Page) => page.locator('.banner[role="status"]').last();
 
+test("a buyer can send an order while the server normalizes the preceding save", async ({ page }) => {
+  await ownerOnServer(page);
+  await page.goto("/#/buying/orders");
+
+  let companyUrl = "";
+  let report: { dataset: unknown; held: unknown } | undefined;
+  let releaseSave!: () => void;
+  const holdSave = new Promise<void>((resolve) => { releaseSave = resolve; });
+  await page.route(/\/api\/companies\/[^/?]+$/, async (route) => {
+    if (route.request().method() !== "PUT" || companyUrl) return route.continue();
+    companyUrl = route.request().url();
+    const response = await route.fetch();
+    report = await response.json();
+    await holdSave;
+    await route.fulfill({ response });
+  });
+
+  let releaseSend!: () => void;
+  const holdSend = new Promise<void>((resolve) => { releaseSend = resolve; });
+  let previewStarted!: () => void;
+  const started = new Promise<void>((resolve) => { previewStarted = resolve; });
+  await page.route("**/api/purchasing/act", async (route) => {
+    if (route.request().postDataJSON().action === "send") {
+      previewStarted();
+      await holdSend;
+    }
+    await route.continue();
+  });
+
+  await page.getByRole("button", { name: "New purchase order" }).click();
+  await page.getByLabel("What to buy").selectOption("PIR-CU");
+  await page.getByLabel("Quantity to buy").fill("500");
+  await page.getByRole("button", { name: "Create the purchase order" }).click();
+  await expect.poll(() => report, { timeout: 25_000 }).toMatchObject({ dataset: expect.any(Object), held: null });
+  const order = page.getByRole("button", { name: "Mark as sent" });
+  await order.click();
+  // If the preview is already in flight, make it finish after the browser adopts the save response.
+  await Promise.race([started, new Promise<void>((resolve) => setTimeout(resolve, 750))]);
+  releaseSave();
+  await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+  releaseSend();
+
+  await expect(page.locator(".banner.ok, .banner.error").last()).toContainText("sent to Hindalco copper (Silvassa)", { timeout: 8_000 });
+  await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+  await expect.poll(async () => {
+    const saved = await (await page.request.get(companyUrl)).json();
+    return saved.dataset.purchase_orders.find((po: { supplier: string }) => po.supplier === "SUP-COPPER")?.sent_on;
+  }).toMatch(/^\d{4}-\d\d-\d\d$/);
+});
+
 const despatch = (po: string, line: string) => `<?xml version="1.0" encoding="UTF-8"?>
 <DespatchAdvice xmlns="urn:oasis:names:specification:ubl:schema:xsd:DespatchAdvice-2"
   xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"

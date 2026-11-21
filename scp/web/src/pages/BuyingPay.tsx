@@ -22,12 +22,17 @@ const RET_SEV: Record<string, Sev> = { "to credit": "warning", credited: "ok", "
 const CON_SEV: Record<string, Sev> = { active: "ok", "not started": "info", expired: "warning", "used up": "warning" };
 
 /** Run a purchasing step on the company, then list buying and plan again. */
-export async function poAct(action: PoAction, po: string, extra: PoActionInput = {}) {
-  const before = store.get().dataset!;
-  const out = await api.poAction(before, action, po, extra);
-  store.replace(out.dataset, before);
+export async function applyPurchasing<T extends { dataset: Dataset }>(preview: (dataset: Dataset) => Promise<T>): Promise<T> {
+  const before = await store.savedWorkingCopy();
+  const out = await preview(before.dataset);
+  store.assertWorking(before, true);
+  store.replace(out.dataset, before.dataset);
   await Promise.all([store.run("purchasing"), store.run("plan")]);
   return out;
+}
+
+export function poAct(action: PoAction, po: string, extra: PoActionInput = {}) {
+  return applyPurchasing((dataset) => api.poAction(dataset, action, po, extra));
 }
 
 export function usePoAction() {
