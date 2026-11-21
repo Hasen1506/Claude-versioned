@@ -190,6 +190,7 @@ LABELS = {
     "inventory": "stock settings", "sop": "capacity plan settings", "scheduling": "shop floor settings",
     "promising": "promising settings", "execution": "execution settings", "purchasing": "buying settings",
     "finance": "money settings", "tower": "performance settings",
+    "production_cost_postings": "production cost postings",
 }
 
 
@@ -1268,7 +1269,7 @@ class Companies:
             r["user_id"] == uid and r["client"] == client for r in rows)
 
     def save(self, user: User, cid: str, doc: dict | None, base_revision: int, action: str = "saved",
-             note: str = "", patch: dict | None = None, client: str = "") -> SaveReport:
+             note: str = "", patch: dict | None = None, client: str = "", *, allow_production_posting: bool = False) -> SaveReport:
         """Save the working copy (``doc``, or ``patch`` applied to revision ``base_revision``) over revision
         ``base_revision``; refused when the company has moved on, unless only this window's own saves moved it."""
         with self.lock:
@@ -1289,6 +1290,9 @@ class Companies:
                     != (doc.get("finance") or {}).get("closed_through")
                     and not (current.get("finance") or {}).get("control_roles")):
                 raise CompanyError("only a company owner may close an accounting period", 403)
+            if (role != "owner" and (current.get("production_cost_postings") or []) != (doc.get("production_cost_postings") or [])
+                    and not (current.get("finance") or {}).get("control_roles")):
+                raise CompanyError("only a company owner may post production costs without a configured grant", 403)
             if role != "owner" and any((current.get("purchasing") or {}).get(k)
                     != (doc.get("purchasing") or {}).get(k) for k in ("approval_limit", "release_levels")):
                 raise CompanyError("only a company owner may change purchasing release policy", 403)
@@ -1321,7 +1325,7 @@ class Companies:
             effective = doc
             guarded = doc
             try:
-                guarded = protect(current, guarded, user.email)
+                guarded = protect(current, guarded, user.email, allow_production_posting=allow_production_posting)
             except TransactionRefused as e:
                 raise CompanyError(str(e), 403) from None
             doc = guarded

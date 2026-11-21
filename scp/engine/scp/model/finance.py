@@ -8,6 +8,21 @@ from pydantic import Field
 from .common import Id, Model, Ref, Unit
 
 
+class ProductionCostPosting(Model):
+    """A dated WIP debit or credit for one production order, in company-currency minor units."""
+
+    id: Id
+    order: Id
+    date: dt.date
+    location: str = Ref("location")
+    product: str = Ref("product")
+    entity: str = Field("", max_length=64)
+    kind: Literal["conversion", "variance"]
+    amount_minor: int = Field(ge=-999_999_999_999, le=999_999_999_999, strict=True)
+    reference: str = Field(min_length=1, max_length=120)
+    reversal_of: Id | None = None
+
+
 class CapacityOption(Model):
     """A capacity investment (a new machine, an added shift, a line upgrade) that adds regular hours to one
     resource. Its value is what the S&OP plan saves with the hours; its NPV nets that against the spend."""
@@ -25,8 +40,8 @@ class FinanceSettings(Model):
     closed_through: dt.date | None = Field(None, description="Posted financial transactions on or before this date are closed")
     control_roles: dict[Literal["master_data", "planning", "purchasing", "sales", "manufacturing", "warehouse",
                                 "transport", "billing", "payments", "invoice_release", "credit_release", "period_close",
-                                "inventory_adjustment"],
-                        list[str]] = Field(default_factory=dict, max_length=13,
+                                "inventory_adjustment", "production_cost"],
+                        list[str]] = Field(default_factory=dict, max_length=14,
                                            description="Named e-mail grants. Empty: legacy member roles. When configured, "
                                                        "every operation requires its grant, including for owners and keys")
     separate_payments: bool = Field(False, description="A payer must differ from the invoice's recorded entrant and releaser")

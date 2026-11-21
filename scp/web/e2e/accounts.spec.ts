@@ -15,6 +15,73 @@ async function openKaveri(page: Page) {
 
 const num = (t: string) => Number(t.replace(/[^\d.-]/g, ""));
 
+test("production costs are posted once after a lost response and settled from the order's WIP", async ({ page }) => {
+  await page.goto("/");
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Import a file", exact: true }).click();
+  await (await chooser).setFiles({ name: "costs.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify({
+    schema_version: "1",
+    settings: { company_name: "Manufacturing cost fixture", planning_start: "2026-01-05", horizon_days: 28, default_calendar: "CAL" },
+    calendars: [{ id: "CAL", workdays: [0, 1, 2, 3, 4, 5, 6] }],
+    locations: [{ id: "P", type: "plant" }],
+    products: [{ id: "A", type: "FG", standard_cost: 10 }, { id: "B", type: "RM", standard_cost: 4 }],
+    location_products: [{ location: "P", product: "A", on_hand: 0 }, { location: "P", product: "B", on_hand: 0 }],
+    resources: [], lanes: [], purchasing_sources: [], demand: [], history: [],
+    production_sources: [{ id: "MAKE-A", location: "P", product: "A", output_qty: 1,
+      components: [{ product: "B", qty: 2 }], conversion_cost_per_unit: 2 }],
+    receipts: [{ id: "MO-1", kind: "production", location: "P", product: "A", qty: 10,
+      due_date: "2026-01-06", source: "MAKE-A" }],
+    movements: [
+      { id: "OPEN-1", date: "2026-01-04", type: "opening", location: "P", product: "B", qty: 100 },
+      { id: "MOVE-1", date: "2026-01-06", type: "issue", location: "P", product: "B", qty: 20, reference: "MO-1" },
+      { id: "MOVE-2", date: "2026-01-06", type: "receipt", location: "P", product: "A", qty: 10, reference: "MO-1", final: true },
+    ],
+  })) });
+  await expect(page.locator(".topbar .company")).toHaveText("Manufacturing cost fixture");
+  await page.goto("/#/account");
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill(`cost-owner-${Date.now()}@example.invalid`);
+  await page.getByLabel("Your name").fill("Cost accountant");
+  await page.getByLabel(/^Password/).fill("fixture-only-forest-line");
+  await page.getByRole("button", { name: "Make the account", exact: true }).click();
+  await page.getByRole("button", { name: "Keep it on the server", exact: true }).click();
+  await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+  await page.goto("/#/accounts/production");
+  const order = page.getByRole("table", { name: "Work in progress by production order" }).getByRole("row", { name: /MO-1/ });
+  await expect(order).toContainText("20.00 Cr");
+  await page.getByLabel("Production order", { exact: true }).selectOption("MO-1");
+  await page.getByLabel("Source or review reference").fill("LABOR-12");
+  await page.getByLabel(/Actual conversion cost/).fill("26.00");
+
+  const requests: string[] = [];
+  await page.route("**/api/companies/*/commands", async (route) => {
+    const body = route.request().postDataJSON();
+    if (body.action === "conversion") {
+      requests.push(body.id);
+      if (requests.length === 1) {
+        const committed = await route.fetch();
+        expect(committed.ok()).toBe(true);
+        return route.abort("failed");
+      }
+    }
+    return route.continue();
+  });
+  const convert = page.getByRole("button", { name: "Post conversion cost" });
+  await convert.click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await convert.click();
+  await expect(order).toContainText("6.00 Dr");
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toBe(requests[1]);
+  await page.getByLabel("Source or review reference").fill("COST-REVIEW-1");
+  await page.getByLabel("Actual costs reviewed").check();
+  await page.getByRole("button", { name: "Settle WIP" }).click();
+  await expect(order).toContainText("PC-");
+  await expect(order.locator("td").nth(4)).toHaveText("0");
+  await page.reload();
+  await expect(order.locator("td").nth(4)).toHaveText("0");
+});
+
 test("the books follow the invoices and payments, check themselves and go to Tally", async ({ page }) => {
   test.setTimeout(180_000);
   await openKaveri(page);

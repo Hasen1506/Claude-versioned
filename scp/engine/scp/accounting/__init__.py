@@ -36,12 +36,15 @@ from ..actuals.valuation import EPS, run_books
 from ..model import Dataset, GoodsMovement, MovementType, SupplierInvoice
 from ..model.common import Out
 from ..plan.costing import fx
+from .production import ProductionWip, production_wip
 
 # code → (name, Tally group, nature)
 ACCOUNTS: dict[str, tuple[str, str, str]] = {
     "STOCK": ("Stock", "Stock-in-Hand", "asset"),
     "TRANSIT": ("Stock in transit", "Current Assets", "asset"),
     "WIP": ("Work in progress", "Current Assets", "asset"),
+    "CONVERSION_ABSORPTION": ("Production conversion applied", "Direct Expenses", "expense"),
+    "PRODUCTION_VARIANCE": ("Production variance", "Direct Expenses", "expense"),
     "RECEIVABLES": ("Customers", "Sundry Debtors", "asset"),
     "IC_RECEIVABLES": ("Group companies (owed to us)", "Sundry Debtors", "asset"),
     "INPUT_TAX": ("Input tax credit", "Duties & Taxes", "asset"),
@@ -79,6 +82,7 @@ class JournalLine(Out):
     party: str = ""                        # a customer, supplier, carrier or group company: its id
     location: str = ""
     product: str = ""
+    production_order: str = ""             # populated on WIP lines attributed to a production order
     debit: float = 0.0
     credit: float = 0.0
 
@@ -151,6 +155,7 @@ class AccountingView(Out):
     vouchers: list[Voucher]                # in the period, latest first (capped)
     voucher_count: int
     checks: list[AccountCheck]
+    production_wip: list[ProductionWip]
     notes: list[str] = []
 
 
@@ -185,7 +190,7 @@ class _Journal:
         self.contra: dict[str, list[tuple[str, str, str, float]]] = {}   # movement → its other side, for a reversal
         self.returns = {r.id for r in ds.returns}
         self.third = {t.id for t in ds.third_party_orders}
-        self.jobs = {c.id for c in ds.challans}
+        self.jobs = {c.id: c.order for c in ds.challans}
 
     # -- the watch protocol of run_books ----------------------------------------------------------------------------
     def start(self, b, po, kinds, by_id) -> None:
@@ -284,7 +289,7 @@ class _Journal:
                 rest = "PRICE_DIFF"                  # what is left is the rounding of the value on the road
         start = len(self.vouchers)
         self._post(m.date, m.id, "Journal", m.id, f"{what}: {_n(q)} {m.product} at {_name(ds, m.location)}",
-                   lines + own, rest, m.location, m.product)
+                   lines + own, rest, m.location, m.product, wip_order=self.jobs.get(ref, ref))
         # The balancing account is part of the original posting too. Retaining
         # only explicit `own` lines lost WIP/COGS/scrap/count contra entries and
         # sent their reversals to price differences. Stock and valuation
@@ -308,6 +313,7 @@ class _Journal:
         co = inv.entity if inv.entity is not None else (
             entity_of(ds, first.location) if first is not None and _ours(ds, first.location) else "")
         own = []
+        wip_orders = {}
         for ln, clearing in zip(inv.lines, self.b.invoice_clearings, strict=True):
             amt = ln.qty * ln.price * rate
             info = every.get(ln.order)
@@ -319,6 +325,7 @@ class _Journal:
             elif ln.order in self.third:             # bought for a customer, shipped by the supplier: cost of a sale
                 own.append(("COGS", co, "", sign * amt, "", ln.product))
             elif ln.order in self.jobs:              # a job worker's charge: the production order's cost
+                wip_orders[len(lines) + len(own)] = self.jobs[ln.order]
                 own.append(("WIP", co, "", sign * amt, loc, ln.product))
             else:
                 own.append(("SUSPENSE", co, "", sign * amt, loc, ln.product))
@@ -329,29 +336,44 @@ class _Journal:
                 "subsequent_credit": "Debit Note"}[inv.kind]
         words = inv.kind.replace("_", " ")
         self._post(inv.date, inv.id, kind, inv.id,
-                   f"{words} {inv.reference or inv.id} from {_name(ds, inv.supplier)}", lines + own, "DELIVERY", "", "")
+                   f"{words} {inv.reference or inv.id} from {_name(ds, inv.supplier)}", lines + own, "DELIVERY",
+                   wip_orders=wip_orders)
 
     # -- writing a voucher ---------------------------------------------------------------------------------------
     def _post(self, day: date, number: str, vtype: str, doc: str, narration: str, lines: list, rest: str,
-              loc: str = "", prod: str = "") -> None:
+              loc: str = "", prod: str = "", *, wip_order: str = "", wip_orders: dict[int, str] | None = None) -> None:
         by_co: dict[str, list[JournalLine]] = defaultdict(list)
         sums: dict[str, float] = defaultdict(float)
-        for acc, c, pa, amt, lo, pr in lines:
+        for index, (acc, c, pa, amt, lo, pr) in enumerate(lines):
             a = _r(amt)
             if abs(a) < 0.005:
                 continue
-            by_co[c].append(JournalLine(account=acc, party=pa, location=lo, product=pr, debit=max(a, 0.0),
+            order = wip_order if wip_orders is None else wip_orders.get(index, wip_order)
+            by_co[c].append(JournalLine(account=acc, party=pa, location=lo, product=pr,
+                                        production_order=order if acc == "WIP" else "", debit=max(a, 0.0),
                                         credit=max(-a, 0.0)))
             sums[c] += a
         for c, total in sums.items():
             left = _r(-total)
             if abs(left) >= 0.005:
                 by_co[c].append(JournalLine(account=rest, location=loc, product=prod, debit=max(left, 0.0),
-                                            credit=max(-left, 0.0)))
+                                            credit=max(-left, 0.0), production_order=wip_order if rest == "WIP" else ""))
         for c, ls in by_co.items():
             if ls:
                 self.vouchers.append(Voucher(number=number, date=day, company=c, type=vtype, document=doc,
                                              narration=narration[:240], lines=ls))
+
+    def production_costs(self, day: date) -> None:
+        for entry in self.ds.production_cost_postings:
+            if entry.date > day:
+                continue
+            amount = entry.amount_minor / 100
+            account = "CONVERSION_ABSORPTION" if entry.kind == "conversion" else "PRODUCTION_VARIANCE"
+            text = f"Reversal of {entry.reversal_of}" if entry.reversal_of else ACCOUNTS[account][0]
+            self._post(entry.date, entry.id, "Journal", entry.id, f"{text} on {entry.order}: {entry.reference}",
+                       [("WIP", entry.entity, "", amount, entry.location, entry.product),
+                        (account, entry.entity, "", -amount, entry.location, entry.product)],
+                       account, wip_order=entry.order)
 
     # -- documents that move money only --------------------------------------------------------------------------
     def money(self, day: date) -> None:
@@ -508,6 +530,7 @@ def journal(ds: Dataset, day: date) -> tuple[list[Voucher], object]:
     """Every voucher up to ``day``, in date order, and the stock books they were made with."""
     j = _Journal(ds)
     b, _std = run_books(ds, day, "entity", watch=j)
+    j.production_costs(day)
     j.money(day)
     order = {"Journal": 0, "Purchase": 1, "Debit Note": 1, "Sales": 2, "Credit Note": 2, "Receipt": 3, "Payment": 3}
     j.vouchers.sort(key=lambda v: (v.date, order.get(v.type, 4)))
@@ -516,6 +539,7 @@ def journal(ds: Dataset, day: date) -> tuple[list[Voucher], object]:
 
 def _day(ds: Dataset) -> date:
     return max([ds.settings.planning_start, *(m.date for m in ds.movements),
+                *(p.date for p in ds.production_cost_postings),
                 *(i.date for i in ds.supplier_invoices if not i.cancelled), *(i.date for i in ds.invoices),
                 *(i.cancelled_on for i in [*ds.supplier_invoices, *ds.invoices, *ds.intercompany_invoices]
                   if i.cancelled_on is not None),
@@ -583,6 +607,7 @@ def view(ds: Dataset, period_start: date | None = None, period_end: date | None 
         companies.append(BooksCompany(id=co, name=pa.name, tally_name=tally, vouchers=count.get(co, 0),
                                     profit=_r(profit)))
     checks = _checks(ds, end, b, totals, vs)
+    wip = production_wip(ds, end, vs)
     notes = []
     if any(x.account == "SUSPENSE" and abs(x.balance) >= 0.005 for x in balances):
         notes.append("Something is on the suspense account: stock moved without an order the journal knows (a receipt "
@@ -613,7 +638,7 @@ def view(ds: Dataset, period_start: date | None = None, period_end: date | None 
         accounts=[AccountRow(code=k, name=v[0], group=v[1], nature=v[2], ledger=ledger(ds, k))
                   for k, v in ACCOUNTS.items()],
         balances=balances, parties=parties, vouchers=list(reversed(vs_period))[:limit],
-        voucher_count=len(vs_period), checks=checks, notes=notes)
+        voucher_count=len(vs_period), checks=checks, production_wip=wip, notes=notes)
 
 
 def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[AccountCheck]:

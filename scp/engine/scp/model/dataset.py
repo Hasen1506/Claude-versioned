@@ -14,7 +14,7 @@ from pydantic import Field
 
 from .actuals import AccuracyRecord, Batch, ClosedOrder, ExecutionSettings, GoodsMovement, InventoryDoc, RolledWeek
 from .common import LocationType, Model
-from .finance import FinanceSettings
+from .finance import FinanceSettings, ProductionCostPosting
 from .tower import TowerSettings
 from .warehouse import Bin, PutawayRule, StorageType, Wave, WarehouseTask
 from .transport import Carrier, FreightOrder, TransportSettings
@@ -110,6 +110,8 @@ class Dataset(Model):
     rolled_weeks: list[RolledWeek] = Field(default_factory=list)
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     finance: FinanceSettings = Field(default_factory=FinanceSettings)
+    production_cost_postings: list[ProductionCostPosting] = Field(default_factory=list,
+        description="Dated actual conversion and variance postings. Changes to live books use production commands.")
     tower: TowerSettings = Field(default_factory=TowerSettings)
 
     def forecast_inputs(self) -> str:

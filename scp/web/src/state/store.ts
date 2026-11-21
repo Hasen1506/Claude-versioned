@@ -9,7 +9,7 @@ import { api, ApiError, COOKIE_SESSION, cookieSession, SchemaRejected, setAuth, 
 import { makePatch, patchIsSmall, type Patch } from "../lib/patch";
 import { leavingScreen } from "../lib/router";
 import { keepSteps, stepsFor } from "./undoStore";
-import type { CompanyDoc, CompanyMeta, PlanTrace, User, ActualsView, PurchasingView, SalesView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
+import type { CompanyCommand, CompanyDoc, CompanyMeta, PlanTrace, User, ActualsView, PurchasingView, SalesView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
 export interface RunResults {
   forecast: ForecastResult;
@@ -764,7 +764,7 @@ export const store = {
   /** Save now (and wait): before signing out, or when the planner asks. */
   saveNow: (note = "") => saveNow(note),
 
-  /** Start a purchasing preview after any earlier edits have reached the live company. */
+  /** Start an operation after any earlier edits have reached the live company. */
   async savedWorkingCopy(): Promise<WorkingSnapshot> {
     const before = store.captureWorking();
     if (!unsaved(state)) return before;
@@ -776,6 +776,19 @@ export const store = {
     if (!normalized) store.assertWorking(before, true);
     if (unsaved(state)) throw new Error(state.save.error ?? "Save the preceding changes to the company before continuing.");
     return store.captureWorking();
+  },
+
+  async postCompanyCommand(command: Omit<CompanyCommand, "base_revision">) {
+    const before = await store.savedWorkingCopy();
+    const company = state.company;
+    if (!company?.live) throw new Error("Open the live company to post a transaction.");
+    const result = await api.companyCommand(company.id, { ...command, base_revision: company.revision });
+    if (store.currentContext(before, true) && !unsaved(state) && state.company?.revision === company.revision) {
+      adopt(result.company.dataset as unknown as Dataset, result.company.meta, null);
+    } else if (store.currentContext(before)) {
+      void checkNewer();
+    }
+    return result;
   },
 
   /** After a conflict: save the working copy over the colleague's save (theirs stays in the history). */
