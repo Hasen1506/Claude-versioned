@@ -56,7 +56,7 @@ Record actual internal conversion in company currency with the payroll, machine 
 
 Once the order is complete, reconcile materials, actual conversion and subcontract bills. `settle` takes `order`, `reference` and `confirm_actuals: true`. It clears the derived WIP balance to `PRODUCTION_VARIANCE`. An open order or an order carrying WIP in another entity requires separate reconciliation. A later correction can use `reverse` with the original posting ID as `posting`, followed by new postings in the open period. Posted cost records stay in the audit trail. Review the ledger mappings for conversion applied and production variance before exporting.
 
-Give the cost accountant the `production_cost` grant and the period approver the `period_close` grant. With an empty matrix company owners can post and close. Use a current reader for company snapshots with the new `production_cost_postings` field. Include the new postings and command receipts in restore and reconciliation checks.
+Give the cost accountant the `production_cost` grant and the period approver the `period_close` grant. With an empty matrix company owners can post and close. Use a current reader for company snapshots with the new `production_cost_postings` field. Reuse the command ID during recovery to regenerate the same document number and keep any later reversal linked to its original. Reconcile postings and command receipts after restoring.
 
 ## Retained physical facts
 

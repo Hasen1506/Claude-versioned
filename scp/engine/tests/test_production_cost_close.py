@@ -1,12 +1,18 @@
 """Independent amounts and live persistence for actual production costs and WIP close."""
 from datetime import date
 
+import pytest
+
+from scp import admin
 from scp.accounting import view
 from scp.actuals.documents import reverse
 from scp.actuals.post import receive
 from scp.actuals.roll import roll_forward
+from scp.backup import backup, backup_postgres, restore
 from scp.model import Dataset
+from scp.versions.store import Store, set_store
 
+from .test_backup_postgres import pg_databases as pg_databases
 from .test_companies import h
 from .test_company_commands import command
 from .test_enterprise_integrity import client, team
@@ -129,3 +135,48 @@ def test_archive_and_real_receipt_reversal_preserve_wip_history():
     assert undo.status_code == 200, undo.text
     report, _ = balances(undo.json()["company"], date(2026, 1, 7))
     assert report.production_wip[0].settlement is None and report.production_wip[0].completed_on is None
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "postgresql"])
+def test_restored_cost_commands_keep_the_document_identity_used_by_a_later_reversal(backend, request, tmp_path, monkeypatch):
+    make_db = request.getfixturevalue("pg_databases") if backend == "postgresql" else None
+    url = make_db() if make_db is not None else str(tmp_path / "source.sqlite")
+    live = Store(url)
+    set_store(live)
+    try:
+        owner, _, cid = team(internal())
+        actual = cost(owner, cid, "actual", "conversion", 1, amount_minor=2600)
+        assert actual.status_code == 200, actual.text
+        snapshot = (backup_postgres(url, tmp_path / "backup") if make_db is not None
+                    else backup(live.db, tmp_path / "backup"))
+        close_order = cost(owner, cid, "settle-1", "settle", 2)
+        assert close_order.status_code == 200, close_order.text
+        settled_id = close_order.json()["result"]["posting"]["id"]
+        reversal = cost(owner, cid, "reverse-1", "reverse", 3, on="2026-01-07", posting=settled_id)
+        assert reversal.status_code == 200, reversal.text
+        expected = reversal.json()["company"]["dataset"]
+    finally:
+        live.db.close()
+
+    if make_db is None:
+        target = str(tmp_path / "recovered.sqlite")
+        restore(snapshot, target)
+    else:
+        target = make_db()
+        monkeypatch.setenv("DATABASE_URL", target)
+        assert admin.main(["restore", str(snapshot)]) == 0
+    recovered = Store(target)
+    set_store(recovered)
+    try:
+        posted_already = cost(owner, cid, "actual", "conversion", 1, amount_minor=2600)
+        assert posted_already.status_code == 200 and posted_already.json()["duplicate"]
+        replay = cost(owner, cid, "settle-1", "settle", 2)
+        assert replay.status_code == 200 and not replay.json()["duplicate"], replay.text
+        assert replay.json()["result"]["posting"]["id"] == settled_id
+        replay = cost(owner, cid, "reverse-1", "reverse", 3, on="2026-01-07", posting=settled_id)
+        assert replay.status_code == 200 and replay.json()["company"]["dataset"] == expected
+        repeated = cost(owner, cid, "reverse-1", "reverse", 3, on="2026-01-07", posting=settled_id)
+        assert repeated.status_code == 200 and repeated.json()["duplicate"]
+        assert repeated.json()["company"]["meta"]["revision"] == 4
+    finally:
+        recovered.db.close()

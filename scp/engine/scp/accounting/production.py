@@ -4,7 +4,6 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 from typing import TYPE_CHECKING, Literal
-from uuid import uuid4
 
 from ..actuals.stock import EPS, _sum
 from ..actuals.transfer_price import entity_of
@@ -104,7 +103,7 @@ def protect_orders(before: Dataset, after: Dataset) -> None:
 
 
 def post(
-    ds: Dataset, action: Literal["conversion", "settle", "reverse"], order: str, day: date, reference: str,
+    ds: Dataset, action: Literal["conversion", "settle", "reverse"], order: str, day: date, reference: str, entry_id: str,
     amount_minor: int | None = None, posting: str | None = None, confirm_actuals: bool = False,
 ) -> tuple[Dataset, ProductionCostPosting]:
     from . import _day, journal
@@ -151,7 +150,7 @@ def post(
             raise ValueError(f"{order}: reverse its active settlement before reversing a cost")
         kind, amount_minor = prior.kind, -prior.amount_minor
         row = row.model_copy(update={"company": prior.entity, "location": prior.location, "product": prior.product})
-    entry = ProductionCostPosting(id=f"PC-{uuid4().hex}", order=order, date=day, location=row.location,
+    entry = ProductionCostPosting(id=entry_id, order=order, date=day, location=row.location,
                                   product=row.product, entity=row.company, kind=kind, amount_minor=amount_minor,
                                   reference=reference, reversal_of=posting)
     return ds.model_copy(update={"production_cost_postings": [*entries, entry]}), entry

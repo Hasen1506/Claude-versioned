@@ -1384,6 +1384,7 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
     the original result and current company state, even after intervening saves.
     """
     if req.kind == "production_cost":
+        from uuid import NAMESPACE_URL, uuid5
         from ..accounting.production import post
         if "action" in req.parameters:
             raise HTTPException(422, "unsupported command parameter: action")
@@ -1394,7 +1395,9 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
 
         def post_cost(ds: Dataset):
             try:
-                out, entry = post(ds, day=req.posting_date, **cost.model_dump())
+                # A recovered command must regenerate the document number that subsequent reversals cite.
+                entry_id = f"PC-{uuid5(NAMESPACE_URL, f'scp/companies/{cid}/production-cost/{req.id}').hex}"
+                out, entry = post(ds, day=req.posting_date, entry_id=entry_id, **cost.model_dump())
             except ValueError as exc:
                 raise HTTPException(409, str(exc)) from None
             return out, {"posting": entry.model_dump(mode="json")}
