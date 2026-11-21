@@ -6,6 +6,7 @@ from datetime import date
 
 from .. import intercompany as ic, sales, transport
 from ..actuals.post import delivered, ordered_now, ship_point
+from ..actuals.transfer_price import freight_company
 from ..model import Dataset, MovementType
 
 
@@ -89,6 +90,11 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
         target = freight.get(prior.id)
         if target is None:
             raise ValueError(f"{prior.id}: shipped freight is retained")
+        if target.status == "settled":
+            payer = freight_company(old, prior)
+            if (payer != freight_company(proposed, target)
+                    or (payer in old.entity_by_id and payer not in proposed.entity_by_id)):
+                raise ValueError(f"{prior.id}: the freight bill keeps its posting company")
         if prior.status == "settled":
             expected = prior
         elif target.status == "settled":

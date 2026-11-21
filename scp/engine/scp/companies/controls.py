@@ -56,6 +56,8 @@ def authorize(before: dict, after: dict, email: str, *, count_projection: bool =
                     raise ValueError("legacy invoice has no independently recorded entrant; review it before enabling payment")
                 if actor in (entrant, releaser):
                     raise ValueError("payment requires a different person from the invoice entrant and releaser")
+        elif name == "freight_orders" and (new or {}).get("status") == "settled" and (old or {}).get("status") != "settled":
+            required.add("billing")  # commercial replay protects the existing shipment separately
         elif name == "finance":
             a, b = old or {}, new or {}
             if a.get("closed_through") != b.get("closed_through"):

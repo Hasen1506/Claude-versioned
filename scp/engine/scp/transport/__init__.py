@@ -26,9 +26,11 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from fractions import Fraction
 
 from ..actuals.post import PostingError, _ordered, _posted, origin
 from ..actuals.post import ship as ship_transfer
+from ..actuals.transfer_price import freight_company
 from ..model import Dataset, FreightOrder, ReceiptKind, TransportLane
 from ..model.common import Out, TransportMode
 from ..sales import SalesError
@@ -380,16 +382,24 @@ def _lines(f: FreightOrder) -> list[FreightLine]:
     """The freight order's cost (as billed once settled) shared by weight, by units where nothing has a weight."""
     ids = ([("delivery", x) for x in f.deliveries] + [("transfer", x) for x in f.transfers]
            + [("purchase", x) for x in f.purchases])
-    kg = {x: f.weights.get(x, 0.0) for _, x in ids}
-    un = {x: f.units.get(x, 0.0) for _, x in ids}
-    tk, tu = sum(kg.values()), sum(un.values())
+    if not ids:
+        return []
+    kg = [f.weights.get(x, 0.0) for _, x in ids]
+    units = [f.units.get(x, 0.0) for _, x in ids]
+    basis = kg if sum(kg) > EPS else units if sum(units) > EPS else [1] * len(ids)
+    weights = [Fraction(str(weight)) for weight in basis]
+    total = sum(weights)
+    shares = [weight / total for weight in weights]
     cost = f.billed if f.billed is not None else f.planned_cost
-    out = []
-    for kind, x in ids:
-        share = kg[x] / tk if tk > EPS else un[x] / tu if tu > EPS else 1 / len(ids)
-        out.append(FreightLine(kind=kind, id=x, weight_kg=round(kg[x], 3), share=round(share, 4),
-                               cost=round(cost * share, 2)))
-    return out
+    cents = round(Fraction(str(cost)) * 100)
+    quotas = [cents * share for share in shares]
+    allocated = [math.floor(quota) for quota in quotas]
+    # Assign residual cents to the largest fractional shares in stable load order.
+    priority = sorted(range(len(ids)), key=lambda i: quotas[i] - allocated[i], reverse=True)
+    for i in priority[:cents - sum(allocated)]:
+        allocated[i] += 1
+    return [FreightLine(kind=kind, id=x, weight_kg=round(kg[i], 3), share=round(float(shares[i]), 4), cost=allocated[i] / 100)
+            for i, (kind, x) in enumerate(ids)]
 
 
 def view(ds: Dataset, on: date | None = None) -> TransportView:
@@ -588,7 +598,15 @@ def settle(ds: Dataset, fid: str, billed: float, bill: str = "", on: date | None
     day = on or ds.settings.planning_start
     if f.shipped_on is None or day < f.shipped_on:
         raise TransportError("a freight bill cannot be settled before shipment")
-    new = f.model_copy(update={"status": "settled", "billed": round(billed, 2), "bill": bill, "settled_on": day})
+    bill = bill.strip()
+    if f.carrier and bill:
+        payer = freight_company(ds, f)
+        duplicate = next((other for other in ds.freight_orders if other.status == "settled" and other.carrier == f.carrier
+                          and other.bill.strip().casefold() == bill.casefold() and freight_company(ds, other) == payer), None)
+        if duplicate:
+            raise TransportError(f"carrier bill {bill} is already booked on {duplicate.id} for this company")
+    billed = round(billed, 2)
+    new = f.model_copy(update={"status": "settled", "billed": billed, "bill": bill, "settled_on": day})
     ds2 = _put(ds, new)
     diff = billed - f.planned_cost
     k = ds.carrier_by_id.get(f.carrier or "")

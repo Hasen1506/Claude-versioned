@@ -31,7 +31,7 @@ from collections import defaultdict
 from datetime import date
 from xml.sax.saxutils import escape, quoteattr
 
-from ..actuals.transfer_price import destination, entity_of, party
+from ..actuals.transfer_price import destination, entity_of, freight_company, party
 from ..actuals.valuation import EPS, run_books
 from ..model import Dataset, GoodsMovement, MovementType, SupplierInvoice
 from ..model.common import Out
@@ -482,7 +482,7 @@ class _Journal:
         for fo in ds.freight_orders:
             if fo.status != "settled" or fo.billed is None or fo.settled_on is None or fo.settled_on > day:
                 continue
-            co = entity_of(ds, fo.ship_to if fo.purchases else fo.ship_from)   # a collection: the buyer pays
+            co = freight_company(ds, fo)
             carrier = fo.carrier or ""
             self._post(fo.settled_on, fo.id, "Journal", fo.id,
                        f"freight bill {fo.bill or fo.id} from {_name(ds, carrier) or 'the carrier'}: "
@@ -680,7 +680,7 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
             pay[j._company_of_supplier_invoice(inv)] += (-1 if inv.credit else 1) * _r(_r(left) * rate)
     for fo in ds.freight_orders:
         if fo.status == "settled" and fo.billed is not None and fo.settled_on is not None and fo.settled_on <= day:
-            pay[entity_of(ds, fo.ship_to if fo.purchases else fo.ship_from)] += fo.billed
+            pay[freight_company(ds, fo)] += fo.billed
     grir: dict[str, float] = defaultdict(float)
     from ..purchasing.payables import lines_index
     lines = lines_index(ds, outside=False)
