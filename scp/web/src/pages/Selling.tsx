@@ -4,7 +4,7 @@
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import type {
-  Dataset, DeliveryView, DemandRecord, InvoiceView, OrderView, PromiseResult, SalesAction, SalesActionInput, SalesView,
+  Dataset, DeliveryView, DemandRecord, InvoiceView, OrderView, PromiseResult, SalesAction, SalesActionInput, SalesActionResponse, SalesView,
 } from "../api/types";
 import {
   Badge, Edits, Empty, Panel, Provenance, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
@@ -18,6 +18,7 @@ import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { download } from "../lib/tabular";
 import { checkBlocked, orderWarnings } from "../lib/orderchecks";
 import { go, href } from "../lib/router";
+import { useSettlement } from "../state/settlement";
 import { isStale, store, useFreshResult, useReadOnly, useStore } from "../state/store";
 
 type View = "orders" | "new" | "quotes" | "deliver" | "bill" | "returns" | "customers";
@@ -39,14 +40,15 @@ async function act(action: SalesAction, extra: SalesActionInput = {}) {
   return out;
 }
 
-function useAction() {
+function useAction(invoice?: string) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const run = async (action: SalesAction, extra: SalesActionInput = {}, after?: () => void) => {
+  const settlement = useSettlement("sales", invoice);
+  const execute = async (operation: () => Promise<Pick<SalesActionResponse, "report">>, after?: () => void) => {
     setBusy(true); setErr(null); setMsg(null);
     try {
-      const out = await act(action, extra);
+      const out = await operation();
       setMsg(out.report.message);
       after?.();
       return out;
@@ -57,13 +59,23 @@ function useAction() {
       setBusy(false);
     }
   };
+  const settle = async (post: ReturnType<typeof settlement.retry>) => {
+    const reply = await post;
+    await Promise.allSettled([store.run("sales")]);
+    return reply.result as Pick<SalesActionResponse, "report">;
+  };
+  const run = (action: SalesAction, extra: SalesActionInput = {}, after?: () => void) => execute(
+    () => action === "pay" && settlement.live
+      ? settle(settlement.post(extra.date, extra.amount ?? null, extra.reference))
+      : act(action, extra), after);
+  const retryPayment = (after?: () => void) => execute(() => settle(settlement.retry()), after);
   const banners = <>
     {msg && <div className="banner info" role="status"><Badge sev="ok">Done</Badge><span><Msg text={msg} /></span><span className="spacer" />
       <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
-    {err && <div className="banner error" role="alert"><Badge sev="error">Not done</Badge><span>{err}</span><span className="spacer" />
+    {err && <div className="banner error" role="alert"><Badge sev="error">{settlement.pending ? "Unconfirmed" : "Not done"}</Badge><span>{err}</span><span className="spacer" />
       <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setErr(null)}>✕</button></div>}
   </>;
-  return { busy, run, banners };
+  return { busy, run, banners, retryPayment, paymentPending: settlement.pending };
 }
 
 export function Selling({ route }: { route: string[] }) {
@@ -557,7 +569,7 @@ function Invoices({ res, ds, sel }: { res: SalesView; ds: Dataset; sel?: string 
   const open = res.invoices.find((i) => i.id === sel);
   return <div className="stack">
     {banners}
-    {open && <InvoiceDetail i={open} ds={ds} res={res} />}
+    {open && <InvoiceDetail key={open.id} i={open} ds={ds} res={res} />}
     <Panel flush title="Shipped, not invoiced" actions={<Edits><span className="row" style={{ gap: 6 }}>
       <input type="date" value={on} onChange={(e) => setOn(e.target.value)} aria-label="Invoice date" />
       <button className="btn sm accent" disabled={busy || res.to_bill.length === 0} onClick={() => run("create_invoices", { date: on })}>
@@ -595,13 +607,14 @@ function Invoices({ res, ds, sel }: { res: SalesView; ds: Dataset; sel?: string 
 
 function InvoiceDetail({ i, ds, res }: { i: InvoiceView; ds: Dataset; res: SalesView }) {
   const rec = (ds.invoices ?? []).find((x) => x.id === i.id);
-  const { busy, run, banners } = useAction();
+  const { busy, run, banners, retryPayment, paymentPending } = useAction(i.id);
   const [amount, setAmount] = useState<number | null>(null);
   const [on, setOn] = useState(ds.settings.planning_start);
   const [ref, setRef] = useState("");
   if (!rec) return null;
+  const clearPayment = () => { setAmount(null); setRef(""); };
   const credit = i.kind === "credit_note";
-  const suggested = i.discount_until && on <= i.discount_until ? i.total - i.discount_amount : i.open;
+  const suggested = !rec.payments?.length && i.discount_until && on <= i.discount_until ? i.total - i.discount_amount : i.open;
   return <Panel title={<>{credit ? "Credit note" : "Invoice"} {i.id} · <Loc id={i.customer} /></>} actions={<>
     <DocButtons kind="invoice" id={i.id} ds={ds} /><button className="btn sm ghost" onClick={() => go("selling", "bill")}>Close</button></>}>
     {banners}
@@ -618,12 +631,13 @@ function InvoiceDetail({ i, ds, res }: { i: InvoiceView; ds: Dataset; res: Sales
     </table></div>
     {(rec.payments ?? []).length > 0 && <p className="small">{credit ? "Paid out" : "Payments"}: {(rec.payments ?? []).map((p) =>
       `${exactMoney(p.amount, res.currency)} on ${day(p.date)}${p.discount ? ` (+${exactMoney(p.discount, res.currency)} discount)` : ""}${p.reference ? ` · ${p.reference}` : ""}`).join("; ")}</p>}
+    {paymentPending && <Edits><button className="btn accent" disabled={busy} onClick={() => retryPayment(clearPayment)}>Retry payment</button></Edits>}
     {i.open > 0.005 && !rec.cancelled && <Edits><div className="row wrap" style={{ marginTop: 10, gap: 8, alignItems: "flex-end" }}>
       <label className="field"><span className="label">Amount</span><input type="number" min={0} step="any" style={{ width: 120 }}
         value={amount ?? Math.round(suggested * 100) / 100} onChange={(e) => setAmount(Number(e.target.value))} aria-label="Amount" /></label>
       <label className="field"><span className="label">On</span><input type="date" value={on} onChange={(e) => setOn(e.target.value)} aria-label="Paid on" /></label>
       <label className="field"><span className="label">Bank reference</span><input value={ref} onChange={(e) => setRef(e.target.value)} aria-label="Bank reference" /></label>
-      <button className="btn sm accent" disabled={busy} onClick={() => run("pay", { id: i.id, amount: amount ?? Math.round(suggested * 100) / 100, date: on, reference: ref }, () => setAmount(null))}>
+      <button className="btn sm accent" disabled={busy} onClick={() => run("pay", { id: i.id, amount: amount ?? Math.round(suggested * 100) / 100, date: on, reference: ref }, clearPayment)}>
         {credit ? "Paid out" : "Payment received"}</button>
       {!(rec.payments ?? []).length && <button className="btn sm ghost" disabled={busy} onClick={() => run("cancel_invoice", { id: i.id })}>Cancel it</button>}
     </div></Edits>}

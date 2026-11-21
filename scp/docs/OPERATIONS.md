@@ -40,7 +40,7 @@ The response's `revision` identifies the original completed command. Its `compan
 
 The typed browser API client exposes `companyCommand` and `companyCommandRecord`. Existing planning/scenario action APIs and the browser's preview/edit/save workflow remain compatible. Their company saves continue to enforce transaction rules. The new endpoint provides an authoritative operation contract for live integrations; its existence does not imply that every legacy screen has been migrated to command execution.
 
-The live supplier payment screen records payments and supplier refunds through `purchasing/pay_invoice`. The UI confirms after the server commits. If the response is lost, re-enter the original posting date, amount and reference in the same tab to recover the result with the same command ID. A payment entry records the accounting event. Bank execution and reconciliation use the organization's bank process.
+Live settlements use `sales/pay` for customer receipts and refunds and `purchasing/pay_invoice` for supplier payments and refunds. The UI confirms after the server commits. If confirmation is lost, reopen the invoice or credit note in the same tab and select **Retry payment**. This reuses the original command ID, posting date, amount and reference, even if the invoice already shows as settled. If the tab is gone, reconcile the document and command receipt before entering another payment. Bank integrations should derive the command ID from the source transaction and allocation identity. The displayed bank reference is descriptive, and the app records the accounting event.
 
 ## Business authorization
 
@@ -73,6 +73,8 @@ Existing posted material facts and their same-day posting order are retained. St
 Serialised movements require one serial per whole unit. A serial cannot be held in multiple places or stock types, issued from a place that does not hold it, or issued before receipt. Atomic transfer/status documents can move a serial between places/types. Its serial profile cannot be disabled while stock remains. Invalid legacy serial/opening data needs controlled migration rather than fabricated history.
 
 Known currencies requiring other than two decimal places remain blocked for financial posting and ledger export. This prevents silent misstatement; it does not implement full currency/minor-unit/rounding support. Statutory finance, reference-system outcomes, representative performance, real interface certification and infrastructure recovery still require the independent acceptance described in `ENTERPRISE_READINESS.md`.
+
+The company currency stays fixed once financial or stock postings exist, including imported customer invoices without a stock history. A currency change with existing books requires a controlled migration and independent reconciliation of opening and comparative balances.
 
 ## Outside work and reversals
 

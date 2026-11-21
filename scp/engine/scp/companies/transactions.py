@@ -89,9 +89,12 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         old_inv, new_inv = _rows(before, "supplier_invoices"), _rows(after, "supplier_invoices")
         old_moves, new_moves = _rows(before, "movements"), _rows(after, "movements")
         old_pos, new_pos = _rows(before, "purchase_orders"), _rows(after, "purchase_orders")
-        if old_ds.settings.currency != ds.settings.currency and (old_inv or old_moves or any(
-                t.sent_on is not None or t.shipments for t in old_ds.third_party_orders)):
-            raise TransactionRefused("posted records keep their company currency; use a controlled migration to change it")
+        if old_ds.settings.currency != ds.settings.currency:
+            posted = (old_inv or old_moves or old_ds.invoices or old_ds.intercompany_invoices
+                      or old_ds.production_cost_postings or any(f.status == "settled" for f in old_ds.freight_orders)
+                      or any(t.sent_on is not None or t.shipments for t in old_ds.third_party_orders))
+            if posted:
+                raise TransactionRefused("posted records keep their company currency; use a controlled migration to change it")
         closed = old_ds.finance.closed_through
         if closed is not None and (ds.finance.closed_through is None or ds.finance.closed_through < closed):
             raise TransactionRefused("a closed accounting period cannot be reopened by replacing the document")
