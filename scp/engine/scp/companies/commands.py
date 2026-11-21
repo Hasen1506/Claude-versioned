@@ -97,7 +97,7 @@ class CommandRecord(Out):
 
 
 def record(c: Companies, user: User, cid: str, identifier: str) -> CommandRecord:
-    with c.lock:
+    with c.lock.scoped("company", cid):
         c._need(user, cid)
         row = c.db.execute("SELECT * FROM company_commands WHERE company_id = ? AND command_id = ?",
                            (cid, identifier)).fetchone()
@@ -121,7 +121,7 @@ def execute(c: Companies, user: User, cid: str, req: CommandRequest,
             operation: Callable[[Dataset], tuple[Dataset, dict[str, Any]]]) -> CommandResult:
     payload = {"kind": req.kind, "action": req.action, "posting_date": req.posting_date.isoformat(), "parameters": req.parameters}
     digest = hashlib.sha256(_canonical(payload).encode()).hexdigest()
-    with c.lock:
+    with c.lock.scoped("company", cid):
         c._need(user, cid, *CAN_EDIT)
         previous = c.db.execute("SELECT * FROM company_commands WHERE company_id = ? AND command_id = ?",
                                 (cid, req.id)).fetchone()

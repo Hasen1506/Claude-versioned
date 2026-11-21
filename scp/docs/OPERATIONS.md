@@ -48,6 +48,12 @@ Available grants include `master_data`, `planning`, `purchasing`, `sales`, `manu
 
 Plant/product-group limits further restrict changes. Existing and proposed product-family ownership are checked separately, so changing a family cannot widen the same write's rights. Physical inventory documents must stay wholly inside the member's plants and product groups. These are write limits; they do not establish departmental confidentiality over every company read model.
 
+## PostgreSQL company writes
+
+Company document reads, saves, merges and business commands use a company-specific advisory lock. They use a dedicated connection through authorization, validation, revision checks and commit. Independent companies can write concurrently. The process admits one waiter at a time for the same company before assigning a connection. Credential checks use their own scope. A server process can open four scoped connections in addition to its global connection. Include those connections when sizing the database.
+
+The global advisory lock still protects operations that span companies or use global identifiers, such as account administration, schema setup and version allocation. Scoped connections hold the global lock in shared mode. This coordinates with existing server processes taking the exclusive lock and preserves global exclusion during changes to membership. SQLite retains its file lock. The deployment's PostgreSQL endpoint must preserve session advisory locks. The concurrency tests verify independent authenticated HTTP writes, same-company conflicts and idle-connection recovery.
+
 ## Production cost and period close
 
 Use Accounts → Production WIP in a live company. The order shows material issues, receipts, subcontract charges and production cost postings in the books through the selected date. The manufacturing order and plant appear on the WIP report. The journal retains the order link on each WIP line. The period close checks each completed order separately. Open orders can carry WIP, and a reopened order with an active settlement requires review.

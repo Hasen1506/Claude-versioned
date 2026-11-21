@@ -648,8 +648,9 @@ class Companies:
             raise CompanyError("sign in first", 401)
         if token.startswith(KEY_PREFIX):
             return self._key_user(token)
-        with self.lock:
-            r = self.db.execute("SELECT * FROM sessions WHERE token_hash = ?", (_token_hash(token),)).fetchone()
+        token_hash = _token_hash(token)
+        with self.lock.scoped("credential", token_hash):
+            r = self.db.execute("SELECT * FROM sessions WHERE token_hash = ?", (token_hash,)).fetchone()
             now = _now()
             if r is None or dt.datetime.fromisoformat(r["expires_at"]) <= now:
                 raise CompanyError("your sign-in has expired; sign in again", 401)
@@ -659,14 +660,14 @@ class Companies:
                 raise CompanyError("your sign-in has expired; sign in again", 401)
             self.db.execute("UPDATE sessions SET expires_at = ? WHERE token_hash = ?",
                             (_iso(min(now + dt.timedelta(days=SESSION_DAYS), ends)), r["token_hash"]))
-            self.db.execute("UPDATE users SET last_seen = ? WHERE id = ?", (_iso(now), r["user_id"]))
+            self.db.execute("UPDATE users SET last_seen = MAX(last_seen, ?) WHERE id = ?", (_iso(now), r["user_id"]))
             return self._user(r["user_id"])
 
     def signed_in(self, token: str | None) -> bool:
         """Whether ``token`` is a live session or key, read only (nothing is extended): for the anonymous limits."""
         if not token:
             return False
-        with self.lock:
+        with self.lock.scoped("credential", _token_hash(token)):
             if token.startswith(KEY_PREFIX):
                 r = self.db.execute("SELECT 1 FROM api_keys WHERE token_hash = ? AND revoked_at IS NULL",
                                     (_token_hash(token),)).fetchone()
@@ -676,7 +677,7 @@ class Companies:
 
     # ---- integration keys (Phase Q) --------------------------------------------------------------------------
     def _key_user(self, token: str) -> User:
-        with self.lock:
+        with self.lock.scoped("credential", _token_hash(token)):
             r = self.db.execute("SELECT k.*, c.deleted FROM api_keys k JOIN companies c ON c.id = k.company_id "
                                 "WHERE k.token_hash = ?", (_token_hash(token),)).fetchone()
             if r is None or r["revoked_at"] or r["deleted"]:
@@ -1240,7 +1241,7 @@ class Companies:
     def open_text(self, user: User, cid: str) -> tuple[CompanyMeta, str]:
         """The company's latest save as it is kept (JSON text), with its meta: sent on as it is, a large company
         opens without being read into objects and written out again."""
-        with self.lock:
+        with self.lock.scoped("company", cid):
             role = self._need(user, cid)
             r = self.db.execute("SELECT dataset FROM companies WHERE id = ?", (cid,)).fetchone()
             return self._meta(cid, role, user.id), str(r["dataset"])
@@ -1272,7 +1273,7 @@ class Companies:
              note: str = "", patch: dict | None = None, client: str = "", *, allow_production_posting: bool = False) -> SaveReport:
         """Save the working copy (``doc``, or ``patch`` applied to revision ``base_revision``) over revision
         ``base_revision``; refused when the company has moved on, unless only this window's own saves moved it."""
-        with self.lock:
+        with self.lock.scoped("company", cid):
             role = self._need(user, cid, *CAN_EDIT)
             r = self.db.execute("SELECT * FROM companies WHERE id = ?", (cid,)).fetchone()
             current = json.loads(r["dataset"])
@@ -1381,7 +1382,7 @@ class Companies:
         changed on both sides, so nothing is decided for the person without asking. ``choose``: per clash, whose
         version to keep. ``preview``: say what the merge would do, save nothing. When every save in between was the
         same person's (another window), their latest change of a record is kept without asking."""
-        with self.lock:
+        with self.lock.scoped("company", cid):
             self._need(user, cid, *CAN_EDIT)
             r = self.db.execute("SELECT * FROM companies WHERE id = ?", (cid,)).fetchone()
             who = self._name(r["updated_by"])

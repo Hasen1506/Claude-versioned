@@ -6,10 +6,14 @@ available for local files. Hosted PostgreSQL requires verified TLS.
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
+from queue import Empty, SimpleQueue
+from threading import BoundedSemaphore, Lock, local as thread_local
 from urllib.parse import parse_qs, urlsplit
 
 import certifi
 import psycopg
+from psycopg.pq import TransactionStatus
 
 
 class Row(dict):
@@ -54,12 +58,13 @@ def parameters(sql):
     return ''.join(out)
 
 
-LOCK = 739310021                 # the store's lock: every transaction takes it, and so does StoreLock (scp.dblock)
+LOCK = 739310021                 # exclusive for global operations, shared for isolated operations
 LEADS = {'clock': 739310022, 'backup': 739310023}   # server-wide jobs one process runs
 
 
 class Postgres:
     backend = 'postgresql'
+    scope_connections = 4
 
     def __init__(self, url):
         parsed = urlsplit(url)
@@ -70,13 +75,69 @@ class Postgres:
         self.url = url
         self.options = {} if local else {'sslmode': 'verify-full', 'sslrootcert': certifi.where()}
         self.leading = {}            # job -> the connection that holds its lock
+        self._scoped = thread_local()
+        self._scope_slots = BoundedSemaphore(self.scope_connections)
+        self._idle = SimpleQueue()
+        self._pool_lock = Lock()
+        self._closed = False
         self._connect()
 
+    @property
+    def connection(self):
+        return getattr(self._scoped, "connection", self._global)
+
     def _connect(self):
-        self.connection = psycopg.connect(self.url, autocommit=True, row_factory=row_factory, **self.options)
-        self.connection.execute('CREATE SCHEMA IF NOT EXISTS scp')
-        self.connection.execute('SET search_path TO scp, public')
-        self.connection.execute('CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public')
+        self._global = psycopg.connect(self.url, autocommit=True, row_factory=row_factory, **self.options)
+        self._global.execute('CREATE SCHEMA IF NOT EXISTS scp')
+        self._global.execute('SET search_path TO scp, public')
+        self._global.execute('CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public')
+
+    def _lease(self, key):
+        try:
+            conn = self._idle.get_nowait()
+        except Empty:
+            conn = None
+        for attempt in range(2):
+            try:
+                if conn is None:
+                    conn = psycopg.connect(self.url, autocommit=True, row_factory=row_factory, **self.options)
+                    conn.execute('SET search_path TO scp, public')
+                conn.execute('SELECT pg_advisory_lock_shared(%s)', (LOCK,))
+                # Two-int locks are in a different namespace from the global gate.
+                conn.execute('SELECT pg_advisory_lock(%s, hashtext(%s))', (LOCK, key))
+                return conn
+            except psycopg.OperationalError:
+                if conn is not None:
+                    conn.close()
+                conn = None
+                if attempt:
+                    raise
+            except BaseException:
+                if conn is not None:
+                    conn.close()
+                raise
+
+    @contextmanager
+    def scoped(self, key):
+        """One connection owns both the shared gate and the exclusive record scope."""
+        with self._scope_slots:
+            conn = self._lease(key)
+            self._scoped.connection = conn
+            try:
+                yield
+            finally:
+                del self._scoped.connection
+                try:
+                    reusable = not conn.closed and conn.info.transaction_status == TransactionStatus.IDLE
+                    if reusable:
+                        conn.execute('SELECT pg_advisory_unlock_all()')
+                except psycopg.Error:
+                    reusable = False
+                with self._pool_lock:
+                    if reusable and not self._closed:
+                        self._idle.put(conn)
+                    else:
+                        conn.close()
 
     def hold(self, blocking=True):
         """Take the store's lock for this session (it waits for another process holding it, unless not
@@ -121,7 +182,14 @@ class Postgres:
             pass  # a broken session loses its locks when PostgreSQL detects it
         finally:
             self.leading.clear()
-            self.connection.close()
+            self._global.close()
+            with self._pool_lock:
+                self._closed = True
+                while True:
+                    try:
+                        self._idle.get_nowait().close()
+                    except Empty:
+                        break
 
     def execute(self, sql, args=()):
         if sql == 'PRAGMA foreign_keys = ON':
@@ -134,7 +202,8 @@ class Postgres:
             return Result(cur.fetchall())
         if sql.strip().upper() == 'BEGIN':
             self.connection.execute('BEGIN')
-            self.connection.execute(f'SELECT pg_advisory_xact_lock({LOCK})')
+            if not hasattr(self._scoped, "connection"):
+                self.connection.execute(f'SELECT pg_advisory_xact_lock({LOCK})')
             return Result()
         ignore = sql.startswith('INSERT OR IGNORE INTO ')
         if ignore:
