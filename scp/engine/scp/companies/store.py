@@ -1270,7 +1270,8 @@ class Companies:
             r["user_id"] == uid and r["client"] == client for r in rows)
 
     def save(self, user: User, cid: str, doc: dict | None, base_revision: int, action: str = "saved",
-             note: str = "", patch: dict | None = None, client: str = "", *, allow_production_posting: bool = False) -> SaveReport:
+             note: str = "", patch: dict | None = None, client: str = "", *, allow_production_posting: bool = False,
+             count_projection: bool = False) -> SaveReport:
         """Save the working copy (``doc``, or ``patch`` applied to revision ``base_revision``) over revision
         ``base_revision``; refused when the company has moved on, unless only this window's own saves moved it."""
         with self.lock.scoped("company", cid):
@@ -1311,14 +1312,14 @@ class Companies:
             from .controls import authorize
             submitted = doc
             try:
-                doc = authorize(current, doc, user.email)
+                doc = authorize(current, doc, user.email, count_projection=count_projection)
             except ValueError as e:
                 raise CompanyError(str(e), 403) from None
             identity_changed = doc is not submitted
             self._within_rights(user, cid, current, doc)
             held: dict | None = None
             if r["approval"] and action != "approved":
-                doc, held = split_master(current, doc)
+                doc, held = split_master(current, doc, count_projection=count_projection)
                 if not held["before"] and not held["after"]:
                     held = None
             # Validate against the master data that will actually be committed,

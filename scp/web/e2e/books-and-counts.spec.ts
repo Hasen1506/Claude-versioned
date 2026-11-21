@@ -14,6 +14,75 @@ async function openKaveri(page: Page) {
 
 const heater = (page: Page) => page.getByRole("table", { name: "Stock value" }).getByRole("row", { name: /Concealed heating element/ });
 
+test("a live physical count retains unsaved edits and can confirm one posted difference after reload", async ({ page }) => {
+  const date = "2026-01-04";
+  const company = {
+    settings: { company_name: "Count fixture", planning_start: "2026-01-05", horizon_days: 28, default_calendar: "CAL" },
+    calendars: [{ id: "CAL", workdays: [0, 1, 2, 3, 4, 5, 6] }],
+    locations: [{ id: "P", type: "plant" }],
+    products: [{ id: "A", type: "FG", price: 10 }],
+    location_products: [{ location: "P", product: "A", on_hand: 100 }],
+    movements: [{ id: "GM-00001", type: "opening", date, location: "P", product: "A", qty: 100 }],
+    inventory_docs: [{ id: "PI-00001", date, block: true,
+      items: [{ location: "P", product: "A", book_qty: 100, counted: 98 }] }],
+  };
+  await page.goto("/");
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Import a file", exact: true }).click();
+  await (await chooser).setFiles({ name: "count.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(company)) });
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  await page.goto("/#/account");
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill(`count-${Date.now()}@example.invalid`);
+  await page.getByLabel("Your name").fill("Warehouse counter");
+  await page.getByLabel(/^Password/).fill("fixture-only-autumn-rowan");
+  await page.getByRole("button", { name: "Make the account", exact: true }).click();
+  await page.getByRole("button", { name: "Keep it on the server", exact: true }).click();
+  await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+  await page.goto("/#/execution/count");
+
+  let rejectedEntry = false;
+  let companyUrl = "";
+  await page.route("**/api/companies/*/commands", async (route) => {
+    const request = route.request().postDataJSON();
+    if (request.action === "count_enter" && !rejectedEntry) {
+      rejectedEntry = true;
+      return route.fulfill({ status: 503, json: { detail: "Fixture count save unavailable" } });
+    }
+    if (request.action === "count_post") {
+      companyUrl = route.request().url().replace(/\/commands$/, "");
+      expect(request.posting_date).toBe(date);
+      expect(request.parameters.counts[0].qty).toBe(94);
+      const committed = await route.fetch();
+      expect(committed.ok(), await committed.text()).toBe(true);
+      return route.abort("failed");
+    }
+    await route.continue();
+  });
+  const counted = page.getByLabel(/^Counted A\s*$/);
+  const post = page.getByRole("button", { name: "Post differences" });
+  await expect(counted).toHaveValue("98");
+  await counted.fill("94");
+  await expect(post).toBeDisabled();
+  const entry = page.getByRole("button", { name: "Save 1 count", exact: true });
+  await entry.click();
+  await expect(page.getByRole("alert")).toContainText("Fixture count save unavailable");
+  await expect(counted).toHaveValue("94");
+  await expect(post).toBeDisabled();
+  await entry.click();
+  await expect(post).toBeEnabled();
+  await post.click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Check posting PI-00001" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "PI-00001 posted" })).toContainText("1 difference (+0, −6)");
+  const saved = await (await page.request.get(companyUrl)).json();
+  expect(saved.meta.revision).toBe(3);
+  expect(saved.dataset.inventory_docs[0]).toMatchObject({ status: "posted", items: [{ counted: 94 }] });
+  expect(saved.dataset.movements.filter((m: { type: string }) => m.type === "adjustment")).toMatchObject([{ qty: -6, date }]);
+  expect(saved.dataset.location_products[0].on_hand).toBe(94);
+});
+
 test("stock in the books at a moving average: a receipt at landed cost, a dearer invoice moves it", async ({ page }) => {
   test.setTimeout(180_000);
   await openKaveri(page);

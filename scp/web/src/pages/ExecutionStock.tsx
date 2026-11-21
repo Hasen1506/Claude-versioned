@@ -2,13 +2,13 @@
 // takes for batches and serial numbers, the firm orders a short receipt leaves short, physical inventory documents,
 // and the company's stock rules.
 import { useMemo, useState } from "react";
-import { api, type PostExtra } from "../api/client";
+import { api, ApiError, type PostExtra } from "../api/client";
 import type { ActionReport, CountItem, Dataset, InventoryDoc, LotRow, PostAction, ShortOrder, StockRow, StockType } from "../api/types";
 import { Badge, Edits, Panel, Reading } from "../components/ui";
 import { day, plural, qty } from "../lib/format";
 import { Loc, namesOf, Prod, useNames } from "../lib/names";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
-import { store } from "../state/store";
+import { store, useStore } from "../state/store";
 
 /** Post through the engine, keep the new dataset, re-read the journal; the message in names and the whole report. */
 export async function postAct(ds: Dataset, action: PostAction, extra: PostExtra = {}): Promise<{ text: string; report: ActionReport }> {
@@ -179,6 +179,8 @@ export function ShortOrders({ list, ds, onDone }: { list: ShortOrder[]; ds: Data
 }
 
 // ---- physical inventory ---------------------------------------------------------------------------------
+const countPostingId = (doc: string) => `inventory-count:post:${doc}`;
+
 /** Physical inventory documents (≈ MI01/MI04/MI07): count a place's stock on a day against the book stock frozen when
  *  the document is made, with postings for it held until the differences are posted. */
 export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, string][] }) {
@@ -192,15 +194,48 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const companyId = useStore((s) => s.company?.live ? s.company.id : null);
   const docs = (ds.inventory_docs ?? []);
-  const open = docs.filter((d) => d.status === "open");
+  const open = docs.filter((d) => (d.status ?? "open") === "open");
+  const latestPosting = docs.slice(-3).reverse().find((d) => d.status === "posted");
   const groups = [...new Set((ds.products ?? []).map((p) => p.family).filter(Boolean))] as string[];
   const fam = new Map((ds.products ?? []).map((p) => [p.id, p.family ?? ""]));
   const chosen = nodes.filter(([l, p]) => l === place && (!group || fam.get(p) === group));
   const run = async (action: PostAction, extra: PostExtra) => {
     setBusy(true);
-    setErr(null);
-    try { setMsg((await postAct(ds, action, extra)).text); } catch (e) { setErr(String(e)); } finally { setBusy(false); }
+    setErr(null); setMsg(null);
+    try {
+      if (companyId && (action === "count_enter" || action === "count_post")) {
+        const target = docs.find((d) => d.id === extra.doc);
+        if (!target || store.get().dataset !== ds) throw new Error("Review the current count before posting.");
+        const counts = action === "count_post" ? (target.items ?? []).map((i) => ({ location: i.location, product: i.product,
+          batch: i.batch ?? null, stock_type: i.stock_type ?? "unrestricted", qty: i.counted ?? null })) : extra.counts;
+        const id = action === "count_post" ? countPostingId(target.id) : crypto.randomUUID();
+        const reply = await store.postCompanyCommand(companyId, { id, kind: "stock", action,
+          posting_date: target.date, parameters: { doc: target.id, counts } });
+        await Promise.allSettled([store.run("actuals")]);
+        setMsg(nm.text((reply.result as { report: ActionReport }).report.message));
+      } else {
+        setMsg((await postAct(ds, action, extra)).text);
+      }
+      return true;
+    } catch (e) {
+      setErr(String(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const checkPosting = async (company: string, doc: string) => {
+    setBusy(true); setErr(null); setMsg(null);
+    try {
+      const receipt = await api.companyCommandRecord(company, countPostingId(doc));
+      setMsg(nm.text((receipt.result as { report: ActionReport }).report.message));
+    } catch (e) {
+      setErr(e instanceof ApiError && e.status === 404 ? `${doc} is posted in the company history. No command receipt is available.` : String(e));
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <Panel title="Physical inventory" actions={<span className="faint small">Count a whole place on a day, against the stock the books froze</span>}>
@@ -220,27 +255,30 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
           { nodes: chosen.map(([location, product]) => ({ location, product })), date: on, block })}>
           {chosen.length ? `Start counting ${plural(chosen.length, "product")}` : "Start counting"}</button>
       </div></Edits>
-      {msg && <div className="banner info" style={{ marginTop: 10 }}><Badge sev="ok">Done</Badge><span>{msg}</span><span className="spacer" />
+      {msg && <div className="banner info" role="status" style={{ marginTop: 10 }}><Badge sev="ok">Done</Badge><span>{msg}</span><span className="spacer" />
         <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
-      {err && <div className="banner error" style={{ marginTop: 10 }}><Badge sev="error">Not done</Badge>{err}</div>}
+      {err && <div className="banner error" role="alert" style={{ marginTop: 10 }}><span>{err}</span></div>}
       {open.map((d) => <CountSheet key={d.id} d={d} busy={busy} run={run} />)}
       {!open.length && <p className="small muted" style={{ marginTop: 10 }}>No count is under way.
         {docs.length > 0 && <> Last: {docs.slice(-3).reverse().map((d) => `${d.id} (${d.status}, ${day(d.date)})`).join(", ")}.</>}</p>}
+      {companyId && latestPosting && <button className="btn sm" disabled={busy}
+        onClick={() => checkPosting(companyId, latestPosting.id)}>Check posting {latestPosting.id}</button>}
     </Panel>
   );
 }
 
-function CountSheet({ d, busy, run }: { d: InventoryDoc; busy: boolean; run: (a: PostAction, e: PostExtra) => Promise<void> }) {
+function CountSheet({ d, busy, run }: { d: InventoryDoc; busy: boolean; run: (a: PostAction, e: PostExtra) => Promise<boolean> }) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [book, setBook] = useState(false);
-  const key = (i: CountItem) => `${i.location}|${i.product}|${i.batch ?? ""}|${i.stock_type}`;
+  const key = (i: CountItem) => `${i.location}|${i.product}|${i.batch ?? ""}|${i.stock_type ?? "unrestricted"}`;
   const items = d.items ?? [];
   const counted = items.filter((i) => i.counted !== null && i.counted !== undefined).length;
   const changed = Object.entries(edits).filter(([, v]) => v.trim() !== "" && Number.isFinite(Number(v)) && Number(v) >= 0);
+  const dirty = Object.keys(edits).length;
   const save = () => run("count_enter", { doc: d.id, counts: changed.map(([k, v]) => {
     const [location, product, batch, stock_type] = k.split("|");
     return { location, product, batch: batch || null, stock_type: stock_type as StockType, qty: Number(v) };
-  }) }).then(() => setEdits({}));
+  }) }).then((saved) => { if (saved) setEdits({}); });
   return (
     <div className="stack" style={{ marginTop: 12, gap: 8 }}>
       <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
@@ -249,9 +287,9 @@ function CountSheet({ d, busy, run }: { d: InventoryDoc; busy: boolean; run: (a:
         <span className="spacer" />
         <label className="small"><input type="checkbox" checked={book} onChange={(e) => setBook(e.target.checked)} /> Show the book stock</label>
         <Edits><>
-          <button className="btn sm" disabled={busy || !changed.length} onClick={save}>Save {changed.length ? plural(changed.length, "count") : "counts"}</button>{" "}
-          <button className="btn sm accent" disabled={busy || counted < items.length} onClick={() => run("count_post", { doc: d.id })}
-            title={counted < items.length ? "Count every line first" : "Post the differences against the frozen book stock"}>Post differences</button>{" "}
+          <button className="btn sm" disabled={busy || !changed.length || changed.length !== dirty} onClick={save}>Save {changed.length ? plural(changed.length, "count") : "counts"}</button>{" "}
+          <button className="btn sm accent" disabled={busy || counted < items.length || dirty > 0} onClick={() => run("count_post", { doc: d.id })}
+            title={dirty ? "Save count edits first" : counted < items.length ? "Count every line first" : "Post the differences against the frozen book stock"}>Post differences</button>{" "}
           <button className="btn sm ghost" disabled={busy} onClick={() => run("count_cancel", { doc: d.id })}>Cancel the count</button>
         </></Edits>
       </div>
@@ -268,7 +306,7 @@ function CountSheet({ d, busy, run }: { d: InventoryDoc; busy: boolean; run: (a:
                 <tr key={k}>
                   <td><Prod id={i.product} /></td><td>{i.batch ?? <span className="faint">no batch</span>}</td><td>{TYPE_WORD[i.stock_type ?? "unrestricted"]}</td>
                   {book && <td className="num">{qty(i.book_qty)}</td>}
-                  <td className="num"><input className="input" type="number" min={0} step="any" style={{ width: 110, textAlign: "right" }} value={v}
+                  <td className="num"><input className="input" type="number" min={0} step="any" style={{ width: 110, textAlign: "right" }} value={v} disabled={busy}
                     onChange={(e) => setEdits({ ...edits, [k]: e.target.value })} aria-label={`Counted ${i.product} ${i.batch ?? ""}`} /></td>
                   {book && <td className="num">{n === null ? "" : n - i.book_qty === 0 ? <span className="faint">0</span> : <Badge sev="warning">{n > i.book_qty ? "+" : ""}{qty(n - i.book_qty)}</Badge>}</td>}
                 </tr>

@@ -21,7 +21,7 @@ DEPARTMENTS = {
 }
 
 
-def authorize(before: dict, after: dict, email: str) -> dict:
+def authorize(before: dict, after: dict, email: str, *, count_projection: bool = False) -> dict:
     finance = before.get("finance") or {}
     roles = finance.get("control_roles") or {}
     actor = email.strip().lower()
@@ -33,6 +33,8 @@ def authorize(before: dict, after: dict, email: str) -> dict:
     for name, _key, old, new in changed_records(before, after):
         if name == "purchase_valuation":
             continue  # server-derived immutable metadata, checked independently by transactions.protect
+        if count_projection and name == "location_products":
+            continue  # the official count posting computes on-hand from the journal
         if name in invoices:
             a, b = old or {}, new or {}
             if not old or not new:
