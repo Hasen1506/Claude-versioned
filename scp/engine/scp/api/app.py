@@ -1425,6 +1425,15 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
             parsed = schema.model_validate({**req.parameters, "dataset": ds, "action": req.action, "date": req.posting_date})
         except ValidationError as exc:
             raise HTTPException(422, "invalid command: " + str(exc)) from None
+        if req.kind == "stock" and req.action in ("count_enter", "count_post"):
+            count = next((d for d in ds.inventory_docs if d.id == parsed.doc), None)
+            if count is not None and count.date != req.posting_date:
+                raise HTTPException(409, "the posting date must match the physical inventory document")
+            if count is not None and req.action == "count_post" and parsed.counts is not None:
+                reviewed = [CountInput(location=i.location, product=i.product, batch=i.batch, stock_type=i.stock_type,
+                                       qty=i.counted) for i in count.items]
+                if reviewed != parsed.counts:
+                    raise HTTPException(409, "the saved counts changed; review them before posting differences")
         response = handler(parsed)
         if response.dataset is None:
             raise RuntimeError("an authoritative command must produce a complete result")

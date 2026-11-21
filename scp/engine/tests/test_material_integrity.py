@@ -12,6 +12,7 @@ from scp.companies.patch import make_patch
 from scp.model import Dataset, StockType
 
 from .test_companies import h
+from .test_company_commands import command
 from .test_commercial_integrity import save
 from .test_enterprise_integrity import client, team
 from .test_order_to_cash import taken
@@ -90,6 +91,45 @@ def test_count_material_effect_cannot_differ_from_the_documented_count():
     doc = x.model_dump(mode="json")
     next(m for m in doc["movements"] if m["type"] == "adjustment")["qty"] = -4
     assert save(owner, cid, doc).status_code == 403
+
+
+def test_live_count_posts_one_reviewed_difference_without_master_data_authority():
+    day = JAN - timedelta(days=1)
+    original = taken()[0]
+    policy = original.finance.model_copy(update={"control_roles": {
+        "warehouse": ["buyer@integrity.example"], "inventory_adjustment": ["buyer@integrity.example"],
+    }})
+    owner, warehouse, company = team(original.model_copy(update={"finance": policy}))
+    date_arg = {"date": day.isoformat()}
+    begin = command(warehouse, company, "begin-count", "stock", "count_doc", 1,
+                    nodes=[{"location": "P", "product": "A"}], **date_arg)
+    assert begin.status_code == 200, begin.text
+    doc = begin.json()["result"]["report"]["doc"]
+    counts = [{"location": "P", "product": "A", "stock_type": "unrestricted", "qty": 95}]
+    entered = command(warehouse, company, "enter-count", "stock", "count_enter", 2, doc=doc, counts=counts, **date_arg)
+    assert entered.status_code == 200, entered.text
+    approval = client.put(f"/api/companies/{company}/approval", headers=h(owner), json={"approval": True})
+    assert approval.status_code == 200, approval.text
+    stale_counts = [{**counts[0], "qty": 96}]
+    stale = command(warehouse, company, "post-count", "stock", "count_post", 3, doc=doc, counts=stale_counts, **date_arg)
+    assert stale.status_code == 409 and "saved counts changed" in stale.text
+    wrong_day = command(warehouse, company, "post-count", "stock", "count_post", 3, doc=doc, counts=counts)
+    assert wrong_day.status_code == 409 and "posting date" in wrong_day.text
+    raw = entered.json()["company"]["dataset"]
+    next(lp for lp in raw["location_products"] if (lp["location"], lp["product"]) == ("P", "A"))["on_hand"] = 99
+    denied = save(warehouse, company, raw, 3)
+    assert denied.status_code == 403 and "master_data" in denied.text
+    posted = command(warehouse, company, "post-count", "stock", "count_post", 3, doc=doc, counts=counts, **date_arg)
+    assert posted.status_code == 200, posted.text
+    retry = command(warehouse, company, "post-count", "stock", "count_post", 3, doc=doc, counts=counts, **date_arg)
+    assert retry.status_code == 200 and retry.json()["duplicate"]
+    saved = retry.json()["company"]
+    assert saved["meta"]["revision"] == 4
+    dataset = Dataset.model_validate(saved["dataset"])
+    assert dataset.inventory_docs[0].status == "posted"
+    assert [(m.date, m.qty) for m in dataset.movements if m.type == "adjustment"] == [(day, -5)]
+    assert stock(before(dataset, JAN))[("P", "A")] == 95
+    assert next(lp.on_hand for lp in dataset.location_products if (lp.location, lp.product) == ("P", "A")) == 95
 
 
 def test_cancelling_an_open_count_releases_its_block_without_removing_history():

@@ -159,13 +159,15 @@ def out_of_scope(before: dict, after: dict, places: list[str], families: list[st
     return bad
 
 
-def split_master(before: dict, after: dict) -> tuple[dict, dict]:
+def split_master(before: dict, after: dict, *, count_projection: bool = False) -> tuple[dict, dict]:
     """``after`` with its master-data changes taken out (as in ``before``), and those changes on their own: a
     document of just the changed master-data parts, before and after."""
     applied = dict(after)
     held_before: dict[str, Any] = {}
     held_after: dict[str, Any] = {}
     for name in MASTER:
+        if count_projection and name == "location_products":
+            continue
         a, b = before.get(name), after.get(name)
         if a == b:
             continue
