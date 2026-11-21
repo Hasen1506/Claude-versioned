@@ -53,6 +53,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from ..companies import (
@@ -277,11 +278,11 @@ async def gate(request: Request, call_next):
     if signin_required and path.startswith("/api/") and path not in OPEN_PATHS and path not in PORTAL_PATHS \
             and request.method != "OPTIONS":
         try:
-            get_companies().whoami(token_of(request))
+            await run_in_threadpool(lambda: get_companies().whoami(token))
         except CompanyError as e:
             return company_error(request, e)
     elif (path.startswith("/api/") and request.method == "POST" and path not in OPEN_PATHS
-          and path not in RATED_PATHS and not get_companies().signed_in(token_of(request))):
+          and path not in RATED_PATHS and not await run_in_threadpool(lambda: get_companies().signed_in(token))):
         # a made-up Bearer token or cookie is no session: it is limited like no token at all (roadmap D)
         # CV-M04: CPU-heavy planning calls without a session are limited per address and in size
         cap = _int_env("SCP_ANON_MAX_MB", 64) * 1024 * 1024

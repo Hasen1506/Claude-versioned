@@ -363,6 +363,7 @@ test("a viewer can open and read every page but change nothing, even after a rel
   await v.goto(link);
   await makeAccount(v, `reader@gt-viewer${R()}.example`, "Reader");
   await v.getByRole("button", { name: "Accept the invitation" }).click();
+  await expect(v.getByText(/You joined Kaveri Kitchenware/)).toBeVisible();
   await v.goto("/#/account");
   await v.reload();
   await v.getByRole("button", { name: /Open Kaveri Kitchenware/ }).click();

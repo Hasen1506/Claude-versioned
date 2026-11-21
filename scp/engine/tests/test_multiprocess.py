@@ -8,11 +8,12 @@ import multiprocessing as mp
 import os
 import secrets
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from scp.companies.store import Companies, CompanyError
-from scp.versions.store import Store
+from scp.companies.store import Companies, CompanyError, get_companies
+from scp.versions.store import Store, set_store
 
 from .factory import base
 
@@ -156,6 +157,76 @@ def test_the_lock_is_held_across_connections(database):
     t.join()
     assert b.lock.acquire(blocking=False) is True
     b.lock.release()
+
+
+def test_postgres_saves_serialize_per_company_and_leave_other_companies_available(database, monkeypatch):
+    from .test_companies import client, h
+    source = Store(database)
+    if source.backend != "postgresql":
+        source.db.close()
+        pytest.skip("SQLite uses one store lock")
+    set_store(source)
+    a, b = get_companies(), Companies(Store(database))
+    actor_a = a.signup("scope-a@example.invalid", "First", "fixture-only-river-birch")
+    actor_b = b.signup("scope-b@example.invalid", "Second", "fixture-only-loon-flock")
+    first = a.create(actor_a.user, base())
+    other = a.create(actor_b.user, base())
+    monkeypatch.setenv("SCP_REQUIRE_SIGNIN", "1")
+
+    def changed(name):
+        doc = base()
+        doc["settings"]["company_name"] = name
+        return doc
+
+    def same_scope():
+        return a.save(actor_a.user, first.id, changed("Contended edit"), 1)
+
+    def other_scope():
+        route = f"/api/companies/{other.id}"
+        read = client.get(route, headers=h(actor_b.token))
+        assert read.status_code == 200 and read.json()["meta"]["revision"] == 1
+        saved = client.put(route, headers=h(actor_b.token), json={
+            "dataset": changed("Independent edit"), "base_revision": 1,
+        })
+        assert saved.status_code == 200, saved.text
+        return saved.json()
+
+    with ThreadPoolExecutor(8) as workers:
+        with a.lock.scoped("company", first.id):
+            assert not b.lock.acquire(blocking=False)     # membership or other global work still excludes a live save
+            same = [workers.submit(same_scope) for _ in range(6)]
+            from_other_store = workers.submit(b.save, actor_a.user, first.id, changed("Other server's edit"), 1)
+            result = workers.submit(other_scope).result(timeout=10)
+            assert result["saved"] and result["meta"]["revision"] == 2
+            winner = a.save(actor_a.user, first.id, changed("First edit"), 1)
+            assert winner.saved and winner.meta.revision == 2
+        for waiting in [*same, from_other_store]:
+            with pytest.raises(CompanyError) as stale:
+                waiting.result(timeout=10)
+            assert stale.value.status == 409
+    assert a.open(actor_a.user, first.id).dataset["settings"]["company_name"] == "First edit"
+    assert b.open(actor_b.user, other.id).dataset["settings"]["company_name"] == "Independent edit"
+    for cid in (first.id, other.id):
+        rows = b.db.execute("SELECT revision FROM company_revisions WHERE company_id = ? ORDER BY revision", (cid,))
+        assert [row[0] for row in rows] == [1, 2]
+    a.db.close()
+    b.db.close()
+
+
+def test_postgres_reopens_a_dropped_idle_scoped_connection(database):
+    store = Store(database)
+    if store.backend != "postgresql":
+        store.db.close()
+        pytest.skip("SQLite has no connection pool")
+    import psycopg
+    with store.lock.scoped("company", "company-pool-fixture"):
+        failed = store.db.connection.info.backend_pid
+    with psycopg.connect(database, autocommit=True) as observer:
+        observer.execute("SELECT pg_terminate_backend(%s)", (failed,))
+    with store.lock.scoped("company", "company-pool-fixture"):
+        assert store.db.connection.info.backend_pid != failed
+        assert store.db.execute("SELECT 1").fetchone()[0] == 1
+    store.db.close()
 
 
 def test_one_process_leads_the_clock(database):
