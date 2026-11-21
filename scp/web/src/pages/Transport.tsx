@@ -3,12 +3,13 @@
 // carrier's bill shared over what they carried. Engine: scp/transport.
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { Dataset, FreightRow, LoadGroup, TransportAction, TransportView } from "../api/types";
+import type { Dataset, FreightRow, LoadGroup, TransportAction, TransportActionResponse, TransportView } from "../api/types";
 import { Badge, Edits, Empty, Panel, StageHeader, StatTile, Tabs } from "../components/ui";
 import { SchemaForm } from "../schema/SchemaForm";
 import { day, exactMoney, money, pct, plural, qty } from "../lib/format";
 import { Msg, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
+import { useSettlement } from "../state/settlement";
 import { store, useStore } from "../state/store";
 
 type View = "load" | "orders" | "carriers";
@@ -33,26 +34,29 @@ function useStep() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const run = async (action: TransportAction, extra: Parameters<typeof api.transportAct>[2] = {}) => {
+  const apply = async (operation: () => Promise<string>) => {
     setBusy(true); setErr(null); setMsg(null);
     try {
-      const before = store.get().dataset!;
-      const out = await api.transportAct(before, action, extra);
-      store.replace(out.dataset, before);
-      setMsg(out.report.message);
+      setMsg(await operation());
     } catch (e) {
       setErr(String(e).replace(/^Error:\s*/, ""));
     } finally {
       setBusy(false);
     }
   };
+  const run = (action: TransportAction, extra: Parameters<typeof api.transportAct>[2] = {}) => apply(async () => {
+    const before = store.get().dataset!;
+    const out = await api.transportAct(before, action, extra);
+    store.replace(out.dataset, before);
+    return out.report.message;
+  });
   const banners = <>
     {msg && <div className="banner info" role="status"><Badge sev="ok">Done</Badge><span><Msg text={msg} /></span><span className="spacer" />
       <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
-    {err && <div className="banner error" role="alert"><Badge sev="error">Not done</Badge><span>{err}</span><span className="spacer" />
+    {err && <div className="banner error" role="alert"><span>{err}</span><span className="spacer" />
       <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setErr(null)}>✕</button></div>}
   </>;
-  return { busy, run, banners };
+  return { busy, run, apply, banners };
 }
 
 const kg = (v: number) => `${qty(v)} kg`;
@@ -97,7 +101,7 @@ export function Transport({ route }: { route: string[] }) {
       {step.banners}
       {!v && !err && <p className="faint">Building the loads…</p>}
       {v && view === "load" && <ToLoad v={v} step={step} />}
-      {v && view === "orders" && <Orders v={v} step={step} />}
+      {v && view === "orders" && <Orders v={v} step={step} planningStart={ds.settings.planning_start} />}
       {v && view === "carriers" && <Carriers ds={ds} v={v} />}
     </div></div>
   );
@@ -147,12 +151,10 @@ function ToLoad({ v, step }: { v: TransportView; step: Step }) {
   </>;
 }
 
-function Orders({ v, step }: { v: TransportView; step: Step }) {
+function Orders({ v, step, planningStart }: { v: TransportView; step: Step; planningStart: string }) {
   const nm = useNames();
   const cur = v.currency;
-  const [bill, setBill] = useState<Record<string, { amount: string; ref: string }>>({});
   if (!v.orders.length) return <Panel><Empty title="No freight orders yet">Make them from what is waiting to load.</Empty></Panel>;
-  const b = (id: string) => bill[id] ?? { amount: "", ref: "" };
   return <>
     <div className="grid-auto">
       <StatTile label="Open freight" value={money(v.planned_cost, cur)} sub="planned, not settled yet" tone="ink" />
@@ -182,13 +184,7 @@ function Orders({ v, step }: { v: TransportView; step: Step }) {
                 <button className="btn sm" disabled={step.busy} aria-label={`Carrier rejected ${id}`} onClick={() => step.run("reject", { order: id })}>Rejected</button></>}
               {(f.status === "accepted" || (f.status === "planned" && !f.carrier)) &&
                 <button className="btn sm accent" disabled={step.busy} aria-label={`Ship ${id}`} onClick={() => step.run("ship", { order: id })}>Ship</button>}
-              {f.status === "shipped" && <>
-                <input className="input num" style={{ width: 100 }} type="number" min={0} step="any" aria-label={`Billed ${id}`} placeholder={String(f.planned_cost)}
-                  value={b(id).amount} onChange={(e) => setBill({ ...bill, [id]: { ...b(id), amount: e.target.value } })} />
-                <input className="input" style={{ width: 90 }} aria-label={`Bill number ${id}`} placeholder="their no." value={b(id).ref}
-                  onChange={(e) => setBill({ ...bill, [id]: { ...b(id), ref: e.target.value } })} />
-                <button className="btn sm accent" disabled={step.busy} aria-label={`Settle ${id}`}
-                  onClick={() => step.run("settle", { order: id, billed: b(id).amount === "" ? f.planned_cost : Number(b(id).amount), bill: b(id).ref })}>Settle</button></>}
+              {(f.status === "shipped" || f.status === "settled") && <FreightSettlement order={f} step={step} planningStart={planningStart} />}
               {["planned", "tendered", "accepted"].includes(f.status ?? "") &&
                 <button className="btn sm ghost" disabled={step.busy} aria-label={`Cancel ${id}`} onClick={() => step.run("cancel", { order: id })}>Cancel</button>}
             </div></Edits></td>
@@ -196,6 +192,33 @@ function Orders({ v, step }: { v: TransportView; step: Step }) {
         })}</tbody>
       </table></div>
     </Panel>
+  </>;
+}
+
+function FreightSettlement({ order, step, planningStart }: { order: FreightRow["order"]; step: Step; planningStart: string }) {
+  const { id, shipped_on: shipped } = order;
+  const [amount, setAmount] = useState("");
+  const [bill, setBill] = useState("");
+  const [day, setDay] = useState("");
+  const settlement = useSettlement("transport", id);
+  const date = day || (shipped && shipped > planningStart ? shipped : planningStart);
+  const billed = amount === "" ? order.planned_cost ?? 0 : Number(amount);
+  const report = async (operation: ReturnType<typeof settlement.retry>) =>
+    ((await operation).result as Pick<TransportActionResponse, "report">).report.message;
+  const post = () => settlement.live ? step.apply(() => report(settlement.post(date, billed, bill)))
+    : step.run("settle", { order: id, billed, bill });
+  if (settlement.pending) return <button className="btn sm accent" disabled={step.busy} aria-label={`Retry bill ${id}`}
+    onClick={() => step.apply(() => report(settlement.retry()))}>Retry bill</button>;
+  if (order.status !== "shipped") return null;
+  return <>
+    <input className="input num" style={{ width: 100 }} type="number" min={0} step="any" aria-label={`Billed ${id}`}
+      placeholder={String(order.planned_cost ?? 0)} value={amount} onChange={(e) => setAmount(e.target.value)} />
+    <input className="input" style={{ width: 90 }} aria-label={`Bill number ${id}`} placeholder="their no." value={bill}
+      onChange={(e) => setBill(e.target.value)} />
+    {settlement.live && <input className="input" type="date" aria-label={`Posting date ${id}`} min={shipped ?? undefined}
+      value={date} onChange={(e) => setDay(e.target.value)} />}
+    <button className="btn sm accent" disabled={step.busy || !Number.isFinite(billed) || billed < 0} aria-label={`Settle ${id}`}
+      onClick={post}>Settle</button>
   </>;
 }
 

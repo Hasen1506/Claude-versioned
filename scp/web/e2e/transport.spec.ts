@@ -15,6 +15,74 @@ async function openKaveri(page: Page) {
 
 const done = (page: Page) => page.locator('.banner[role="status"]').last();
 
+test("a live carrier bill can recover lost confirmation after reload without doubling the payable", async ({ page }) => {
+  const shipped = "2026-01-06";
+  const date = "2026-01-07";
+  const company = {
+    settings: { company_name: "Carrier bill fixture", planning_start: "2026-01-05", horizon_days: 28 },
+    locations: [{ id: "P", type: "plant", entity: "E1" }, { id: "C", type: "customer" }],
+    entities: [{ id: "E1", name: "Posting entity" }],
+    lanes: [{ id: "L", origin: "P", destination: "C", modes: [{ mode: "truck_ftl", transit_days: 1 }] }],
+    carriers: [{ id: "CR", name: "Fixture Carrier", rates: [{ lane: "L", per_shipment: 90 }] }],
+    freight_orders: [{ id: "FO-1", lane: "L", mode: "truck_ftl", carrier: "CR", ship_from: "P", ship_to: "C",
+      planned_on: shipped, shipped_on: shipped, status: "shipped", planned_cost: 90,
+      deliveries: ["DL-1", "DL-2", "DL-3"], weights: { "DL-1": 100, "DL-2": 100, "DL-3": 100 } }],
+  };
+  await page.goto("/");
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Import a file", exact: true }).click();
+  await (await chooser).setFiles({ name: "freight.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(company)) });
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  await page.goto("/#/account");
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill(`carrier-billing-${Date.now()}@example.invalid`);
+  await page.getByLabel("Your name").fill("Freight accounts");
+  await page.getByLabel(/^Password/).fill("fixture-only-spring-clover");
+  await page.getByRole("button", { name: "Make the account", exact: true }).click();
+  await page.getByRole("button", { name: "Keep it on the server", exact: true }).click();
+  await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+  await page.goto("/#/transport/orders");
+
+  let companyUrl = "";
+  const requests: { id: string; kind: string; action: string; posting_date: string; parameters: object }[] = [];
+  await page.route("**/api/companies/*/commands", async (route) => {
+    requests.push(route.request().postDataJSON());
+    if (requests.length === 1) {
+      companyUrl = route.request().url().replace(/\/commands$/, "");
+      const committed = await route.fetch();
+      expect(committed.ok(), await committed.text()).toBe(true);
+      return route.abort("failed");
+    }
+    await route.continue();
+  });
+  await expect(page.getByLabel("Posting date FO-1")).toHaveValue(shipped);
+  await page.getByLabel("Posting date FO-1").fill(date);
+  await page.getByLabel("Billed FO-1").fill("100");
+  await page.getByLabel("Bill number FO-1").fill("FRT-101");
+  const post = page.getByRole("button", { name: "Settle FO-1" });
+  await post.click();
+  await expect(page.getByRole("alert")).toContainText("Carrier bill confirmation is unavailable");
+  await page.reload();
+  const order = page.getByRole("row").filter({ hasText: "FO-1" });
+  await expect(order).toContainText("settled");
+  await expect(post).toHaveCount(0);
+  await order.getByRole("button", { name: "Retry bill FO-1" }).click();
+  await expect(done(page)).toContainText("FO-1 settled (their FRT-101): INR 100.00");
+  await expect(order).toContainText("₹33.34");
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toMatchObject({ id: requests[0].id, kind: "transport", action: "settle", posting_date: date,
+    parameters: { order: "FO-1", billed: 100, bill: "FRT-101" } });
+  const saved = await (await page.request.get(companyUrl)).json();
+  expect(saved.meta.revision).toBe(2);
+  expect(saved.dataset.freight_orders[0]).toMatchObject({ billed: 100, status: "settled", settled_on: date, bill: "FRT-101" });
+  const { csrf } = await (await page.request.get("/api/auth/csrf")).json();
+  const books = await page.request.post(`/api/accounting?period_end=${date}`, { data: saved.dataset, headers: { "X-CSRF-Token": csrf } });
+  expect(books.ok(), await books.text()).toBe(true);
+  const ledger = await books.json();
+  expect(ledger.vouchers.filter((v: { number: string }) => v.number === "FO-1")).toHaveLength(1);
+  expect(ledger.balances).toContainEqual(expect.objectContaining({ company: "E1", account: "PAYABLES", balance: -100 }));
+});
+
 test("loads built by weight and volume, the cheapest carrier, a rejection, the truck shipped and its bill settled", async ({ page }) => {
   test.setTimeout(240_000);
   await openKaveri(page);
