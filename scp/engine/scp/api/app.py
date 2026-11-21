@@ -859,11 +859,15 @@ class PoActionResponse(Out):
 
 @app.post("/api/purchasing/act", response_model=PoActionResponse)
 def post_po_action(req: PoActionRequest) -> PoActionResponse:
+    return _apply_po_action(req, who_asks() or req.by)
+
+
+def _apply_po_action(req: PoActionRequest, actor: str) -> PoActionResponse:
     lines = None if req.lines is None else [
         {**x.model_dump(exclude_none=True), **({"order": x.order or x.id})} for x in req.lines]
     try:
         new, rep = purchasing_act(req.dataset, req.action, req.po, lines=lines, on=req.date, reference=req.reference,
-                                  note=req.note, by=who_asks() or req.by, orders=req.orders, supplier=req.supplier,
+                                  note=req.note, by=actor, orders=req.orders, supplier=req.supplier,
                                   location=req.location, product=req.product, valid_to=req.valid_to, qty=req.qty,
                                   tax=req.tax, kind=req.kind, return_id=req.return_id, amount=req.amount,
                                   stock_type=req.stock_type, replace=req.replace,
@@ -1404,7 +1408,7 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
 
         return execute_command(get_companies(), user, cid, req, post_cost)
     adapters = {
-        "purchasing": (PoActionRequest, post_po_action),
+        "purchasing": (PoActionRequest, lambda purchase: _apply_po_action(purchase, user.email)),
         "sales": (SalesActionRequest, post_sales_action),
         "stock": (PostRequest, post_posting),
         "transport": (TransportActionRequest, post_transport_action),
