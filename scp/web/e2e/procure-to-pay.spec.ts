@@ -30,7 +30,7 @@ async function open(page:Page) {
 
 const done=(page:Page)=>page.locator('.banner[role="status"]').last();
 
-test("a live partial payment can be retried after a reload without posting twice", async ({ page }) => {
+for (const amount of [40, 110]) test(`a live ${amount === 40 ? "partial" : "full"} supplier payment can be retried after a reload`, async ({ page }) => {
   await page.goto("/");
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Import a file", exact: true }).click();
@@ -63,29 +63,32 @@ test("a live partial payment can be retried after a reload without posting twice
     attempts.push(route.request().postDataJSON().id);
     if (attempts.length === 1) {
       companyUrl = route.request().url().replace(/\/commands$/, "");
-      const committed = await route.fetch();
-      expect(committed.ok()).toBe(true);
+      if (amount === 110) {
+        const committed = await route.fetch();
+        expect(committed.ok()).toBe(true);
+      }
       return route.abort("failed");
     }
     await route.continue();
   });
-  const enterPayment = async () => {
-    await page.getByLabel("Paid on").fill("2026-01-06");
-    await page.getByLabel("Amount paid").fill("40");
-    await page.getByLabel("Bank reference").fill("BANK-FIXTURE-1");
-    await page.getByRole("button", { name: /^Pay ₹40\.00$/ }).click();
-  };
-  await enterPayment();
+  await page.getByLabel("Paid on").fill("2026-01-06");
+  await page.getByLabel("Amount paid").fill(String(amount));
+  await page.getByLabel("Bank reference").fill("BANK-FIXTURE-1");
+  const post = page.getByRole("button", { name: `Pay ₹${amount}.00`, exact: true });
+  await post.click();
   await expect(page.getByRole("alert")).toContainText("Payment confirmation is unavailable");
   await page.reload();
-  await enterPayment();
-  await expect(done(page)).toContainText("INR 70.00 still open");
+  if (amount === 110) await expect(post).toHaveCount(0);
+  const retry = page.getByRole("button", { name: "Retry payment" });
+  await expect(retry).toBeVisible();
+  await retry.click();
+  await expect(done(page)).toContainText(amount === 40 ? "INR 70.00 still open" : "settled");
   expect(attempts).toHaveLength(2);
   expect(attempts[0]).toBe(attempts[1]);
   const saved = await (await page.request.get(companyUrl)).json();
   expect(saved.meta.revision).toBe(2);
   expect(saved.dataset.supplier_invoices[0].payments).toMatchObject([
-    { amount: 40, date: "2026-01-06", reference: "BANK-FIXTURE-1" },
+    { amount, date: "2026-01-06", reference: "BANK-FIXTURE-1" },
   ]);
 });
 

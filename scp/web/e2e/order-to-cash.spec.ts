@@ -19,15 +19,71 @@ function fixture() {
   };
 }
 
-async function open(page:Page) {
+async function open(page:Page, company: object = fixture()) {
   await page.goto('/');
   const chooser=page.waitForEvent('filechooser');
   await page.getByRole('button',{name:'Import a file',exact:true}).click();
-  await (await chooser).setFiles({name:'o2c.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture()))});
+  await (await chooser).setFiles({name:'o2c.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(company))});
   await expect(page.getByText(/Everything is up to date/)).toBeVisible({timeout:45000});
 }
 
 const done=(page:Page)=>page.locator('.banner[role="status"]').last();
+
+for (const credit of [false, true]) {
+  test(`live ${credit ? "customer refund" : "customer receipt"} survives a lost confirmation and reload`, async ({ page }) => {
+    const id = credit ? "CN-00001" : "INV-00001";
+    const amount = credit ? 55 : 40;
+    await open(page, { ...fixture(), invoices: [{ id, kind: credit ? "credit_note" : "invoice", customer: "K",
+      date: "2026-01-05", due_date: "2026-02-04", tax_rate: 0.1,
+      lines: [{ product: "A", qty: credit ? 5 : 10, price: 10 }] }] });
+    await page.goto("/#/account");
+    await page.getByRole("tab", { name: "Make an account" }).click();
+    await page.getByLabel("E-mail").fill(`receivables-${id}-${Date.now()}@example.invalid`);
+    await page.getByLabel("Your name").fill("Accounts receivable");
+    await page.getByLabel(/^Password/).fill("fixture-only-autumn-clover");
+    await page.getByRole("button", { name: "Make the account", exact: true }).click();
+    await page.getByRole("button", { name: "Keep it on the server", exact: true }).click();
+    await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+    await page.goto(`/#/selling/bill/${id}`);
+
+    let companyUrl = "";
+    const commands: { id: string; kind: string; action: string; posting_date: string; parameters: object }[] = [];
+    await page.route("**/api/companies/*/commands", async (route) => {
+      commands.push(route.request().postDataJSON());
+      if (commands.length === 1) {
+        companyUrl = route.request().url().replace(/\/commands$/, "");
+        const committed = await route.fetch();
+        expect(committed.ok()).toBe(true);
+        return route.abort("failed");
+      }
+      await route.continue();
+    });
+    await page.getByLabel("Paid on").fill("2026-01-06");
+    await page.getByLabel("Amount", { exact: true }).fill(String(amount));
+    await page.getByLabel("Bank reference").fill("RECEIVABLES-FIXTURE-1");
+    const post = page.getByRole("button", { name: credit ? "Paid out" : "Payment received", exact: true });
+    await post.click();
+    await expect(page.getByRole("alert")).toContainText("Payment confirmation is unavailable");
+    await page.reload();
+    if (credit) await expect(post).toHaveCount(0);
+    const retry = page.getByRole("button", { name: "Retry payment" });
+    await expect(retry).toBeVisible();
+    await retry.click();
+    await expect(done(page)).toContainText(credit ? "settled" : "INR 70.00 still open");
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toMatchObject({ id: commands[0].id, kind: "sales", action: "pay", posting_date: "2026-01-06",
+      parameters: { id, amount, reference: "RECEIVABLES-FIXTURE-1" } });
+    const saved = await (await page.request.get(companyUrl)).json();
+    expect(saved.meta.revision).toBe(2);
+    expect(saved.dataset.invoices[0].payments).toMatchObject([{ amount, date: "2026-01-06", reference: "RECEIVABLES-FIXTURE-1" }]);
+    const { csrf } = await (await page.request.get("/api/auth/csrf")).json();
+    const books = await page.request.post("/api/accounting?period_end=2026-01-06", {
+      data: saved.dataset, headers: { "X-CSRF-Token": csrf },
+    });
+    expect(books.ok(), await books.text()).toBe(true);
+    expect((await books.json()).balances).toContainEqual(expect.objectContaining({ account: "BANK", balance: credit ? -55 : 40 }));
+  });
+}
 
 test('order to cash: a two-line order over the credit limit is released, delivered, invoiced, paid, partly returned and credited; a quotation is won',async ({page})=>{
   test.setTimeout(240000);

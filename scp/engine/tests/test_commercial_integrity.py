@@ -12,10 +12,11 @@ from scp.companies.patch import make_patch
 from scp.model import Dataset, NegativeStock
 from scp.purchasing import PurchasingError, act
 
+from .test_company_commands import command
 from .test_companies import h, join, signup
 from .test_enterprise_integrity import balance, client, team
 from .test_intercompany import add, group, received, ship
-from .test_order_to_cash import taken
+from .test_order_to_cash import shop, taken
 from .test_procure_to_pay import JAN, ordered
 
 
@@ -74,6 +75,52 @@ def test_sales_cancel_retains_the_original_period_and_posts_a_balanced_dated_rev
     owner, _, cid = team(x)
     assert save(owner, cid, cancelled).status_code == 200
     assert save(owner, cid, x, 2).status_code == 403  # history restore cannot resurrect a cancellation
+
+
+def test_an_imported_receivable_keeps_its_currency_without_any_stock_postings():
+    raw = shop()
+    for row in raw["location_products"]:
+        row["on_hand"] = 0
+    raw["invoices"] = [{"id": "INV-00001", "customer": "K", "date": "2026-01-05", "due_date": "2026-02-04",
+                        "tax_rate": 0.1, "lines": [{"product": "A", "qty": 10, "price": 10}]}]
+    original = Dataset.model_validate(raw)
+    owner, _, cid = team(original)
+    changed = original.model_dump(mode="json")
+    changed["settings"]["currency"] = "USD"
+    result = save(owner, cid, changed)
+    assert result.status_code == 403 and "keep their company currency" in result.text
+    kept = client.get(f"/api/companies/{cid}", headers=h(owner)).json()
+    assert kept["meta"]["revision"] == 1
+    stored = Dataset.model_validate(kept["dataset"])
+    assert view(stored).currency == "INR" and balance(stored, "RECEIVABLES") == 110
+
+
+def test_live_customer_receipt_preserves_separation_and_reconciles_the_original_retry():
+    original = shipped()
+    owner, biller, cid = team(original)
+    treasury = signup("treasury@integrity.example")
+    join(owner, cid, "treasury@integrity.example", "planner")
+    doc = original.model_dump(mode="json")
+    doc["finance"]["control_roles"] = {"billing": ["buyer@integrity.example"],
+                                       "payments": ["buyer@integrity.example", "treasury@integrity.example"]}
+    doc["finance"]["separate_payments"] = True
+    assert save(owner, cid, doc).status_code == 200
+    billed_doc = command(biller, cid, "bill-1", "sales", "create_invoices", 2)
+    assert billed_doc.status_code == 200, billed_doc.text
+    details = {"id": "INV-00001", "date": "2026-02-10", "amount": 40, "reference": "BANK-RECEIPT-1"}
+    denied = command(biller, cid, "receipt-1", "sales", "pay", 3, **details)
+    assert denied.status_code == 403 and "different person" in denied.text
+    first = command(treasury, cid, "receipt-1", "sales", "pay", 3, **details)
+    assert first.status_code == 200, first.text
+    retry = command(treasury, cid, "receipt-1", "sales", "pay", 3, **details)
+    assert retry.status_code == 200 and retry.json()["duplicate"]
+    keep = retry.json()["company"]
+    assert keep["meta"]["revision"] == 4
+    stored = Dataset.model_validate(keep["dataset"])
+    assert len(stored.invoices[0].payments) == 1
+    as_of = date(2026, 2, 10)
+    assert balance(stored, "BANK", JAN) == 0 and balance(stored, "BANK", as_of) == 40
+    assert balance(stored, "RECEIVABLES", JAN) == 2299 and balance(stored, "RECEIVABLES", as_of) == 2259
 
 
 def test_intercompany_cancel_preserves_each_entitys_past_and_reverses_both_sides():

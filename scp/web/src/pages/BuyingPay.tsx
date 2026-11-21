@@ -1,12 +1,13 @@
 // Phase N on the Buying page: supplier invoices checked against the order and the goods received, what is owed to
 // whom, returns to suppliers and contracts. Every step is an engine action (/api/purchasing/act).
-import { useMemo, useRef, useState } from "react";
-import { api, ApiError } from "../api/client";
+import { useMemo, useState } from "react";
+import { api } from "../api/client";
 import type { Dataset, PoAction, PoActionInput, PoActionResponse, PurchasingView, StockType, SupplierInvoiceView } from "../api/types";
 import { Badge, Edits, Empty, Panel, Reading, StatTile } from "../components/ui";
 import { day, exactMoney, qty, unitMoney } from "../lib/format";
 import { Loc, Msg, Prod, namesOf } from "../lib/names";
 import { go, href } from "../lib/router";
+import { useSettlement } from "../state/settlement";
 import { store } from "../state/store";
 
 type Sev = "error" | "warning" | "info" | "ok";
@@ -35,55 +36,15 @@ export function poAct(action: PoAction, po: string, extra: PoActionInput = {}) {
   return applyPurchasing((dataset) => api.poAction(dataset, action, po, extra));
 }
 
-type PaymentAttempt = { key: string; id: string; details: string };
-
-export function usePoAction() {
+export function usePoAction(invoice?: string) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const payment = useRef<PaymentAttempt | null>(null);
-  const payLive = async (companyId: string, userId: string, po: string, extra: PoActionInput) => {
-    if (!extra.date) throw new Error("Choose the payment posting date.");
-    const parameters = { po, amount: extra.amount ?? null, reference: extra.reference?.trim() ?? "" };
-    const key = `scp.payment.pending.v1:${companyId}:${userId}:${po}`;
-    const details = JSON.stringify([extra.date, parameters]);
-    let previous = payment.current?.key === key ? payment.current : null;
-    try {
-      const saved = sessionStorage.getItem(key);
-      if (!previous && saved) previous = JSON.parse(saved) as PaymentAttempt;
-    } catch { /* continue with this screen's attempt if tab storage is unavailable */ }
-    if (previous && previous.details !== details) {
-      throw new Error("An earlier payment lacks confirmation. Retry with its original date, amount and bank reference first.");
-    }
-    const attempt = previous ?? { key, id: crypto.randomUUID(), details };
-    payment.current = attempt;
-    try { sessionStorage.setItem(key, JSON.stringify(attempt)); } catch { /* the screen retains the attempt */ }
-    const forget = () => {
-      payment.current = null;
-      try { sessionStorage.removeItem(key); } catch { /* tab storage unavailable */ }
-    };
-    let reply;
-    try {
-      reply = await store.postCompanyCommand(companyId, { kind: "purchasing", action: "pay_invoice",
-        id: attempt.id, posting_date: extra.date, parameters });
-    } catch (error) {
-      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
-        if (!previous || error.status === 409 || error.status === 422) forget();
-        throw error;
-      }
-      throw new Error("Payment confirmation is unavailable. Retry with the same details to check or finish the posting.");
-    }
-    forget();
-    await Promise.allSettled([store.run("purchasing"), store.run("plan")]);
-    return { dataset: reply.company.dataset as unknown as Dataset, report: (reply.result as Pick<PoActionResponse, "report">).report };
-  };
-  const run = async (action: PoAction, po: string, extra: PoActionInput = {}, after?: () => void) => {
+  const settlement = useSettlement("purchasing", invoice);
+  const execute = async (operation: () => Promise<Pick<PoActionResponse, "report">>, after?: () => void) => {
     setBusy(true); setErr(null); setMsg(null);
     try {
-      const { company, session } = store.get();
-      const livePayment = action === "pay_invoice" && company?.live;
-      if (livePayment && !session) throw new Error("Sign in again before posting the payment.");
-      const out = livePayment && session ? await payLive(company.id, session.user.id, po, extra) : await poAct(action, po, extra);
+      const out = await operation();
       setMsg(out.report.message);
       after?.();
       return out;
@@ -94,13 +55,23 @@ export function usePoAction() {
       setBusy(false);
     }
   };
+  const settle = async (post: ReturnType<typeof settlement.retry>) => {
+    const reply = await post;
+    await Promise.allSettled([store.run("purchasing"), store.run("plan")]);
+    return reply.result as Pick<PoActionResponse, "report">;
+  };
+  const run = (action: PoAction, po: string, extra: PoActionInput = {}, after?: () => void) => execute(
+    () => action === "pay_invoice" && settlement.live
+      ? settle(settlement.post(extra.date, extra.amount ?? null, extra.reference))
+      : poAct(action, po, extra), after);
+  const retryPayment = (after?: () => void) => execute(() => settle(settlement.retry()), after);
   const banners = <>
     {msg && <div className="banner info" role="status"><Badge sev="ok">Done</Badge><span><Msg text={msg} /></span><span className="spacer" />
       <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
-    {err && <div className="banner error" role="alert"><Badge sev="error">Not done</Badge><span>{err}</span><span className="spacer" />
+    {err && <div className="banner error" role="alert"><Badge sev="error">{settlement.pending ? "Unconfirmed" : "Not done"}</Badge><span>{err}</span><span className="spacer" />
       <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setErr(null)}>✕</button></div>}
   </>;
-  return { busy, run, banners };
+  return { busy, run, banners, retryPayment, paymentPending: settlement.pending };
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -228,7 +199,8 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
   const due = round2(inv.open - (inTime ? round2(inv.total * inv.discount) : 0));
   const [amount, setAmount] = useState("");
   const [ref, setRef] = useState("");
-  const { busy, run, banners } = usePoAction();
+  const { busy, run, banners, retryPayment, paymentPending } = usePoAction(inv.id);
+  const clearPayment = () => { setAmount(""); setRef(""); };
   const blocked = inv.status === "blocked";
   const open = inv.open > 0.005 && inv.status !== "cancelled";
   return (
@@ -270,6 +242,7 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
       </div>
       {inv.payments.length > 0 && <p className="small" style={{ marginTop: 8 }}>{inv.payments.map((p, i) => <span key={i}>{i > 0 && "; "}
         {exactMoney(p.amount, inv.currency)} on {day(p.date)}{p.discount ? ` (discount ${exactMoney(p.discount, inv.currency)})` : ""}{p.reference ? `, ${p.reference}` : ""}</span>)}</p>}
+      {paymentPending && <Edits><button className="btn accent" disabled={busy} onClick={() => retryPayment(clearPayment)}>Retry payment</button></Edits>}
       {open && !blocked && <Edits><div className="row wrap" style={{ gap: 10, marginTop: 10 }}>
         <label className="row small">{isCredit(inv.kind) ? "Refund received on" : "Paid on"} <input type="date" className="input" value={on} aria-label="Paid on"
           onChange={(e) => setOn(e.target.value || today)} /></label>
@@ -277,7 +250,7 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
           placeholder={String(due)} value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
         <label className="row small">Bank reference <input className="input" style={{ width: 120 }} value={ref} aria-label="Bank reference" onChange={(e) => setRef(e.target.value)} /></label>
         <button className="btn accent" disabled={busy} onClick={() => run("pay_invoice", inv.id, { date: on, amount: amount === "" ? null : Number(amount), reference: ref },
-          () => { setAmount(""); setRef(""); })}>{isCredit(inv.kind) ? "Refund received" : `Pay ${exactMoney(amount === "" ? due : Number(amount), inv.currency)}`}</button>
+          clearPayment)}>{isCredit(inv.kind) ? "Refund received" : `Pay ${exactMoney(amount === "" ? due : Number(amount), inv.currency)}`}</button>
         {inTime && <span className="small faint">in time for the cash discount of {exactMoney(round2(inv.total * inv.discount), inv.currency)}</span>}
       </div></Edits>}
       {inv.kind === "invoice" && inv.status !== "cancelled" && <PriceCorrection inv={inv} ds={ds} />}
