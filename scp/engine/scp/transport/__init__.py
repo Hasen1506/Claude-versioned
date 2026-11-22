@@ -28,10 +28,9 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from fractions import Fraction
 
-from ..actuals.freight import bills_for_order
 from ..actuals.post import PostingError, _ordered, _posted, origin
 from ..actuals.post import ship as ship_transfer
-from ..actuals.transfer_price import freight_company
+from ..freight import bills_for_order, freight_company
 from ..model import Dataset, FreightOrder, Payment, ReceiptKind, TransportLane
 from ..model.common import Out, TransportMode
 from ..model.transport import FreightBillCredit

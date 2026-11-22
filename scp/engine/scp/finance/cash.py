@@ -32,12 +32,12 @@ from datetime import date, timedelta
 from pydantic import Field
 
 from ..actuals.post import delivered, ordered_now
+from ..freight import carrier_bills
 from ..model import Dataset
 from ..model.common import Out
 from ..plan import PlanResult
 from ..plan.costing import fx
 from ..plan.rates import independent_demand
-from ..actuals.freight import carrier_bills
 
 IN = ("invoices", "to_bill", "orders", "forecast")
 OUT = ("supplier_invoices", "purchase_orders", "planned_buying", "production", "transfers", "freight")

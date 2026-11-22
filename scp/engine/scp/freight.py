@@ -5,9 +5,12 @@ from typing import Literal
 
 from pydantic import computed_field
 
-from .transfer_price import freight_company
-from ..model import Dataset, FreightOrder, Payment
-from ..model.common import Out
+from .model import Dataset, FreightOrder, Payment
+from .model.common import Out
+
+
+def freight_company(ds: Dataset, order: FreightOrder) -> str:
+    return ds.entity_at(order.ship_to if order.purchases else order.ship_from)
 
 
 class CarrierBill(Out):

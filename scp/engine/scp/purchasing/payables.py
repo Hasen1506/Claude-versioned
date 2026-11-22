@@ -23,13 +23,13 @@ from math import isfinite
 from collections import defaultdict
 from datetime import date, timedelta
 
+from ..freight import carrier_bills
 from ..model import (
     Dataset, GoodsMovement, MovementType, Payment, ReceiptKind, StockType, SupplierInvoice,
     SupplierInvoiceLine, SupplierReturn,
 )
 from ..plan.costing import contract_for, fx
 from ..model.currency import CurrencyPrecisionError, require_posting_currency
-from ..actuals.freight import carrier_bills
 from .result import (
     ActionReport, ContractLineView, ContractView, InvoiceLineView, PayableRow, PayablesView, SupplierInvoiceView,
     SupplierReturnView, ToInvoice,

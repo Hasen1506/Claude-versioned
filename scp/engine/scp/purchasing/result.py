@@ -4,9 +4,9 @@ from __future__ import annotations
 import datetime as dt
 from typing import Literal
 
+from ..freight import CarrierBill
 from ..model import Approval, Payment, PriceScale, ConfirmedDelivery
 from ..model.common import Out
-from ..actuals.freight import CarrierBill
 from .spread import LeadTimeSpread
 from .spend import SpendView
 

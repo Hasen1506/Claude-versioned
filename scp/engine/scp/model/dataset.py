@@ -138,6 +138,10 @@ class Dataset(Model):
     def location_by_id(self) -> dict[str, Location]:
         return _index(self.locations)
 
+    def entity_at(self, location: str | None) -> str:
+        place = self.location_by_id.get(location or "")
+        return (place.entity or "") if place is not None else ""
+
     @cached_property
     def entity_by_id(self) -> dict[str, LegalEntity]:
         return _index(self.entities)

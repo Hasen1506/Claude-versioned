@@ -31,12 +31,12 @@ from collections import defaultdict
 from datetime import date
 from xml.sax.saxutils import escape, quoteattr
 
-from ..actuals.transfer_price import destination, entity_of, freight_company, party
+from ..actuals.transfer_price import destination, entity_of, party
 from ..actuals.valuation import EPS, run_books
+from ..freight import bills_for_order, carrier_bills, freight_company
 from ..model import Dataset, FreightOrder, GoodsMovement, MovementType, SupplierInvoice
 from ..model.common import Out
 from ..plan.costing import fx
-from ..actuals.freight import bills_for_order, carrier_bills
 from .production import ProductionWip, production_wip
 
 # code → (name, Tally group, nature)

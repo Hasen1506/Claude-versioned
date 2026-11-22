@@ -6,7 +6,7 @@ from datetime import date
 
 from .. import intercompany as ic, sales, transport
 from ..actuals.post import delivered, ordered_now, ship_point
-from ..actuals.transfer_price import freight_company
+from ..freight import freight_company
 from ..model import Dataset, MovementType
 
 
