@@ -3717,6 +3717,26 @@ export interface components {
             /** Forecast */
             forecast: number;
         };
+        /** BankCashRef */
+        BankCashRef: {
+            /** Order */
+            order: string;
+            /** Voucher */
+            voucher: string;
+        };
+        /** BankMatchEvent */
+        BankMatchEvent: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Targets
+             * @description Empty releases the preceding match
+             */
+            targets: components["schemas"]["BankCashRef"][];
+        };
         /** BankMatchInput */
         BankMatchInput: {
             /**
@@ -4303,6 +4323,30 @@ export interface components {
              */
             note: string;
         };
+        /** CarrierBankLine */
+        CarrierBankLine: {
+            /** Id */
+            id: string;
+            /** Company */
+            company: string;
+            /** Account */
+            account: string;
+            /** Statement Line */
+            statement_line: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Reference */
+            reference: string;
+            /** Amount Minor */
+            amount_minor: number;
+            /** Currency */
+            currency: string;
+            /** History */
+            history?: components["schemas"]["BankMatchEvent"][];
+        };
         /** CarrierBankMatch */
         CarrierBankMatch: {
             /**
@@ -4330,6 +4374,13 @@ export interface components {
              * @default false
              */
             released: boolean;
+        };
+        /** CarrierBankView */
+        CarrierBankView: {
+            /** Lines */
+            lines: components["schemas"]["CarrierBankLine"][];
+            /** Unmatched Cash */
+            unmatched_cash: components["schemas"]["CarrierCash"][];
         };
         /** CarrierBill */
         CarrierBill: {
@@ -4371,6 +4422,11 @@ export interface components {
              * @default []
              */
             events: (components["schemas"]["CarrierBillAdjustment"] | components["schemas"]["CarrierRefund"] | components["schemas"]["CarrierBankMatch"] | components["schemas"]["FreightLandedCost"])[];
+            /**
+             * Statement Vouchers
+             * @default []
+             */
+            statement_vouchers: string[];
             /** Open */
             readonly open: number;
             /**
@@ -4397,6 +4453,26 @@ export interface components {
             reference: string;
             /** Reason */
             reason: string;
+            /** Amount Minor */
+            amount_minor: number;
+        };
+        /** CarrierCash */
+        CarrierCash: {
+            /** Order */
+            order: string;
+            /** Voucher */
+            voucher: string;
+            /** Company */
+            company: string;
+            /** Carrier */
+            carrier: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Reference */
+            reference: string;
             /** Amount Minor */
             amount_minor: number;
         };
@@ -4960,7 +5036,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "purchasing" | "sales" | "stock" | "transport" | "intercompany" | "outside" | "production_cost";
+            kind: "purchasing" | "sales" | "stock" | "transport" | "intercompany" | "outside" | "production_cost" | "carrier_bank";
             /** Action */
             action: string;
             /** Parameters */
@@ -5908,6 +5984,8 @@ export interface components {
             carriers?: components["schemas"]["Carrier"][];
             /** Freight Orders */
             freight_orders?: components["schemas"]["FreightOrder"][];
+            /** Carrier Bank Lines */
+            carrier_bank_lines?: components["schemas"]["CarrierBankLine"][];
             transport?: components["schemas"]["TransportSettings"];
             /** Third Party Orders */
             third_party_orders?: components["schemas"]["ThirdPartyOrder"][];
@@ -11753,6 +11831,7 @@ export interface components {
             invoices: components["schemas"]["SupplierInvoiceView"][];
             /** Carrier Bills */
             carrier_bills: components["schemas"]["CarrierBill"][];
+            carrier_bank: components["schemas"]["CarrierBankView"];
             /** To Invoice */
             to_invoice: components["schemas"]["ToInvoice"][];
             /** Payables */

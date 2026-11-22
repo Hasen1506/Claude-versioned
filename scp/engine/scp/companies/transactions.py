@@ -32,10 +32,10 @@ def _rows(doc: dict, name: str) -> dict[str, dict]:
 
 
 def protect(before: dict, after: dict, email: str, *, allow_production_posting: bool = False,
-            freight_action: str = "") -> dict:
+            freight_action: str = "", allow_carrier_bank: bool = False) -> dict:
     """Return a normalized document or refuse an invalid financial state transition."""
     names = ("supplier_invoices", "movements", "purchase_orders", "invoices", "intercompany_invoices", "freight_orders",
-             "inventory_docs", "challans", "third_party_orders", "purchase_valuation", "production_cost_postings")
+             "inventory_docs", "challans", "third_party_orders", "purchase_valuation", "production_cost_postings", "carrier_bank_lines")
     # No financial records means incomplete master data can still be edited freely.
     if not any(before.get(n) or after.get(n) for n in names):
         return after
@@ -82,9 +82,11 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         from ..model.actuals import InventoryDoc
         from ..model.outside import JobWorkChallan, ThirdPartyOrder
         from ..model.purchasing import PurchaseValuationBasis
+        from ..model.carrier_bank import CarrierBankLine
         for name, model in (("invoices", Invoice), ("intercompany_invoices", IntercompanyInvoice), ("freight_orders", FreightOrder),
                             ("inventory_docs", InventoryDoc), ("challans", JobWorkChallan),
-                            ("third_party_orders", ThirdPartyOrder), ("purchase_valuation", PurchaseValuationBasis)):
+                            ("third_party_orders", ThirdPartyOrder), ("purchase_valuation", PurchaseValuationBasis),
+                            ("carrier_bank_lines", CarrierBankLine)):
             for raw in [*_rows(before, name).values(), *_rows(after, name).values()]:
                 model.model_validate(raw)
         old_inv, new_inv = _rows(before, "supplier_invoices"), _rows(after, "supplier_invoices")
@@ -328,6 +330,8 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
                 working, _ = cancel_invoice(working, iid, target.cancelled_on)
         from .commercial import protect_commercial
         protect_commercial(old_ds, ds, open_period, freight_action=freight_action)
+        from ..carrier_bank import protect_bank
+        protect_bank(old_ds, ds, allow_carrier_bank)
         from .outside import protect_outside
         protect_outside(old_ds, ds, open_period)
         from .materials import protect_materials

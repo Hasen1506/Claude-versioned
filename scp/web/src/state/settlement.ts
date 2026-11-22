@@ -10,11 +10,16 @@ const SETTLEMENTS = {
   transportCredit: { prefix: "scp.carrier-credit.pending.v1", action: "credit", document: "order", amount: "", reference: "bill" },
   transportPayment: { prefix: "scp.carrier-payment.pending.v1", action: "pay_bill", document: "voucher", amount: "amount", reference: "reference" },
   transportBillEvent: { prefix: "scp.carrier-bill-event.pending.v1", action: "bill_event", document: "voucher", amount: "", reference: "" },
+  carrier_bank: { prefix: "scp.carrier-bank.pending.v1", action: "record", document: "", amount: "", reference: "" },
 };
 type SettlementKind = keyof typeof SETTLEMENTS;
 type SettlementAttempt = { key: string; id: string; details: string };
 type CreditDetails = { credit_of: string; reason: string };
 export type CarrierEventInput = NonNullable<TransportActionInput["event"]>;
+export type CarrierBankEvent = { kind: "import"; company: string; account: string; csv: string }
+  | { kind: "match"; line: string; version: number; targets: { order: string; voucher: string }[] }
+  | { kind: "release"; line: string; version: number };
+type SettlementEvent = CarrierEventInput | CarrierBankEvent;
 
 function readAttempt(key: string): SettlementAttempt | null {
   try {
@@ -32,15 +37,18 @@ export function useSettlement(kind: SettlementKind, document?: string, order?: s
   const config = SETTLEMENTS[kind];
   const credit = kind === "transportCredit";
   const billEvent = kind === "transportBillEvent";
-  const label = credit ? "carrier credit" : billEvent ? "carrier event" : kind === "transport" ? "carrier bill" : "payment";
+  const bankEvent = kind === "carrier_bank";
+  const label = credit ? "carrier credit" : billEvent ? "carrier event" : bankEvent ? "bank statement operation"
+    : kind === "transport" ? "carrier bill" : "payment";
   const companyId = useStore((s) => s.company?.live ? s.company.id : null);
   const userId = useStore((s) => s.session?.user.id);
   const key = companyId && userId && document ? `${config.prefix}:${companyId}:${userId}:${document}${order ? `:${order}` : ""}` : null;
   const memory = useRef<SettlementAttempt | null>(null);
   const [, refresh] = useState(0);
   const pending = () => key && (memory.current?.key === key ? memory.current : readAttempt(key));
-  const parameters = (amount: number | null, reference: string, correction?: CreditDetails, event?: CarrierEventInput) => billEvent
-    ? { voucher: document, order, event }
+  const parameters = (amount: number | null, reference: string, correction?: CreditDetails, event?: SettlementEvent) => bankEvent
+    ? { event }
+    : billEvent ? { voucher: document, order, event }
     : credit
     ? { [config.document]: document, [config.reference]: reference, ...correction }
     : { [config.document]: document, [config.amount]: amount, [config.reference]: reference, ...(order ? { order } : {}) };
@@ -76,7 +84,7 @@ export function useSettlement(kind: SettlementKind, document?: string, order?: s
     }
   }
 
-  async function post(date?: string | null, amount: number | null = null, reference = "", correction?: CreditDetails, event?: CarrierEventInput) {
+  async function post(date?: string | null, amount: number | null = null, reference = "", correction?: CreditDetails, event?: SettlementEvent) {
     if (!userId) throw new Error(`Sign in again before posting the ${label}.`);
     if (!key || !date) throw new Error("Open the live document and choose the posting date.");
     reference = reference.trim();
@@ -91,13 +99,14 @@ export function useSettlement(kind: SettlementKind, document?: string, order?: s
     const attempt = pending();
     if (!attempt) throw new Error(`No unconfirmed ${label} for this document.`);
     const [date, saved] = JSON.parse(attempt.details) as [string, Record<string, unknown>];
-    const amount = credit || billEvent ? null : saved?.[config.amount];
-    const reference = billEvent ? "" : saved?.[config.reference];
+    const amount = credit || billEvent || bankEvent ? null : saved?.[config.amount];
+    const reference = billEvent || bankEvent ? "" : saved?.[config.reference];
     const correction = credit && typeof saved?.credit_of === "string" && typeof saved?.reason === "string"
       ? { credit_of: saved.credit_of, reason: saved.reason } : undefined;
-    const event = billEvent && saved?.event && typeof saved.event === "object" ? saved.event as CarrierEventInput : undefined;
+    const event = (billEvent || bankEvent) && saved?.event && typeof saved.event === "object" ? saved.event as SettlementEvent : undefined;
     if (typeof date !== "string" || typeof reference !== "string" || (amount !== null && typeof amount !== "number")
-        || (credit && !correction) || (billEvent && !event) || JSON.stringify([date, parameters(amount, reference, correction, event)]) !== attempt.details) {
+        || (credit && !correction) || ((billEvent || bankEvent) && !event)
+        || JSON.stringify([date, parameters(amount, reference, correction, event)]) !== attempt.details) {
       throw new Error(`The saved ${label} details could not be verified.`);
     }
     return send(attempt, date, parameters(amount, reference, correction, event), true);

@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Literal
 
+from ..carrier_bank import CarrierBankView
 from ..freight import CarrierBill
 from ..model import Approval, Payment, PriceScale, ConfirmedDelivery
 from ..model.common import Out
@@ -334,6 +335,7 @@ class PayablesView(Out):
 
     invoices: list[SupplierInvoiceView]
     carrier_bills: list[CarrierBill]
+    carrier_bank: CarrierBankView
     to_invoice: list[ToInvoice]
     payables: list[PayableRow]
     contracts: list[ContractView]

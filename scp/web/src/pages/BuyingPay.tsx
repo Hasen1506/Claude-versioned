@@ -10,6 +10,7 @@ import { go, href } from "../lib/router";
 import { useSettlement } from "../state/settlement";
 import { store } from "../state/store";
 import { CarrierBillEvents } from "./CarrierBillEvents";
+import { CarrierBankWorklist } from "./CarrierBankWorklist";
 
 type Sev = "error" | "warning" | "info" | "ok";
 const INV_SEV: Record<string, Sev> = {
@@ -337,6 +338,7 @@ export function Owed({ res, ds }: { res: PurchasingView; ds: Dataset }) {
             bill={bill} currency={res.currency} ds={ds} />)}</tbody>
         </table></div>
       </Panel>}
+      {pay.carrier_bank && <CarrierBankWorklist bank={pay.carrier_bank} currency={res.currency} ds={ds} />}
       <Reading formula="Open: invoices not yet paid, less credit memos not yet refunded. Received, not invoiced: goods in at the order price with no invoice for them yet."
         soWhat={<>Pay what is due on <a href={href("buying", "invoices")}>Supplier invoices</a>; a supplier's payment terms are on their <a href={href("data", "vendors")}>purchasing data</a>.
           {ds.vendors?.length ? "" : " No supplier has purchasing data yet, so every invoice is due 30 days after its date."}</>} />

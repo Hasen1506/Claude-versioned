@@ -23,6 +23,7 @@ from math import isfinite
 from collections import defaultdict
 from datetime import date, timedelta
 
+from ..carrier_bank import bank_view
 from ..freight import carrier_bills
 from ..model import (
     Dataset, GoodsMovement, MovementType, Payment, ReceiptKind, StockType, SupplierInvoice,
@@ -776,7 +777,8 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
                                        stock_type=r.stock_type.value, batch=r.batch, status=status,
                                        credit_memo=r.credit_memo))
     return PayablesView(
-        invoices=invs, carrier_bills=freight, to_invoice=gr, payables=payables, contracts=contract_views(ds, as_of), returns=rets,
+        invoices=invs, carrier_bills=freight, carrier_bank=bank_view(ds, freight), to_invoice=gr, payables=payables,
+        contracts=contract_views(ds, as_of), returns=rets,
         blocked=sum(x.status == "blocked" for x in invs),
         open_value=round(sum(r.open for r in payables), 2), overdue_value=round(sum(r.overdue for r in payables), 2),
         not_invoiced_value=round(sum(r.not_invoiced for r in payables), 2))

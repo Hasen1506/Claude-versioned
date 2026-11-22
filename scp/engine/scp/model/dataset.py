@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from .actuals import AccuracyRecord, Batch, ClosedOrder, ExecutionSettings, GoodsMovement, InventoryDoc, RolledWeek
+from .carrier_bank import CarrierBankLine
 from .common import LocationType, Model
 from .finance import FinanceSettings, ProductionCostPosting
 from .tower import TowerSettings
@@ -97,6 +98,7 @@ class Dataset(Model):
     waves: list[Wave] = Field(default_factory=list)
     carriers: list[Carrier] = Field(default_factory=list)
     freight_orders: list[FreightOrder] = Field(default_factory=list)
+    carrier_bank_lines: list[CarrierBankLine] = Field(default_factory=list, exclude_if=lambda lines: not lines)
     transport: TransportSettings = Field(default_factory=TransportSettings)
     third_party_orders: list[ThirdPartyOrder] = Field(default_factory=list)
     challans: list[JobWorkChallan] = Field(default_factory=list)

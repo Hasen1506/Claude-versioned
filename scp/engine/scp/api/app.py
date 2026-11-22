@@ -1406,6 +1406,23 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
     Reuse the same id and parameters after a transport failure. A replay reports
     the original result and current company state, even after intervening saves.
     """
+    if req.kind == "carrier_bank":
+        from ..carrier_bank import parse_operation, record_bank
+        if req.action != "record" or set(req.parameters) != {"event"}:
+            raise HTTPException(422, "carrier bank commands require a single event")
+        try:
+            event = parse_operation.validate_python(req.parameters["event"])
+        except ValidationError as exc:
+            raise HTTPException(422, "invalid carrier bank event: " + str(exc)) from None
+
+        def post_bank(ds: Dataset):
+            try:
+                changed, message = record_bank(ds, event, req.posting_date)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from None
+            return changed, {"report": {"message": message}}
+
+        return execute_command(get_companies(), user, cid, req, post_bank)
     if req.kind == "production_cost":
         from uuid import NAMESPACE_URL, uuid5
         from ..accounting.production import post

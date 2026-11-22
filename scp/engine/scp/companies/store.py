@@ -182,6 +182,7 @@ LABELS = {
     "batches": "batches", "inventory_docs": "physical inventory documents", "storage_types": "storage types",
     "bins": "storage bins", "putaway_rules": "put-away rules", "warehouse_tasks": "warehouse tasks", "waves": "waves",
     "carriers": "carriers", "freight_orders": "freight orders", "transport": "transport settings",
+    "carrier_bank_lines": "carrier bank statements",
     "third_party_orders": "third-party orders", "challans": "job-work challans", "job_work": "job-work settings",
     "shipping_notices": "shipping notices", "entities": "companies of the group", "transfer_prices": "transfer prices",
     "intercompany_invoices": "inter-company invoices",
@@ -1211,6 +1212,14 @@ class Companies:
         with self.lock:
             if self.is_key(user):
                 raise CompanyError("a key works only in its company; a person must create a company", 403)
+            if doc.get("carrier_bank_lines"):
+                from ..carrier_bank import protect_bank
+                from ..model import Dataset
+                try:
+                    bank_doc = Dataset.model_validate(doc)
+                    protect_bank(bank_doc, bank_doc, False)
+                except ValueError as error:
+                    raise CompanyError(f"invalid bank statement evidence: {error}", 422) from None
             n = self.db.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
             cid = f"C{n + 1:04d}"
             while self.db.execute("SELECT 1 FROM companies WHERE id = ?", (cid,)).fetchone():
@@ -1271,7 +1280,7 @@ class Companies:
 
     def save(self, user: User, cid: str, doc: dict | None, base_revision: int, action: str = "saved",
              note: str = "", patch: dict | None = None, client: str = "", *, allow_production_posting: bool = False,
-             count_projection: bool = False, freight_action: str = "") -> SaveReport:
+             count_projection: bool = False, freight_action: str = "", allow_carrier_bank: bool = False) -> SaveReport:
         """Save the working copy (``doc``, or ``patch`` applied to revision ``base_revision``) over revision
         ``base_revision``; refused when the company has moved on, unless only this window's own saves moved it."""
         with self.lock.scoped("company", cid):
@@ -1328,7 +1337,7 @@ class Companies:
             guarded = doc
             try:
                 guarded = protect(current, guarded, user.email, allow_production_posting=allow_production_posting,
-                                  freight_action=freight_action)
+                                  freight_action=freight_action, allow_carrier_bank=allow_carrier_bank)
             except TransactionRefused as e:
                 raise CompanyError(str(e), 403) from None
             doc = guarded
