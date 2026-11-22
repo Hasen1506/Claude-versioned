@@ -9,6 +9,7 @@ issues of what it carries) and settled with the carrier's bill, whose cost is sh
 from __future__ import annotations
 
 import datetime as dt
+from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
@@ -56,6 +57,50 @@ class FreightBillCredit(Model):
     entered_by: str = Field("", max_length=200, exclude_if=lambda actor: not actor)
 
 
+class CarrierBillAdjustment(Model):
+    kind: Literal["adjust_bill"] = "adjust_bill"
+    date: dt.date
+    reference: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=1, max_length=200)
+    amount_minor: int = Field(gt=0)
+
+
+class CarrierRefund(Model):
+    kind: Literal["refund_bill"] = "refund_bill"
+    date: dt.date
+    reference: str = Field(min_length=1, max_length=64)
+    amount_minor: int = Field(gt=0)
+
+
+class CarrierBankMatch(Model):
+    kind: Literal["match_bank"] = "match_bank"
+    date: dt.date
+    cash_voucher: str = Field(min_length=1, max_length=64)
+    account: str = Field(min_length=1, max_length=64)
+    statement_line: str = Field(min_length=1, max_length=64)
+    reference: str = Field(min_length=1, max_length=64)
+    amount_minor: int                         # signed as it appears on the bank statement
+    released: bool = False
+
+
+class FreightLandedCost(Model):
+    kind: Literal["landed_cost"] = "landed_cost"
+    date: dt.date
+    service: str = Field(min_length=1, max_length=64)
+    receipt: Id
+    actual_minor: int = Field(ge=0)
+    absorbed_minor: int = Field(ge=0)
+    reverses: int | None = Field(None, gt=0)
+
+    @property
+    def delta(self) -> float:
+        return (self.actual_minor - self.absorbed_minor) * (-1 if self.reverses else 1) / 100
+
+
+FreightBillEvent = Annotated[CarrierBillAdjustment | CarrierRefund | CarrierBankMatch | FreightLandedCost,
+                            Field(discriminator="kind")]
+
+
 class FreightOrder(Model):
     """One vehicle from one place to another (≈ TM freight order): what it carries, its load and its cost."""
 
@@ -90,6 +135,7 @@ class FreightOrder(Model):
     bill_due_on: dt.date | None = Field(None, exclude_if=lambda day: day is None)
     bill_entered_by: str = Field("", max_length=200, exclude_if=lambda actor: not actor)
     bill_payments: list[Payment] = Field(default_factory=list, exclude_if=lambda payments: not payments)
+    bill_events: list[FreightBillEvent] = Field(default_factory=list, exclude_if=lambda events: not events)
 
     def bill_voucher(self, index: int | None = None) -> str:
         ordinal = len(self.bill_credits) if index is None else index
@@ -111,7 +157,7 @@ class FreightOrder(Model):
                 raise ValueError("the replacement freight bill must follow its preceding credit")
             if self.status == "shipped" and (self.bill or self.billed is not None or self.settled_on is not None):
                 raise ValueError("credited freight has no active bill until it is billed again")
-        if self.bill_due_on or self.bill_entered_by or self.bill_payments:
+        if self.bill_due_on or self.bill_entered_by or self.bill_payments or self.bill_events:
             if self.status != "settled" or self.billed is None or self.settled_on is None:
                 raise ValueError("freight terms and payments require an active posted bill")
             if self.bill_due_on and self.bill_due_on < self.settled_on:
@@ -124,7 +170,51 @@ class FreightOrder(Model):
                            or round(p.amount, 2) != p.amount for p in self.bill_payments)
                     or sum(round(p.amount * 100) for p in self.bill_payments) > round(self.billed * 100)):
                 raise ValueError("invalid freight payment dates, references or amounts")
+            credits = [e for e in self.bill_events if isinstance(e, CarrierBillAdjustment)]
+            refunds = [e for e in self.bill_events if isinstance(e, CarrierRefund)]
+            if self.bill_events and not self.carrier:
+                raise ValueError("carrier bill events require a named carrier")
+            if any(e.date < self.settled_on for e in self.bill_events if not isinstance(e, CarrierBankMatch)):
+                raise ValueError("carrier adjustments cannot precede the bill")
+            if sum(e.amount_minor for e in credits) > round(self.billed * 100):
+                raise ValueError("carrier credits cannot exceed the original bill")
+            for day in {e.date for e in refunds}:
+                due = (sum(round(p.amount * 100) for p in self.bill_payments if p.date <= day)
+                       + sum(e.amount_minor for e in credits if e.date <= day) - round(self.billed * 100))
+                if sum(e.amount_minor for e in refunds if e.date <= day) > due:
+                    raise ValueError("carrier refunds exceed the dated credit balance")
+            self._event_links()
         return self
+
+    def _event_links(self) -> None:
+        cash = {f"{self.bill_voucher()}/P-{i}": (p.reference.casefold(), -round(p.amount * 100))
+                for i, p in enumerate(self.bill_payments, 1)}
+        matches: dict[str, CarrierBankMatch] = {}
+        allocations: dict[int, FreightLandedCost] = {}
+        for i, event in enumerate(self.bill_events, 1):
+            if isinstance(event, CarrierRefund):
+                cash[f"{self.bill_voucher()}/R-{i}"] = event.reference.casefold(), event.amount_minor
+            elif isinstance(event, CarrierBankMatch):
+                if event.released:
+                    original = matches.pop(event.cash_voucher, None)
+                    if (original is None or event.date < original.date
+                            or event.model_dump(exclude={"released", "date"}) != original.model_dump(exclude={"released", "date"})):
+                        raise ValueError("bank match release must retain its original statement line")
+                else:
+                    if event.cash_voucher in matches or cash.get(event.cash_voucher) != (
+                            event.reference.casefold(), event.amount_minor):
+                        raise ValueError("bank statement must match a posted carrier cash voucher exactly once")
+                    matches[event.cash_voucher] = event
+            elif isinstance(event, FreightLandedCost):
+                if event.reverses:
+                    original = allocations.pop(event.reverses, None)
+                    if (original is None or event.date < original.date
+                            or event.model_dump(exclude={"reverses", "date"}) != original.model_dump(exclude={"reverses", "date"})):
+                        raise ValueError("a landed-cost reversal must retain its original receipt and amounts")
+                else:
+                    if any(e.receipt == event.receipt for e in allocations.values()):
+                        raise ValueError("a receipt can have only one active landed-cost allocation")
+                    allocations[i] = event
 
 
 class TransportSettings(Model):

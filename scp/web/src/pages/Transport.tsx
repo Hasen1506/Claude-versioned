@@ -221,7 +221,7 @@ function FreightSettlement({ order, voucher, step, planningStart }: {
   const retryCredit = credit.pending && <button className="btn sm accent" disabled={step.busy} aria-label={`Retry credit ${id}`}
     onClick={() => { resetBill(); void step.apply(() => report(credit.retry())); }}>Retry credit</button>;
   if (order.status === "settled" && voucher && order.settled_on) {
-    if (order.bill_payments?.length) return <>{retryCredit}<a href={href("buying", "owed")} className="btn sm">Carrier payments</a></>;
+    if (order.bill_payments?.length || order.bill_events?.length) return <>{retryCredit}<a href={href("buying", "owed")} className="btn sm">Carrier bill in AP</a></>;
     return <>{retryCredit}<FreightCreditForm key={voucher} id={id} voucher={voucher} earliest={order.settled_on}
         planningStart={planningStart} busy={step.busy || credit.pending} post={(date, bill, reason) => {
           resetBill();

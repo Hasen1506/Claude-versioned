@@ -35,11 +35,12 @@ from ..actuals.post import delivered, ordered_now
 from ..freight import carrier_bills
 from ..model import Dataset
 from ..model.common import Out
+from ..model.transport import CarrierBillAdjustment
 from ..plan import PlanResult
 from ..plan.costing import fx
 from ..plan.rates import independent_demand
 
-IN = ("invoices", "to_bill", "orders", "forecast")
+IN = ("invoices", "to_bill", "orders", "forecast", "carrier_refunds")
 OUT = ("supplier_invoices", "purchase_orders", "planned_buying", "production", "transfers", "freight")
 EPS = 1e-6
 
@@ -156,8 +157,11 @@ def cash_view(ds: Dataset, plan: PlanResult, weeks: int | None = None) -> CashVi
         if f.status in ("planned", "tendered", "accepted", "shipped") and not f.bill_credits:
             add("freight", f.planned_on + timedelta(days=days), f.planned_cost)
     for bill in carrier_bills(ds):
-        if bill.open:
+        if bill.open > 0:
             add("freight", bill.due_on, bill.open)
+        elif bill.open < 0:
+            latest_credit = max(e.date for e in bill.events if isinstance(e, CarrierBillAdjustment))
+            add("carrier_refunds", latest_credit, -bill.open)
 
     cum = 0.0
     for i in range(n):

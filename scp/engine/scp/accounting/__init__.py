@@ -35,6 +35,7 @@ from ..actuals.transfer_price import destination, entity_of, party
 from ..actuals.valuation import EPS, run_books
 from ..freight import bills_for_order, carrier_bills, freight_company
 from ..model import Dataset, FreightOrder, GoodsMovement, MovementType, SupplierInvoice
+from ..model.transport import CarrierBankMatch, CarrierBillAdjustment
 from ..model.common import Out
 from ..plan.costing import fx
 from .production import ProductionWip, production_wip
@@ -218,8 +219,14 @@ class _Journal:
             lines.append(("PRICE_DIFF", entity_of(self.ds, x.location), "", x.amount, x.location, x.product))
         if kind == 0:
             self._movement(ev, lines)
-        else:
+        elif kind == 1:
             self._invoice(ev, lines)
+        else:
+            receipt = self.by_id[ev.event.receipt]
+            co = entity_of(self.ds, receipt.location)
+            label = "landed-cost reversal" if ev.event.reverses else "landed-cost adjustment"
+            self._post(ev.event.date, ev.voucher, "Journal", ev.order, f"{label} for receipt {receipt.id}",
+                       [*lines, ("DELIVERY", co, "", -ev.event.delta, receipt.location, receipt.product)], "SUSPENSE")
 
     # -- a goods movement ----------------------------------------------------------------------------------------
     def _movement(self, m: GoodsMovement, lines: list) -> None:
@@ -488,12 +495,17 @@ class _Journal:
                 if bill.credited_on and bill.credited_on <= day:
                     self._freight(fo, bill.credited_on, f"{bill.voucher}/REV", -bill.amount, bill.credit_reference,
                                   reversal_of=bill.voucher)
-                for index, payment in enumerate(bill.payments, 1):
-                    if payment.date <= day:
-                        self._post(payment.date, f"{bill.voucher}/P-{index}", "Payment", fo.id,
-                                   f"carrier payment {payment.reference} against {bill.voucher}",
-                                   [("PAYABLES", bill.company, bill.carrier, payment.amount, "", ""),
-                                    ("BANK", bill.company, "", -payment.amount, "", "")], "SUSPENSE")
+                for index, event in enumerate(bill.events, 1):
+                    if isinstance(event, CarrierBillAdjustment) and event.date <= day:
+                        self._freight(fo, event.date, f"{bill.voucher}/C-{index}", -event.amount_minor / 100,
+                                      event.reference, reversal_of=bill.voucher)
+                for voucher, cash_date, reference, minor in bill.cash():
+                    if cash_date <= day:
+                        verb = "refund" if minor > 0 else "payment"
+                        self._post(cash_date, voucher, "Receipt" if minor > 0 else "Payment", fo.id,
+                                   f"carrier {verb} {reference} against {bill.voucher}",
+                                   [("PAYABLES", bill.company, bill.carrier, -minor / 100, "", ""),
+                                    ("BANK", bill.company, "", minor / 100, "", "")], "SUSPENSE")
 
     def _freight(self, fo: FreightOrder, on: date, number: str, amount: float, reference: str, reversal_of: str = "") -> None:
         co = freight_company(self.ds, fo)
@@ -561,6 +573,7 @@ def _day(ds: Dataset) -> date:
                 *(p.date for i in [*ds.invoices, *ds.supplier_invoices, *ds.intercompany_invoices] for p in i.payments),
                 *(f.settled_on for f in ds.freight_orders if f.settled_on is not None),
                 *(credit.date for f in ds.freight_orders for credit in f.bill_credits),
+                *(e.date for f in ds.freight_orders for e in f.bill_events if not isinstance(e, CarrierBankMatch)),
                 *(p.date for f in ds.freight_orders for p in f.bill_payments)])
 
 

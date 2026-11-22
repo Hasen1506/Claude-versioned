@@ -33,7 +33,7 @@ from ..actuals.post import ship as ship_transfer
 from ..freight import bills_for_order, freight_company
 from ..model import Dataset, FreightOrder, Payment, ReceiptKind, TransportLane
 from ..model.common import Out, TransportMode
-from ..model.transport import FreightBillCredit
+from ..model.transport import CarrierBillAdjustment, CarrierRefund, FreightBillCredit
 from ..sales import SalesError
 from ..sales import issue as goods_issue
 
@@ -424,7 +424,7 @@ def view(ds: Dataset, on: date | None = None) -> TransportView:
                 c.orders += 1
                 c.planned = round(c.planned + f.planned_cost, 2)
                 c.billed = round(c.billed + (f.billed or 0.0), 2)
-                if bill:
+                if bill and bill.open > 0:
                     c.to_pay = round(c.to_pay + bill.open, 2)
     open_ = [f for f in ds.freight_orders if f.status in ACTIVE | {"shipped"}]
     settled = [f for f in ds.freight_orders if f.billed is not None]
@@ -633,13 +633,17 @@ def credit_bill(ds: Dataset, fid: str, original: str, reference: str, reason: st
         raise TransportError(f"{fid}: the active bill changed; review the current voucher before crediting it")
     if f.bill_payments:
         raise TransportError(f"{original} has recorded payments; reconcile them before correcting the bill")
+    if f.bill_events:
+        raise TransportError(f"{original} has recorded adjustments; use the carrier credit action in Buying")
     if day < f.settled_on:
         raise TransportError("a freight credit cannot be posted before the original bill")
     reference, reason = reference.strip(), reason.strip()
     if not reference or not reason:
         raise TransportError("enter the carrier's credit number and the reason")
     if f.carrier and any(other.carrier == f.carrier and freight_company(ds, other) == freight_company(ds, f)
-                         and any(c.reference.casefold() == reference.casefold() for c in other.bill_credits)
+                         and (any(c.reference.casefold() == reference.casefold() for c in other.bill_credits)
+                              or any(isinstance(e, CarrierBillAdjustment) and e.reference.casefold() == reference.casefold()
+                                     for e in other.bill_events))
                          for other in ds.freight_orders):
         raise TransportError(f"carrier credit {reference} is already booked for this company")
     credit = FreightBillCredit(bill=f.bill, billed=f.billed, settled_on=f.settled_on,
@@ -662,12 +666,14 @@ def pay_bill(ds: Dataset, fid: str, voucher: str, amount: float | None, referenc
         raise TransportError(f"{voucher} requires a named carrier before payment")
     if day < bill.date:
         raise TransportError("a payment cannot be posted before its carrier bill")
+    if any(isinstance(e, (CarrierBillAdjustment, CarrierRefund)) and e.date > day for e in bill.events):
+        raise TransportError("a payment cannot precede an existing credit or refund on this carrier bill")
     reference = reference.strip()
     if not reference:
         raise TransportError("enter the bank reference for the carrier payment")
     if any(p.reference.casefold() == reference.casefold() for p in bill.payments):
         raise TransportError(f"bank reference {reference} is already recorded on {voucher}")
-    if not bill.open:
+    if bill.open <= 0:
         raise TransportError(f"{voucher} is already paid")
     amount = bill.open if amount is None else amount
     if not math.isfinite(amount) or amount <= 0 or round(amount, 2) != amount:
