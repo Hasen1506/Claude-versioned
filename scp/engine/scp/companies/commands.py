@@ -110,15 +110,16 @@ def record(c: Companies, user: User, cid: str, identifier: str) -> CommandRecord
 
 
 def _record(c: Companies, cid: str, user: User, req: CommandRequest, digest: str, revision: int,
-            result: dict[str, Any]) -> None:
+            result: dict[str, Any], parameters: dict[str, Any]) -> None:
     c.db.execute("INSERT INTO company_commands (company_id, command_id, user_id, kind, action, request_hash, posting_date, "
                  "revision, at, engine_commit, parameters, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                  (cid, req.id, user.id, req.kind, req.action, digest, req.posting_date.isoformat(), revision, _iso(_now()),
-                  os.environ.get("SCP_COMMIT", ""), _canonical(req.parameters), _canonical(result)))
+                 os.environ.get("SCP_COMMIT", ""), _canonical(parameters), _canonical(result)))
 
 
 def execute(c: Companies, user: User, cid: str, req: CommandRequest,
-            operation: Callable[[Dataset], tuple[Dataset, dict[str, Any]]]) -> CommandResult:
+            operation: Callable[[Dataset], tuple[Dataset, dict[str, Any]]], *,
+            receipt_parameters: dict[str, Any] | None = None) -> CommandResult:
     payload = {"kind": req.kind, "action": req.action, "posting_date": req.posting_date.isoformat(), "parameters": req.parameters}
     digest = hashlib.sha256(_canonical(payload).encode()).hexdigest()
     with c.lock.scoped("company", cid):
@@ -151,6 +152,7 @@ def execute(c: Companies, user: User, cid: str, req: CommandRequest,
             if saved.held is not None:
                 raise CompanyError("this command needs a master-data change that has not been approved; approve it "
                                    "before posting the transaction", 409)
-            _record(c, cid, user, req, digest, saved.meta.revision, result)
+            _record(c, cid, user, req, digest, saved.meta.revision, result,
+                    req.parameters if receipt_parameters is None else receipt_parameters)
             return CommandResult(id=req.id, revision=saved.meta.revision, duplicate=False,
                                  engine_commit=os.environ.get("SCP_COMMIT", ""), result=result, company=c.open(user, cid))

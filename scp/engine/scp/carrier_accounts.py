@@ -37,9 +37,17 @@ def statement_periods(ds: Dataset) -> dict[str, CarrierBankPeriod]:
     return {line_id: period for period in ds.carrier_bank_periods for line_id in period.line_ids}
 
 
+def last_period(ds: Dataset, account: str) -> CarrierBankPeriod | None:
+    return next((p for p in reversed(ds.carrier_bank_periods) if p.account == account), None)
+
+
+def next_start(account: CarrierBankAccount, prior: CarrierBankPeriod | None) -> int:
+    return prior.ends_on.toordinal() + 1 if prior else account.starts_on.toordinal()
+
+
 def check_window(period: CarrierBankPeriod, account: CarrierBankAccount, prior: CarrierBankPeriod | None,
                  lines: dict[str, CarrierBankLine]) -> None:
-    start = prior.ends_on.toordinal() + 1 if prior else account.starts_on.toordinal()
+    start = next_start(account, prior)
     opening = prior.closing_minor if prior else account.opening_minor
     if period.starts_on.toordinal() != start or period.opening_minor != opening:
         raise ValueError("the statement must start on the next account date and carry forward the preceding closing balance")
@@ -60,28 +68,57 @@ def protect_accounts(old: Dataset, new: Dataset, command: bool, lines: dict[str,
                      postings: Iterable[tuple[str, BankPosting]]) -> dict[str, CarrierBankPeriod]:
     if (old.carrier_bank_accounts != new.carrier_bank_accounts or old.carrier_bank_periods != new.carrier_bank_periods) and not command:
         raise ValueError("registered bank accounts and statement periods require an authoritative bank command")
-    for prior, retained in ((old.carrier_bank_accounts, new.carrier_bank_accounts), (old.carrier_bank_periods, new.carrier_bank_periods)):
-        if retained[:len(prior)] != prior or len(retained) > len(prior) + 1:
-            raise ValueError("bank account openings and source statement periods are retained")
+    earlier, retained = old.carrier_bank_accounts, new.carrier_bank_accounts
+    if not len(earlier) <= len(retained) <= len(earlier) + 1:
+        raise ValueError("registered bank accounts are retained")
+    for prior, current in zip(earlier, retained, strict=False):
+        if prior == current:
+            continue
+        if (prior.camt_source is not None or current.camt_source is None
+                or prior != current.model_copy(update={"camt_source": None})
+                or current.camt_source.starts_on.toordinal() != next_start(prior, last_period(old, prior.id))):
+            raise ValueError("bank account openings and existing camt.053 links are retained")
+    earlier_periods, retained_periods = old.carrier_bank_periods, new.carrier_bank_periods
+    if retained_periods[:len(earlier_periods)] != earlier_periods or len(retained_periods) > len(earlier_periods) + 1:
+        raise ValueError("source statement periods are retained")
     accounts = BankAccounts(new)
     if len(accounts.by_id) != len(new.carrier_bank_accounts) or any(
             a.currency != new.settings.currency or (a.company and a.company not in new.entity_by_id)
             for a in new.carrier_bank_accounts):
         raise ValueError("registered bank accounts must be unique and keep their company and currency")
+    bindings = [a.camt_source.account_sha256 for a in new.carrier_bank_accounts if a.camt_source is not None]
+    if len(bindings) != len(set(bindings)):
+        raise ValueError("a camt.053 source account can only be linked once in the company")
     for company, posting in postings:
         accounts.check_posting(company, posting.date, posting.bank_account)
     previous: dict[str, CarrierBankPeriod] = {}
     owned: dict[str, CarrierBankPeriod] = {}
     identifiers = set()
+    messages = set()
     for period in new.carrier_bank_periods:
         account = accounts.by_id.get(period.account)
         if (account is None or period.id in identifiers or period.id != period_id(period.account, period.number)
                 or any(line in owned for line in period.line_ids)):
             raise ValueError("a source statement and its lines can occur only once within its registered account")
         check_window(period, account, previous.get(period.account), lines)
+        native = account.camt_source
+        if bool(period.camt_source) != bool(native and period.starts_on >= native.starts_on):
+            raise ValueError("a linked account requires native camt.053 evidence beginning on its linked date")
+        if native and period.starts_on < native.starts_on <= period.ends_on:
+            raise ValueError("the camt.053 link must start at a statement boundary")
+        if period.camt_source:
+            message = (account.id, period.camt_source.message_id)
+            if message in messages:
+                raise ValueError("a camt.053 message identifier can only be retained once per statement account")
+            messages.add(message)
         previous[period.account] = period
         identifiers.add(period.id)
         owned.update(dict.fromkeys(period.line_ids, period))
+    for account in new.carrier_bank_accounts:
+        native = account.camt_source
+        if native and not (account.starts_on <= native.starts_on
+                           and native.starts_on.toordinal() <= next_start(account, previous.get(account.id))):
+            raise ValueError("the camt.053 link must start at the recorded account or statement boundary")
     return owned
 
 

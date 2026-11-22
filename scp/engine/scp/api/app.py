@@ -1409,13 +1409,19 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
     the original result and current company state, even after intervening saves.
     """
     if req.kind == "carrier_bank":
-        from ..carrier_bank import parse_operation, record_bank
+        from ..carrier_bank import CamtFile, parse_operation, record_bank
         if req.action != "record" or set(req.parameters) != {"event"}:
             raise HTTPException(422, "carrier bank commands require a single event")
         try:
             event = parse_operation.validate_python(req.parameters["event"])
         except ValidationError as exc:
-            raise HTTPException(422, "invalid carrier bank event: " + str(exc)) from None
+            problems = [f"{'.'.join(map(str, error['loc']))}: {error['msg']}"
+                        for error in exc.errors(include_input=False, include_url=False, include_context=False)]
+            raise HTTPException(422, "invalid carrier bank event: " + "; ".join(problems)) from None
+        try:
+            receipt = {"event": event.receipt_event()} if isinstance(event, CamtFile) else None
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
 
         def post_bank(ds: Dataset):
             try:
@@ -1424,7 +1430,7 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
                 raise HTTPException(409, str(exc)) from None
             return changed, {"report": {"message": message}}
 
-        return execute_command(get_companies(), user, cid, req, post_bank)
+        return execute_command(get_companies(), user, cid, req, post_bank, receipt_parameters=receipt)
     if req.kind == "production_cost":
         from uuid import NAMESPACE_URL, uuid5
         from ..accounting.production import post

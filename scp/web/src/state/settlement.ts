@@ -13,16 +13,31 @@ const SETTLEMENTS = {
   carrier_bank: { prefix: "scp.carrier-bank.pending.v1", action: "record", document: "", amount: "", reference: "" },
 };
 type SettlementKind = keyof typeof SETTLEMENTS;
-type SettlementAttempt = { key: string; id: string; details: string };
+type SettlementAttempt = { key: string; id: string; details: string; needsBankFile?: boolean };
 type CreditDetails = { credit_of: string; reason: string };
 export type CarrierEventInput = NonNullable<TransportActionInput["event"]>;
+type CamtEvent = { kind: "link_camt_source" | "import_camt"; account: string; xml: string };
 export type CarrierBankEvent = { kind: "import"; company: string; account: string; csv: string }
+  | CamtEvent
   | { kind: "register_account"; id: string; company: string; starts_on: string; opening_minor: number }
   | { kind: "import_period"; account: string; number: string; starts_on: string; ends_on: string;
       opening_minor: number; closing_minor: number; line_count: number; csv: string }
   | { kind: "match"; line: string; version: number; targets: { order: string; voucher: string }[] }
   | { kind: "release"; line: string; version: number };
 type SettlementEvent = CarrierEventInput | CarrierBankEvent;
+
+function isCamt(event: SettlementEvent | undefined): event is CamtEvent {
+  return event?.kind === "link_camt_source" || event?.kind === "import_camt";
+}
+
+async function pendingDetails(date: string, input: { event?: SettlementEvent }) {
+  if (!isCamt(input.event)) return JSON.stringify([date, input]);
+  const { kind, account, xml } = input.event;
+  const bytes = new TextEncoder().encode(xml);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  const file_sha256 = Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("");
+  return JSON.stringify([date, { event: { kind, account, file_sha256 } }]);
+}
 
 function readAttempt(key: string): SettlementAttempt | null {
   try {
@@ -48,7 +63,7 @@ export function useSettlement(kind: SettlementKind, document?: string, order?: s
   const key = companyId && userId && document ? `${config.prefix}:${companyId}:${userId}:${document}${order ? `:${order}` : ""}` : null;
   const memory = useRef<SettlementAttempt | null>(null);
   const [, refresh] = useState(0);
-  const pending = () => key && (memory.current?.key === key ? memory.current : readAttempt(key));
+  const pending = () => key ? (memory.current?.key === key ? memory.current : readAttempt(key)) : null;
   const parameters = (amount: number | null, reference: string, correction?: CreditDetails, event?: SettlementEvent, bankAccount?: string) => bankEvent
     ? { event }
     : billEvent ? { voucher: document, order, event }
@@ -94,13 +109,14 @@ export function useSettlement(kind: SettlementKind, document?: string, order?: s
     if (!key || !date) throw new Error("Open the live document and choose the posting date.");
     reference = reference.trim();
     const input = parameters(amount, reference, correction, event, bankAccount);
-    const details = JSON.stringify([date, input]);
+    const details = await pendingDetails(date, input);
     const previous = pending();
     if (previous && previous.details !== details) throw new Error(`Retry the unconfirmed ${label} before entering a new one.`);
-    return send(previous || { key, id: crypto.randomUUID(), details }, date, input, !!previous);
+    return send(previous || { key, id: crypto.randomUUID(), details, needsBankFile: isCamt(event) || undefined },
+      date, input, !!previous);
   }
 
-  async function retry() {
+  async function retry(bankFile?: string) {
     const attempt = pending();
     if (!attempt) throw new Error(`No unconfirmed ${label} for this document.`);
     const [date, saved] = JSON.parse(attempt.details) as [string, Record<string, unknown>];
@@ -108,16 +124,22 @@ export function useSettlement(kind: SettlementKind, document?: string, order?: s
     const reference = billEvent || bankEvent ? "" : saved?.[config.reference];
     const correction = credit && typeof saved?.credit_of === "string" && typeof saved?.reason === "string"
       ? { credit_of: saved.credit_of, reason: saved.reason } : undefined;
-    const event = (billEvent || bankEvent) && saved?.event && typeof saved.event === "object" ? saved.event as SettlementEvent : undefined;
+    let event = (billEvent || bankEvent) && saved?.event && typeof saved.event === "object" ? saved.event as SettlementEvent : undefined;
+    if (isCamt(event)) {
+      if (!bankFile) throw new Error("Choose the original camt.053 file before retrying.");
+      event = { kind: event.kind, account: event.account, xml: bankFile };
+    }
     const bankAccount = typeof saved?.bank_account === "string" ? saved.bank_account : undefined;
     const input = typeof reference === "string" && (amount === null || typeof amount === "number")
       ? parameters(amount, reference, correction, event, bankAccount) : undefined;
     if (typeof date !== "string" || !input || (credit && !correction) || ((billEvent || bankEvent) && !event)
-        || JSON.stringify([date, input]) !== attempt.details) {
+        || await pendingDetails(date, input) !== attempt.details) {
+      if (isCamt(event)) throw new Error("Choose the exact original camt.053 file to retry.");
       throw new Error(`The saved ${label} details could not be verified.`);
     }
     return send(attempt, date, input, true);
   }
 
-  return { live: !!companyId, pending: !!pending(), post, retry };
+  const attempt = pending();
+  return { live: !!companyId, pending: !!attempt, pendingBankFile: !!attempt?.needsBankFile, post, retry };
 }

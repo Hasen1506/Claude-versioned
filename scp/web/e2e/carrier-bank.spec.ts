@@ -1,21 +1,25 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
 const billDate = "2026-01-08";
 const paymentDate = "2026-01-09";
 
-async function saveCarrierCompany(page: Page, paid: boolean) {
+async function saveCarrierCompany(page: Page, mode: "legacy" | "unpaid" | "registered") {
+  const registered = mode === "registered";
   const company = {
     settings: { company_name: "Carrier statement fixture", planning_start: "2026-01-05", horizon_days: 28, currency: "INR" },
     entities: [{ id: "E1", name: "Paying entity" }],
     locations: [{ id: "W", type: "dc", entity: "E1" }, { id: "C", type: "customer" }],
     lanes: [{ id: "L", origin: "W", destination: "C", modes: [{ mode: "truck_ftl", transit_days: 1 }] }],
     carriers: [{ id: "CR", rates: [{ lane: "L", per_shipment: 90 }] }],
+    ...(registered && { carrier_bank_accounts: [{ id: "BANK-A", company: "E1", starts_on: paymentDate, opening_minor: 20000, currency: "INR" }] }),
     freight_orders: [40.25, 59.75].map((amount, index) => ({
       id: `FO-${index + 1}`, lane: "L", mode: "truck_ftl", carrier: "CR", ship_from: "W", ship_to: "C", status: "settled",
       planned_on: billDate, shipped_on: billDate, settled_on: billDate, billed: amount, bill: `BILL-${index + 1}`,
       deliveries: [`DL-${index + 1}`],
-      ...(paid && { bill_payments: [{ date: paymentDate, amount, reference: "WIRE-GROUP" }] }),
+      ...(mode !== "unpaid" && { bill_payments: [{ date: paymentDate, amount, reference: "WIRE-GROUP",
+        ...(registered && { bank_account: "BANK-A" }) }] }),
     })),
   };
   await page.goto("/");
@@ -25,7 +29,7 @@ async function saveCarrierCompany(page: Page, paid: boolean) {
   await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
   await page.goto("/#/account");
   await page.getByRole("tab", { name: "Make an account" }).click();
-  await page.getByLabel("E-mail").fill(`statement-${paid ? "bundle" : "period"}-${Date.now()}@example.invalid`);
+  await page.getByLabel("E-mail").fill(`statement-${mode}-${Date.now()}@example.invalid`);
   await page.getByLabel("Your name").fill("Treasury");
   await page.getByLabel(/^Password/).fill("fixture-only-spring-clover");
   await page.getByRole("button", { name: "Make the account", exact: true }).click();
@@ -35,7 +39,7 @@ async function saveCarrierCompany(page: Page, paid: boolean) {
 
 test("import one statement line and recover its grouped carrier match after reload", async ({ page }) => {
   test.setTimeout(90_000);
-  await saveCarrierCompany(page, true);
+  await saveCarrierCompany(page, "legacy");
 
   let companyUrl = "";
   const matches: { id: string; parameters: { event: { kind: string } } }[] = [];
@@ -88,7 +92,7 @@ test("import one statement line and recover its grouped carrier match after relo
 
 test("tie a registered bank statement period to the carrier journal and reopen it by releasing cash", async ({ page }) => {
   test.setTimeout(90_000);
-  await saveCarrierCompany(page, false);
+  await saveCarrierCompany(page, "unpaid");
   await page.goto("/#/buying/owed");
   await page.getByText("Register carrier bank account", { exact: true }).click();
   await page.getByLabel("Bank account company").selectOption("E1");
@@ -157,4 +161,67 @@ test("tie a registered bank statement period to the carrier journal and reopen i
     order.bill_payments.map((p) => p.bank_account))).toEqual([["BANK-A"], ["BANK-A"]]);
   await page.getByRole("button", { name: "Release allocation" }).click();
   await expect(accountReport).toContainText("Review differences");
+});
+
+test("import original camt.053, reattach the exact bytes after a lost receipt and reconcile the bank batch", async ({ page }) => {
+  test.setTimeout(90_000);
+  await saveCarrierCompany(page, "registered");
+  const template = readFileSync(new URL("../../engine/tests/fixtures/camt053-booked.xml", import.meta.url), "utf-8");
+  const xml = Buffer.from("\ufeff" + template.replaceAll("2026-03-02", billDate).replaceAll("2026-03-03", paymentDate)
+    .replaceAll("WIRE-COMB", "WIRE-GROUP").replaceAll("\n", "\r\n"));
+  const original = { name: "bank-original.xml", mimeType: "application/xml", buffer: xml };
+  const digest = createHash("sha256").update(xml).digest("hex");
+  await page.goto("/#/buying/owed");
+  await page.getByText("Import original camt.053 statement", { exact: true }).click();
+  await page.getByLabel("Original statement account").selectOption("BANK-A");
+  await page.getByLabel("Original camt.053 file").setInputFiles(original);
+  await page.getByRole("button", { name: "Link bank source" }).click();
+  await expect(page.getByText("Linked camt.053 source for BANK-A.")).toBeVisible();
+
+  let companyUrl = "";
+  const attempts: { id: string; parameters: unknown; posting_date: string }[] = [];
+  await page.route("**/api/companies/*/commands", async (route) => {
+    const payload = route.request().postDataJSON();
+    if (payload.kind === "carrier_bank" && payload.parameters.event.kind === "import_camt") {
+      attempts.push({ id: payload.id, parameters: payload.parameters, posting_date: payload.posting_date });
+      if (attempts.length === 1) {
+        companyUrl = route.request().url().replace(/\/commands$/, "");
+        const committed = await route.fetch();
+        expect(committed.ok(), await committed.text()).toBe(true);
+        return route.abort("failed");
+      }
+    }
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Import original statement" }).click();
+  await expect(page.getByText(/Bank statement operation confirmation is unavailable/)).toBeVisible();
+  const pending = await page.evaluate(() => Object.entries(sessionStorage)
+    .find(([key]) => key.startsWith("scp.carrier-bank.pending.v1:"))?.[1]);
+  expect(pending).toContain(digest);
+  expect(pending).not.toContain("PRIVATE-FIXTURE-XML-MARKER");
+
+  await page.reload();
+  const retry = page.getByRole("button", { name: "Retry bank statement operation" });
+  await expect(retry).toBeDisabled();
+  await page.getByLabel("Original camt.053 file").setInputFiles({ ...original, buffer: Buffer.concat([xml, Buffer.from("\n")]) });
+  await retry.click();
+  await expect(page.getByText("Choose the exact original camt.053 file to retry.")).toBeVisible();
+  expect(attempts).toHaveLength(1);
+  await page.getByLabel("Original camt.053 file").setInputFiles(original);
+  await retry.click();
+  await expect(page.getByText("Imported statement FIXTURE-STMT-001.")).toBeVisible();
+  expect(attempts[1]).toEqual(attempts[0]);
+  const receipt = await page.request.get(`${companyUrl}/commands`, { params: { id: attempts[0].id } });
+  expect((await receipt.json()).parameters.event).toEqual({
+    kind: "import_camt", account: "BANK-A", file_sha256: digest, byte_count: xml.length,
+  });
+  const accountReport = page.getByRole("table", { name: "Carrier bank account reconciliation" });
+  await expect(accountReport).toContainText("Review differences");
+  await accountReport.getByText("Original camt.053", { exact: true }).click();
+  await expect(accountReport.getByText(digest)).toBeVisible();
+  await page.getByRole("button", { name: "SVCR-00001", exact: true }).click();
+  await page.getByLabel("Select cash voucher FO-1/P-1").check();
+  await page.getByLabel("Select cash voucher FO-2/P-1").check();
+  await page.getByRole("button", { name: "Match selected vouchers" }).click();
+  await expect(accountReport).toContainText("Reconciled");
 });

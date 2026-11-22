@@ -4160,6 +4160,29 @@ export interface components {
             /** Holidays */
             holidays?: string[];
         };
+        /** CamtAccountBinding */
+        CamtAccountBinding: {
+            /** Account Sha256 */
+            account_sha256: string;
+            /**
+             * Starts On
+             * Format: date
+             */
+            starts_on: string;
+        };
+        /** CamtSourceEvidence */
+        CamtSourceEvidence: {
+            /**
+             * Format
+             * @default camt.053.001.08
+             * @constant
+             */
+            format: "camt.053.001.08";
+            /** Message Id */
+            message_id: string;
+            /** Byte Count */
+            byte_count: number;
+        };
         /** CapacityAppraisal */
         CapacityAppraisal: {
             /** Id */
@@ -4338,6 +4361,7 @@ export interface components {
             opening_minor: number;
             /** Currency */
             currency: string;
+            camt_source?: components["schemas"]["CamtAccountBinding"] | null;
         };
         /** CarrierBankLine */
         CarrierBankLine: {
@@ -4419,6 +4443,7 @@ export interface components {
             file_sha256: string;
             /** Line Ids */
             line_ids: string[];
+            camt_source?: components["schemas"]["CamtSourceEvidence"] | null;
         };
         /** CarrierBankTieOut */
         CarrierBankTieOut: {
