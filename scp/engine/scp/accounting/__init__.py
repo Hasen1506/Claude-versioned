@@ -31,8 +31,9 @@ from collections import defaultdict
 from datetime import date
 from xml.sax.saxutils import escape, quoteattr
 
-from ..actuals.transfer_price import destination, entity_of, freight_company, party
+from ..actuals.transfer_price import destination, entity_of, party
 from ..actuals.valuation import EPS, run_books
+from ..freight import bills_for_order, carrier_bills, freight_company
 from ..model import Dataset, FreightOrder, GoodsMovement, MovementType, SupplierInvoice
 from ..model.common import Out
 from ..plan.costing import fx
@@ -480,14 +481,19 @@ class _Journal:
                             ("BANK", inv.buyer, "", -s * p.amount, "", "")], "SUSPENSE")
             self._reverse(start, inv.id, inv.cancelled_on if inv.cancelled else None, day)
         for fo in ds.freight_orders:
-            for index, credit in enumerate(fo.bill_credits):
-                bill = fo.bill_voucher(index)
-                if credit.settled_on <= day:
-                    self._freight(fo, credit.settled_on, bill, credit.billed, credit.bill)
-                if credit.date <= day:
-                    self._freight(fo, credit.date, f"{bill}/REV", -credit.billed, credit.reference, reversal_of=bill)
-            if fo.status == "settled" and fo.billed is not None and fo.settled_on is not None and fo.settled_on <= day:
-                self._freight(fo, fo.settled_on, fo.bill_voucher(), fo.billed, fo.bill)
+            for bill in bills_for_order(ds, fo):
+                if bill.date > day:
+                    continue
+                self._freight(fo, bill.date, bill.voucher, bill.amount, bill.reference)
+                if bill.credited_on and bill.credited_on <= day:
+                    self._freight(fo, bill.credited_on, f"{bill.voucher}/REV", -bill.amount, bill.credit_reference,
+                                  reversal_of=bill.voucher)
+                for index, payment in enumerate(bill.payments, 1):
+                    if payment.date <= day:
+                        self._post(payment.date, f"{bill.voucher}/P-{index}", "Payment", fo.id,
+                                   f"carrier payment {payment.reference} against {bill.voucher}",
+                                   [("PAYABLES", bill.company, bill.carrier, payment.amount, "", ""),
+                                    ("BANK", bill.company, "", -payment.amount, "", "")], "SUSPENSE")
 
     def _freight(self, fo: FreightOrder, on: date, number: str, amount: float, reference: str, reversal_of: str = "") -> None:
         co = freight_company(self.ds, fo)
@@ -554,7 +560,8 @@ def _day(ds: Dataset) -> date:
                 *(i.date for i in ds.intercompany_invoices),
                 *(p.date for i in [*ds.invoices, *ds.supplier_invoices, *ds.intercompany_invoices] for p in i.payments),
                 *(f.settled_on for f in ds.freight_orders if f.settled_on is not None),
-                *(credit.date for f in ds.freight_orders for credit in f.bill_credits)])
+                *(credit.date for f in ds.freight_orders for credit in f.bill_credits),
+                *(p.date for f in ds.freight_orders for p in f.bill_payments)])
 
 
 def _period(ds: Dataset, end: date, start: date | None) -> date:
@@ -687,12 +694,8 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
             left = inv.total - sum(p.amount + p.discount for p in inv.payments if p.date <= day)
             rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
             pay[j._company_of_supplier_invoice(inv)] += (-1 if inv.credit else 1) * _r(_r(left) * rate)
-    for fo in ds.freight_orders:
-        for credit in fo.bill_credits:
-            if credit.settled_on <= day < credit.date:
-                pay[freight_company(ds, fo)] += credit.billed
-        if fo.status == "settled" and fo.billed is not None and fo.settled_on is not None and fo.settled_on <= day:
-            pay[freight_company(ds, fo)] += fo.billed
+    for bill in carrier_bills(ds):
+        pay[bill.company] += bill.open_at(day)
     grir: dict[str, float] = defaultdict(float)
     from ..purchasing.payables import lines_index
     lines = lines_index(ds, outside=False)

@@ -26,6 +26,7 @@ def authorize(before: dict, after: dict, email: str, *, count_projection: bool =
     roles = finance.get("control_roles") or {}
     actor = email.strip().lower()
     required = set()
+    newly_billed = set()
     invoices = ("supplier_invoices", "invoices", "intercompany_invoices")
     receipts = [*(before.get("receipts") or []), *(after.get("receipts") or [])]
     production_orders = {r.get("id") for r in receipts if r.get("kind") == "production" and r.get("id")}
@@ -56,10 +57,27 @@ def authorize(before: dict, after: dict, email: str, *, count_projection: bool =
                     raise ValueError("legacy invoice has no independently recorded entrant; review it before enabling payment")
                 if actor in (entrant, releaser):
                     raise ValueError("payment requires a different person from the invoice entrant and releaser")
-        elif name == "freight_orders" and (
-                ((new or {}).get("status") == "settled" and (old or {}).get("status") != "settled")
-                or ((new or {}).get("bill_credits") or []) != ((old or {}).get("bill_credits") or [])):
-            required.add("billing")  # commercial replay protects the existing shipment separately
+        elif name == "freight_orders":
+            a, b = old or {}, new or {}
+            booked = b.get("status") == "settled" and a.get("status") != "settled"
+            credited = (a.get("bill_credits") or []) != (b.get("bill_credits") or [])
+            paid = (a.get("bill_payments") or []) != (b.get("bill_payments") or [])
+            if booked:
+                if str(b.get("bill_entered_by") or actor).strip().lower() != actor:
+                    raise ValueError("a carrier bill entrant is recorded from the signed-in identity")
+                newly_billed.add(b.get("id"))
+            if booked or credited:
+                required.add("billing")
+            if paid:
+                required.add("payments")
+                if finance.get("separate_payments") and b.get("bill_payments"):
+                    entrant = str(a.get("bill_entered_by") or "").lower()
+                    if not entrant:
+                        raise ValueError("legacy carrier bill has no recorded entrant; reconcile it before payment")
+                    if actor == entrant:
+                        raise ValueError("carrier payment requires a different person from the bill entrant")
+            if not (booked or credited or paid):
+                required.add("transport")
         elif name == "finance":
             a, b = old or {}, new or {}
             if a.get("closed_through") != b.get("closed_through"):
@@ -106,6 +124,11 @@ def authorize(before: dict, after: dict, email: str, *, count_projection: bool =
         if missing:
             raise ValueError(f"{email} has no grant for {', '.join(missing)}")
     result = after
+    if newly_billed:
+        result = {**result, "freight_orders": [
+            {**row, "bill_entered_by": actor} if isinstance(row, dict) and row.get("id") in newly_billed else row
+            for row in after["freight_orders"]
+        ]}
     for name in invoices:
         old_ids = {i.get("id") for i in before.get(name) or []}
         rows = []

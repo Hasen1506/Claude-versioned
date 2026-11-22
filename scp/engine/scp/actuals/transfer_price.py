@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from ..model import Dataset, FreightOrder, GoodsMovement, MovementType, TransferPrice
+from ..freight import freight_company as freight_company
+from ..model import Dataset, GoodsMovement, MovementType, TransferPrice
 
 EPS = 1e-9
 
@@ -20,12 +21,7 @@ class Party:
 
 
 def entity_of(ds: Dataset, loc: str | None) -> str:
-    lo = ds.location_by_id.get(loc or "")
-    return (lo.entity or "") if lo is not None else ""
-
-
-def freight_company(ds: Dataset, order: FreightOrder) -> str:
-    return entity_of(ds, order.ship_to if order.purchases else order.ship_from)
+    return ds.entity_at(loc)
 
 
 def party(ds: Dataset, eid: str) -> Party:

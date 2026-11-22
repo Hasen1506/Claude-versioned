@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Literal
 
+from ..freight import CarrierBill
 from ..model import Approval, Payment, PriceScale, ConfirmedDelivery
 from ..model.common import Out
 from .spread import LeadTimeSpread
@@ -284,6 +285,8 @@ class PayableRow(Out):
     not_invoiced: float                # goods received and not yet invoiced
     next_due: dt.date | None
     terms: str
+    kind: Literal["supplier", "carrier"] = "supplier"
+    company: str = ""
 
 
 class ContractLineView(Out):
@@ -330,6 +333,7 @@ class PayablesView(Out):
     """Invoice verification and what is owed to whom."""
 
     invoices: list[SupplierInvoiceView]
+    carrier_bills: list[CarrierBill]
     to_invoice: list[ToInvoice]
     payables: list[PayableRow]
     contracts: list[ContractView]

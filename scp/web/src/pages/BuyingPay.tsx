@@ -2,7 +2,7 @@
 // whom, returns to suppliers and contracts. Every step is an engine action (/api/purchasing/act).
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { Dataset, PoAction, PoActionInput, PoActionResponse, PurchasingView, StockType, SupplierInvoiceView } from "../api/types";
+import type { Dataset, PayablesView, PoAction, PoActionInput, PoActionResponse, PurchasingView, StockType, SupplierInvoiceView, TransportActionResponse } from "../api/types";
 import { Badge, Edits, Empty, Panel, Reading, StatTile } from "../components/ui";
 import { day, exactMoney, qty, unitMoney } from "../lib/format";
 import { Loc, Msg, Prod, namesOf } from "../lib/names";
@@ -304,16 +304,16 @@ export function Owed({ res, ds }: { res: PurchasingView; ds: Dataset }) {
         <StatTile label="Due within 7 days" value={exactMoney(pay.payables.reduce((a, r) => a + r.due_soon, 0), res.currency)} />
         <StatTile label="Received, not invoiced" value={exactMoney(pay.not_invoiced_value, res.currency)} sub="to accrue at month end" />
       </div>
-      <Panel flush title="What we owe each supplier">
-        {pay.payables.length === 0 ? <Empty title="Nothing owed">No open supplier invoice and nothing received without one.</Empty> : (
+      <Panel flush title="What we owe suppliers and carriers">
+        {pay.payables.length === 0 ? <Empty title="Nothing owed">No open invoices or goods waiting to be invoiced.</Empty> : (
           <div className="table-wrap">
             <table className="t">
-              <thead><tr><th>Supplier</th><th>Terms</th><th className="num">Open</th><th className="num">Overdue</th><th className="num">Due in 7 days</th>
+              <thead><tr><th>Payee</th><th>Terms</th><th className="num">Open</th><th className="num">Overdue</th><th className="num">Due in 7 days</th>
                 <th className="num">Blocked</th><th className="num">Received, not invoiced</th><th>Next due</th></tr></thead>
               <tbody>
                 {pay.payables.map((r) => (
-                  <tr key={r.supplier}>
-                    <td><b>{r.name}</b><div className="faint small">{r.supplier}</div></td><td className="small">{r.terms}</td>
+                  <tr key={`${r.kind}:${r.company}:${r.supplier}`}>
+                    <td><b>{r.name}</b><div className="faint small">{r.supplier}{r.company ? ` · ${r.company}` : ""}</div></td><td className="small">{r.terms}</td>
                     <td className="num">{exactMoney(r.open, res.currency)}</td>
                     <td className="num">{r.overdue ? <b style={{ color: "var(--error-text)" }}>{exactMoney(r.overdue, res.currency)}</b> : ""}</td>
                     <td className="num">{r.due_soon ? exactMoney(r.due_soon, res.currency) : ""}</td>
@@ -327,11 +327,77 @@ export function Owed({ res, ds }: { res: PurchasingView; ds: Dataset }) {
           </div>
         )}
       </Panel>
+      {!!pay.carrier_bills?.length && <Panel flush title="Carrier bills">
+        <div className="table-wrap"><table className="t" aria-label="Carrier bills">
+          <thead><tr><th>Voucher</th><th>Carrier</th><th>Paying company</th><th>Bill date</th><th>Due</th>
+            <th className="num">Billed</th><th className="num">Open</th><th>Status</th><th aria-label="Payment" /></tr></thead>
+          <tbody>{pay.carrier_bills.map((bill) => <CarrierBillRow key={`${bill.order}:${bill.voucher}`}
+            bill={bill} currency={res.currency} planningStart={ds.settings.planning_start} />)}</tbody>
+        </table></div>
+      </Panel>}
       <Reading formula="Open: invoices not yet paid, less credit memos not yet refunded. Received, not invoiced: goods in at the order price with no invoice for them yet."
         soWhat={<>Pay what is due on <a href={href("buying", "invoices")}>Supplier invoices</a>; a supplier's payment terms are on their <a href={href("data", "vendors")}>purchasing data</a>.
           {ds.vendors?.length ? "" : " No supplier has purchasing data yet, so every invoice is due 30 days after its date."}</>} />
     </div>
   );
+}
+
+function CarrierBillRow({ bill, currency, planningStart }: {
+  bill: PayablesView["carrier_bills"][number]; currency: string; planningStart: string;
+}) {
+  const settlement = useSettlement("transportPayment", bill.voucher, bill.order);
+  const [on, setOn] = useState(planningStart > bill.date ? planningStart : bill.date);
+  const [amount, setAmount] = useState("");
+  const [reference, setReference] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<{ message: string; error: boolean }>();
+  const paid = amount === "" ? bill.open : Number(amount);
+  const record = async (retry: boolean) => {
+    setBusy(true); setStatus(undefined);
+    try {
+      const reply = settlement.live
+        ? ((await (retry ? settlement.retry() : settlement.post(on, paid, reference))).result as Pick<TransportActionResponse, "report">)
+        : await applyPurchasing((dataset) => api.transportAct(dataset, "pay_bill", {
+          order: bill.order, voucher: bill.voucher, date: on, amount: paid, reference: reference.trim(),
+        }));
+      if (settlement.live) await Promise.allSettled([store.run("purchasing"), store.run("plan")]);
+      setStatus({ message: reply.report.message, error: false });
+      setAmount(""); setReference("");
+    } catch (error) {
+      setStatus({ message: String(error).replace(/^Error:\s*/, ""), error: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <tr>
+    <td><b>{bill.voucher}</b><div className="faint small">{bill.reference}</div></td>
+    <td>{bill.name}</td><td>{bill.company || "Main company"}</td><td>{day(bill.date)}</td><td>{day(bill.due_on)}</td>
+    <td className="num">{exactMoney(bill.amount, currency)}</td><td className="num">{exactMoney(bill.open, currency)}</td>
+    <td><Badge sev={INV_SEV[bill.status]}>{bill.status}</Badge>
+      {bill.credit_reference && <div className="faint small">{bill.credit_reference}</div>}</td>
+    <td>
+      {!!bill.payments.length && <details><summary>Payments ({bill.payments.length})</summary>
+        <ul>{bill.payments.map((p) => <li key={p.reference}>{day(p.date)} · {p.reference} · {exactMoney(p.amount, currency)}</li>)}</ul>
+      </details>}
+      <Edits>{settlement.pending ? <button className="btn sm accent" disabled={busy}
+        aria-label={`Retry carrier payment ${bill.voucher}`} onClick={() => record(true)}>Retry payment</button>
+        : bill.open > 0 && bill.carrier && <details><summary>Record payment</summary>
+          <div className="row wrap" style={{ gap: 6 }}>
+            <input className="input" type="date" min={bill.date} value={on} aria-label={`Payment date ${bill.voucher}`}
+              onChange={(e) => setOn(e.target.value)} />
+            <input className="input num" type="number" min="0.01" max={bill.open} step="0.01" value={amount}
+              placeholder={String(bill.open)} style={{ width: 100 }} aria-label={`Payment amount ${bill.voucher}`}
+              onChange={(e) => setAmount(e.target.value)} />
+            <input className="input" maxLength={64} value={reference} placeholder="Bank reference" aria-label={`Bank reference ${bill.voucher}`}
+              onChange={(e) => setReference(e.target.value)} />
+            <button className="btn sm accent" disabled={busy || !on || on < bill.date || !(paid > 0 && paid <= bill.open) || !reference.trim()}
+              aria-label={`Record payment ${bill.voucher}`} onClick={() => record(false)}>Record {exactMoney(paid, currency)}</button>
+          </div>
+        </details>}
+      </Edits>
+      {status && <div className={`small ${status.error ? "tone-error" : ""}`} role={status.error ? "alert" : "status"}>{status.message}</div>}
+    </td>
+  </tr>;
 }
 
 // ---- returns to suppliers -----------------------------------------------------------------------------------

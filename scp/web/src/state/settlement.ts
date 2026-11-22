@@ -7,6 +7,7 @@ const SETTLEMENTS = {
   purchasing: { prefix: "scp.payment.pending.v1", action: "pay_invoice", document: "po", amount: "amount", reference: "reference" },
   transport: { prefix: "scp.carrier-bill.pending.v1", action: "settle", document: "order", amount: "billed", reference: "bill" },
   transportCredit: { prefix: "scp.carrier-credit.pending.v1", action: "credit", document: "order", amount: "", reference: "bill" },
+  transportPayment: { prefix: "scp.carrier-payment.pending.v1", action: "pay_bill", document: "voucher", amount: "amount", reference: "reference" },
 };
 type SettlementKind = keyof typeof SETTLEMENTS;
 type SettlementAttempt = { key: string; id: string; details: string };
@@ -24,19 +25,19 @@ function readAttempt(key: string): SettlementAttempt | null {
 }
 
 /** A tab can resubmit the original financial operation even after the document shows as settled. */
-export function useSettlement(kind: SettlementKind, document?: string) {
+export function useSettlement(kind: SettlementKind, document?: string, order?: string) {
   const config = SETTLEMENTS[kind];
   const credit = kind === "transportCredit";
   const label = credit ? "carrier credit" : kind === "transport" ? "carrier bill" : "payment";
   const companyId = useStore((s) => s.company?.live ? s.company.id : null);
   const userId = useStore((s) => s.session?.user.id);
-  const key = companyId && userId && document ? `${config.prefix}:${companyId}:${userId}:${document}` : null;
+  const key = companyId && userId && document ? `${config.prefix}:${companyId}:${userId}:${document}${order ? `:${order}` : ""}` : null;
   const memory = useRef<SettlementAttempt | null>(null);
   const [, refresh] = useState(0);
   const pending = () => key && (memory.current?.key === key ? memory.current : readAttempt(key));
   const parameters = (amount: number | null, reference: string, correction?: CreditDetails) => credit
     ? { [config.document]: document, [config.reference]: reference, ...correction }
-    : { [config.document]: document, [config.amount]: amount, [config.reference]: reference };
+    : { [config.document]: document, [config.amount]: amount, [config.reference]: reference, ...(order ? { order } : {}) };
 
   function remember(attempt: SettlementAttempt) {
     memory.current = attempt;
@@ -55,7 +56,7 @@ export function useSettlement(kind: SettlementKind, document?: string) {
     if (!userId || store.get().session?.user.id !== userId) throw new Error(`Sign in again before posting the ${label}.`);
     remember(attempt);
     try {
-      const reply = await store.postCompanyCommand(companyId, { kind: kind === "transportCredit" ? "transport" : kind,
+      const reply = await store.postCompanyCommand(companyId, { kind: kind === "transportCredit" || kind === "transportPayment" ? "transport" : kind,
         action: config.action, id: attempt.id, posting_date: date, parameters: input });
       forget(attempt);
       return reply;

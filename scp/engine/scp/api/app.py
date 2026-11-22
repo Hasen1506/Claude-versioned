@@ -1069,13 +1069,16 @@ def post_transport(ds: PlanData, as_of: dt.date | None = None) -> Response:
 class TransportActionRequest(Out):
     model_config = ConfigDict(allow_inf_nan=False)
     dataset: PlanData
-    action: Literal["plan", "tender", "accept", "reject", "ship", "settle", "credit", "cancel"]
+    action: Literal["plan", "tender", "accept", "reject", "ship", "settle", "credit", "pay_bill", "cancel"]
     order: str | None = None                        # every action but plan: the freight order
     lanes: list[str] | None = None                  # plan: only these lanes (default: every one)
     billed: float | None = Field(None, ge=0)        # settle: what the carrier billed
     bill: str = Field("", max_length=64)            # the carrier's bill or credit number
     credit_of: str | None = Field(None, max_length=64)
     reason: str = Field("", max_length=200)
+    voucher: str | None = Field(None, max_length=64)
+    amount: float | None = Field(None, gt=0)
+    reference: str = Field("", max_length=64)
     date: dt.date | None = None
 
 
@@ -1103,6 +1106,10 @@ def post_transport_action(req: TransportActionRequest) -> TransportActionRespons
             if not req.credit_of or req.date is None or req.billed is not None:
                 raise TransportError("a freight credit needs the original voucher and posting date; its amount follows the bill")
             return tm.credit_bill(ds, req.order, req.credit_of, req.bill, req.reason, req.date)
+        if a == "pay_bill":
+            if not req.voucher or req.date is None:
+                raise TransportError("a carrier payment needs its bill voucher and posting date")
+            return tm.pay_bill(ds, req.order, req.voucher, req.amount, req.reference, req.date)
         if a == "cancel":
             return tm.cancel(ds, req.order)
         return {"tender": tm.tender, "accept": tm.accept, "reject": tm.reject, "ship": tm.ship}[a](ds, req.order, req.date)

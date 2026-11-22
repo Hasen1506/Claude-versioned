@@ -13,6 +13,7 @@ import datetime as dt
 from pydantic import Field, model_validator
 
 from .common import Id, Model, Ref, TransportMode, Unit
+from .sales import Payment
 
 
 class FreightRate(Model):
@@ -51,6 +52,8 @@ class FreightBillCredit(Model):
     reference: str = Field(min_length=1, max_length=64)
     reason: str = Field(min_length=1, max_length=200)
     date: dt.date
+    due_on: dt.date | None = Field(None, exclude_if=lambda day: day is None)
+    entered_by: str = Field("", max_length=200, exclude_if=lambda actor: not actor)
 
 
 class FreightOrder(Model):
@@ -84,6 +87,9 @@ class FreightOrder(Model):
     settled_on: dt.date | None = None
     note: str = Field("", max_length=400)
     bill_credits: list[FreightBillCredit] = Field(default_factory=list, exclude_if=lambda credits: not credits)
+    bill_due_on: dt.date | None = Field(None, exclude_if=lambda day: day is None)
+    bill_entered_by: str = Field("", max_length=200, exclude_if=lambda actor: not actor)
+    bill_payments: list[Payment] = Field(default_factory=list, exclude_if=lambda payments: not payments)
 
     def bill_voucher(self, index: int | None = None) -> str:
         ordinal = len(self.bill_credits) if index is None else index
@@ -105,6 +111,19 @@ class FreightOrder(Model):
                 raise ValueError("the replacement freight bill must follow its preceding credit")
             if self.status == "shipped" and (self.bill or self.billed is not None or self.settled_on is not None):
                 raise ValueError("credited freight has no active bill until it is billed again")
+        if self.bill_due_on or self.bill_entered_by or self.bill_payments:
+            if self.status != "settled" or self.billed is None or self.settled_on is None:
+                raise ValueError("freight terms and payments require an active posted bill")
+            if self.bill_due_on and self.bill_due_on < self.settled_on:
+                raise ValueError("a freight bill cannot be due before posting")
+            if self.bill_payments and not self.carrier:
+                raise ValueError("a carrier payment requires a named carrier")
+            references = {p.reference.casefold() for p in self.bill_payments}
+            if ("" in references or len(references) != len(self.bill_payments)
+                    or any(p.date < self.settled_on or p.discount or p.fx_rate is not None
+                           or round(p.amount, 2) != p.amount for p in self.bill_payments)
+                    or sum(round(p.amount * 100) for p in self.bill_payments) > round(self.billed * 100)):
+                raise ValueError("invalid freight payment dates, references or amounts")
         return self
 
 
