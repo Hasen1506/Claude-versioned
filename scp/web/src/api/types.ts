@@ -184,6 +184,7 @@ export type LoadGroup = S["LoadGroup"];
 export type FreightRow = S["FreightRow"];
 export type TransportActionResponse = S["TransportActionResponse"];
 export type TransportAction = S["TransportActionRequest"]["action"];
+export type TransportActionInput = Omit<Partial<S["TransportActionRequest"]>, "dataset" | "action">;
 export type OutsideView = S["OutsideView"];
 export type DropShipView = S["DropShipView"];
 export type ThirdPartyRow = S["ThirdPartyRow"];

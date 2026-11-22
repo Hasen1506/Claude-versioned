@@ -175,7 +175,11 @@ function Orders({ v, step, planningStart }: { v: TransportView; step: Step; plan
             <td>{k ?? <span className="faint">the lane's cost</span>}{(f.rejected_by ?? []).length > 0 && <div className="faint small">turned down by {(f.rejected_by ?? []).map((c) => v.carriers.find((x) => x.carrier === c)?.name ?? c).join(", ")}</div>}</td>
             <td className="small">{r.lines.map((ln) => <div key={ln.id}>{ln.id} · {kg(ln.weight_kg)} · {exactMoney(ln.cost, cur)}</div>)}</td>
             <td className="num">{kg(f.weight_kg ?? 0)}</td><td className="num">{exactMoney(f.planned_cost ?? 0, cur)}</td>
-            <td className="num">{f.billed != null ? <>{exactMoney(f.billed, cur)}{r.difference ? <div className="small">{r.difference > 0 ? "+" : "−"}{exactMoney(Math.abs(r.difference), cur)}</div> : null}</> : "—"}</td>
+            <td className="num">{f.billed != null ? <>{exactMoney(f.billed, cur)}{r.difference ? <div className="small">{r.difference > 0 ? "+" : "−"}{exactMoney(Math.abs(r.difference), cur)}</div> : null}</> : "—"}
+              {(f.bill_credits ?? []).map((credit, index) => <div key={index} className="small faint">
+                Credit {credit.reference} · {day(credit.date)} · {exactMoney(credit.billed, cur)}
+              </div>)}
+            </td>
             <td><Badge sev={STATUS[f.status ?? "planned"]}>{f.status}</Badge>{r.pay_by && <div className="faint small">pay by {day(r.pay_by)}</div>}</td>
             <td><Edits><div className="row wrap" style={{ gap: 4 }}>
               {f.status === "planned" && f.carrier && <button className="btn sm accent" disabled={step.busy} aria-label={`Tender ${id}`} onClick={() => step.run("tender", { order: id })}>Tender</button>}
@@ -184,7 +188,7 @@ function Orders({ v, step, planningStart }: { v: TransportView; step: Step; plan
                 <button className="btn sm" disabled={step.busy} aria-label={`Carrier rejected ${id}`} onClick={() => step.run("reject", { order: id })}>Rejected</button></>}
               {(f.status === "accepted" || (f.status === "planned" && !f.carrier)) &&
                 <button className="btn sm accent" disabled={step.busy} aria-label={`Ship ${id}`} onClick={() => step.run("ship", { order: id })}>Ship</button>}
-              {(f.status === "shipped" || f.status === "settled") && <FreightSettlement order={f} step={step} planningStart={planningStart} />}
+              {(f.status === "shipped" || f.status === "settled") && <FreightSettlement order={f} voucher={r.active_voucher} step={step} planningStart={planningStart} />}
               {["planned", "tendered", "accepted"].includes(f.status ?? "") &&
                 <button className="btn sm ghost" disabled={step.busy} aria-label={`Cancel ${id}`} onClick={() => step.run("cancel", { order: id })}>Cancel</button>}
             </div></Edits></td>
@@ -195,31 +199,69 @@ function Orders({ v, step, planningStart }: { v: TransportView; step: Step; plan
   </>;
 }
 
-function FreightSettlement({ order, step, planningStart }: { order: FreightRow["order"]; step: Step; planningStart: string }) {
+function FreightSettlement({ order, voucher, step, planningStart }: {
+  order: FreightRow["order"]; voucher?: string | null; step: Step; planningStart: string;
+}) {
   const { id, shipped_on: shipped } = order;
   const [amount, setAmount] = useState("");
   const [bill, setBill] = useState("");
   const [day, setDay] = useState("");
   const settlement = useSettlement("transport", id);
-  const date = day || (shipped && shipped > planningStart ? shipped : planningStart);
+  const credit = useSettlement("transportCredit", id);
+  const earliest = order.bill_credits?.at(-1)?.date ?? shipped;
+  const date = day || (earliest && earliest > planningStart ? earliest : planningStart);
   const billed = amount === "" ? order.planned_cost ?? 0 : Number(amount);
   const report = async (operation: ReturnType<typeof settlement.retry>) =>
     ((await operation).result as Pick<TransportActionResponse, "report">).report.message;
   const post = () => settlement.live ? step.apply(() => report(settlement.post(date, billed, bill)))
-    : step.run("settle", { order: id, billed, bill });
+    : step.run("settle", { order: id, billed, bill, date });
+  const resetBill = () => { setAmount(""); setBill(""); setDay(""); };
   if (settlement.pending) return <button className="btn sm accent" disabled={step.busy} aria-label={`Retry bill ${id}`}
     onClick={() => step.apply(() => report(settlement.retry()))}>Retry bill</button>;
+  const retryCredit = credit.pending && <button className="btn sm accent" disabled={step.busy} aria-label={`Retry credit ${id}`}
+    onClick={() => { resetBill(); void step.apply(() => report(credit.retry())); }}>Retry credit</button>;
+  if (order.status === "settled" && voucher && order.settled_on) {
+    return <>{retryCredit}<FreightCreditForm key={voucher} id={id} voucher={voucher} earliest={order.settled_on}
+        planningStart={planningStart} busy={step.busy || credit.pending} post={(date, bill, reason) => {
+          resetBill();
+          return credit.live ? step.apply(() => report(credit.post(date, null, bill, { credit_of: voucher, reason })))
+            : step.run("credit", { order: id, credit_of: voucher, date, bill, reason });
+        }} /></>;
+  }
+  if (retryCredit) return retryCredit;
   if (order.status !== "shipped") return null;
   return <>
     <input className="input num" style={{ width: 100 }} type="number" min={0} step="any" aria-label={`Billed ${id}`}
       placeholder={String(order.planned_cost ?? 0)} value={amount} onChange={(e) => setAmount(e.target.value)} />
     <input className="input" style={{ width: 90 }} aria-label={`Bill number ${id}`} placeholder="their no." value={bill}
       onChange={(e) => setBill(e.target.value)} />
-    {settlement.live && <input className="input" type="date" aria-label={`Posting date ${id}`} min={shipped ?? undefined}
+    {(settlement.live || !!order.bill_credits?.length) && <input className="input" type="date" aria-label={`Posting date ${id}`} min={earliest ?? undefined}
       value={date} onChange={(e) => setDay(e.target.value)} />}
     <button className="btn sm accent" disabled={step.busy || !Number.isFinite(billed) || billed < 0} aria-label={`Settle ${id}`}
       onClick={post}>Settle</button>
   </>;
+}
+
+function FreightCreditForm({ id, voucher, earliest, planningStart, busy, post }: {
+  id: string; voucher: string; earliest: string; planningStart: string; busy: boolean;
+  post: (date: string, reference: string, reason: string) => Promise<void>;
+}) {
+  const [date, setDate] = useState(earliest > planningStart ? earliest : planningStart);
+  const [reference, setReference] = useState("");
+  const [reason, setReason] = useState("");
+  return <details>
+    <summary>Record carrier credit</summary>
+    <div className="row wrap" style={{ gap: 4 }}>
+      <input className="input" type="date" aria-label={`Credit posting date ${id}`} min={earliest}
+        value={date} onChange={(e) => setDate(e.target.value)} />
+      <input className="input" aria-label={`Credit number ${id}`} placeholder="Carrier credit number" maxLength={64}
+        value={reference} onChange={(e) => setReference(e.target.value)} />
+      <input className="input" aria-label={`Credit reason ${id}`} placeholder="Reason for full credit" maxLength={200}
+        value={reason} onChange={(e) => setReason(e.target.value)} />
+      <button className="btn sm accent" disabled={busy || !date || date < earliest || !reference.trim() || !reason.trim()}
+        onClick={() => post(date, reference.trim(), reason.trim())}>Credit {voucher}</button>
+    </div>
+  </details>;
 }
 
 function Carriers({ ds, v }: { ds: Dataset; v: TransportView }) {

@@ -33,6 +33,7 @@ from ..actuals.post import ship as ship_transfer
 from ..actuals.transfer_price import freight_company
 from ..model import Dataset, FreightOrder, ReceiptKind, TransportLane
 from ..model.common import Out, TransportMode
+from ..model.transport import FreightBillCredit
 from ..sales import SalesError
 from ..sales import issue as goods_issue
 
@@ -353,6 +354,7 @@ class FreightRow(Out):
     lines: list[FreightLine]
     difference: float | None        # billed − planned, once settled
     pay_by: date | None
+    active_voucher: str | None = None
 
 
 class CarrierRow(Out):
@@ -411,6 +413,7 @@ def view(ds: Dataset, on: date | None = None) -> TransportView:
         k = ds.carrier_by_id.get(f.carrier or "")
         pay_by = f.settled_on + timedelta(days=k.payment_days) if f.settled_on and k else None
         rows.append(FreightRow(order=f, lines=_lines(f), pay_by=pay_by,
+                               active_voucher=f.bill_voucher() if f.status == "settled" and f.billed is not None else None,
                                difference=round(f.billed - f.planned_cost, 2) if f.billed is not None else None))
         for cid in {*([f.carrier] if f.carrier else []), *f.rejected_by}:
             c = per.setdefault(cid, CarrierRow(carrier=cid, name=_carrier(ds, cid), orders=0, planned=0, billed=0,
@@ -598,6 +601,8 @@ def settle(ds: Dataset, fid: str, billed: float, bill: str = "", on: date | None
     day = on or ds.settings.planning_start
     if f.shipped_on is None or day < f.shipped_on:
         raise TransportError("a freight bill cannot be settled before shipment")
+    if f.bill_credits and day < f.bill_credits[-1].date:
+        raise TransportError("a replacement freight bill cannot be posted before its preceding credit")
     bill = bill.strip()
     if f.carrier and bill:
         payer = freight_company(ds, f)
@@ -615,6 +620,30 @@ def settle(ds: Dataset, fid: str, billed: float, bill: str = "", on: date | None
     return (ds2, TransportReport(orders=[fid], message=f"{fid} settled" + (f" (their {bill})" if bill else "") +
                                  f": {_money(ds, billed)}, {diff:+,.2f} against the planned "
                                  f"{_money(ds, f.planned_cost)}{pay}. Shared by weight: {shares}."))
+
+
+def credit_bill(ds: Dataset, fid: str, original: str, reference: str, reason: str, day: date) -> tuple[Dataset, TransportReport]:
+    """Reverse the reviewed freight bill in full, without reversing the shipment."""
+    f = _fo(ds, fid)
+    if f.status != "settled" or f.billed is None or f.settled_on is None:
+        raise TransportError(f"{fid} has no booked freight bill to credit")
+    if original != f.bill_voucher():
+        raise TransportError(f"{fid}: the active bill changed; review the current voucher before crediting it")
+    if day < f.settled_on:
+        raise TransportError("a freight credit cannot be posted before the original bill")
+    reference, reason = reference.strip(), reason.strip()
+    if not reference or not reason:
+        raise TransportError("enter the carrier's credit number and the reason")
+    if f.carrier and any(other.carrier == f.carrier and freight_company(ds, other) == freight_company(ds, f)
+                         and any(c.reference.casefold() == reference.casefold() for c in other.bill_credits)
+                         for other in ds.freight_orders):
+        raise TransportError(f"carrier credit {reference} is already booked for this company")
+    credit = FreightBillCredit(bill=f.bill, billed=f.billed, settled_on=f.settled_on,
+                               reference=reference, reason=reason, date=day)
+    new = f.model_copy(update={"status": "shipped", "bill": "", "billed": None, "settled_on": None,
+                               "bill_credits": [*f.bill_credits, credit]})
+    return (_put(ds, new), TransportReport(orders=[fid], message=f"{original} credited (their {reference}): "
+                                           f"{_money(ds, credit.billed)} on {_day(day)}."))
 
 
 def cancel(ds: Dataset, fid: str) -> tuple[Dataset, TransportReport]:

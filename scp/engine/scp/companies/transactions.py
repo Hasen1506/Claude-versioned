@@ -31,7 +31,8 @@ def _rows(doc: dict, name: str) -> dict[str, dict]:
     return out
 
 
-def protect(before: dict, after: dict, email: str, *, allow_production_posting: bool = False) -> dict:
+def protect(before: dict, after: dict, email: str, *, allow_production_posting: bool = False,
+            allow_freight_credit: bool = False) -> dict:
     """Return a normalized document or refuse an invalid financial state transition."""
     names = ("supplier_invoices", "movements", "purchase_orders", "invoices", "intercompany_invoices", "freight_orders",
              "inventory_docs", "challans", "third_party_orders", "purchase_valuation", "production_cost_postings")
@@ -91,7 +92,7 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         old_pos, new_pos = _rows(before, "purchase_orders"), _rows(after, "purchase_orders")
         if old_ds.settings.currency != ds.settings.currency:
             posted = (old_inv or old_moves or old_ds.invoices or old_ds.intercompany_invoices
-                      or old_ds.production_cost_postings or any(f.status == "settled" for f in old_ds.freight_orders)
+                      or old_ds.production_cost_postings or any(f.status == "settled" or f.bill_credits for f in old_ds.freight_orders)
                       or any(t.sent_on is not None or t.shipments for t in old_ds.third_party_orders))
             if posted:
                 raise TransactionRefused("posted records keep their company currency; use a controlled migration to change it")
@@ -326,7 +327,7 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
                 open_period(target.cancelled_on)
                 working, _ = cancel_invoice(working, iid, target.cancelled_on)
         from .commercial import protect_commercial
-        protect_commercial(old_ds, ds, open_period)
+        protect_commercial(old_ds, ds, open_period, allow_freight_credit=allow_freight_credit)
         from .outside import protect_outside
         protect_outside(old_ds, ds, open_period)
         from .materials import protect_materials

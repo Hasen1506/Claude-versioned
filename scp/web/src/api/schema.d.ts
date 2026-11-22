@@ -7439,6 +7439,33 @@ export interface components {
             /** Detail */
             detail: string;
         };
+        /**
+         * FreightBillCredit
+         * @description The original bill and the carrier's later full credit, kept together in the journal.
+         */
+        FreightBillCredit: {
+            /**
+             * Bill
+             * @default
+             */
+            bill: string;
+            /** Billed */
+            billed: number;
+            /**
+             * Settled On
+             * Format: date
+             */
+            settled_on: string;
+            /** Reference */
+            reference: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+        };
         /** FreightLine */
         FreightLine: {
             /** Kind */
@@ -7556,6 +7583,8 @@ export interface components {
              * @default
              */
             note: string;
+            /** Bill Credits */
+            bill_credits?: components["schemas"]["FreightBillCredit"][];
         };
         /**
          * FreightRate
@@ -7612,6 +7641,8 @@ export interface components {
             difference: number | null;
             /** Pay By */
             pay_by: string | null;
+            /** Active Voucher */
+            active_voucher: string | null;
         };
         /** FxChip */
         "FxChip-Input": {
@@ -18006,7 +18037,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "plan" | "tender" | "accept" | "reject" | "ship" | "settle" | "cancel";
+            action: "plan" | "tender" | "accept" | "reject" | "ship" | "settle" | "credit" | "cancel";
             /** Order */
             order?: string | null;
             /** Lanes */
@@ -18018,6 +18049,13 @@ export interface components {
              * @default
              */
             bill: string;
+            /** Credit Of */
+            credit_of?: string | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
             /** Date */
             date?: string | null;
         };

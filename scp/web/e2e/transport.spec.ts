@@ -15,7 +15,7 @@ async function openKaveri(page: Page) {
 
 const done = (page: Page) => page.locator('.banner[role="status"]').last();
 
-test("a live carrier bill can recover lost confirmation after reload without doubling the payable", async ({ page }) => {
+test("live carrier billing and credit recover after reload, then rebill with a new voucher", async ({ page }) => {
   const shipped = "2026-01-06";
   const date = "2026-01-07";
   const company = {
@@ -47,7 +47,7 @@ test("a live carrier bill can recover lost confirmation after reload without dou
   const requests: { id: string; kind: string; action: string; posting_date: string; parameters: object }[] = [];
   await page.route("**/api/companies/*/commands", async (route) => {
     requests.push(route.request().postDataJSON());
-    if (requests.length === 1) {
+    if (requests.length === 1 || requests.length === 3) {
       companyUrl = route.request().url().replace(/\/commands$/, "");
       const committed = await route.fetch();
       expect(committed.ok(), await committed.text()).toBe(true);
@@ -81,6 +81,47 @@ test("a live carrier bill can recover lost confirmation after reload without dou
   const ledger = await books.json();
   expect(ledger.vouchers.filter((v: { number: string }) => v.number === "FO-1")).toHaveLength(1);
   expect(ledger.balances).toContainEqual(expect.objectContaining({ company: "E1", account: "PAYABLES", balance: -100 }));
+
+  const creditDate = "2026-01-08";
+  await order.getByText("Record carrier credit", { exact: true }).click();
+  await page.getByLabel("Credit posting date FO-1").fill(creditDate);
+  await page.getByLabel("Credit number FO-1").fill("CR-FRT-101");
+  await page.getByLabel("Credit reason FO-1").fill("Fuel charge corrected");
+  await page.getByRole("button", { name: "Credit FO-1", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Carrier credit confirmation is unavailable");
+  await page.reload();
+  await expect(order).toContainText("Credit CR-FRT-101");
+  await order.getByRole("button", { name: "Retry credit FO-1" }).click();
+  await expect(done(page)).toContainText("FO-1 credited (their CR-FRT-101): INR 100.00");
+  expect(requests).toHaveLength(4);
+  expect(requests[3]).toMatchObject({ id: requests[2].id, kind: "transport", action: "credit", posting_date: creditDate,
+    parameters: { order: "FO-1", credit_of: "FO-1", bill: "CR-FRT-101", reason: "Fuel charge corrected" } });
+  const credited = await (await page.request.get(companyUrl)).json();
+  expect(credited.meta.revision).toBe(3);
+  expect(credited.dataset.freight_orders[0]).toMatchObject({ status: "shipped", billed: null,
+    bill_credits: [{ billed: 100, bill: "FRT-101", reference: "CR-FRT-101", settled_on: date, date: creditDate }] });
+
+  const correctedDate = "2026-01-09";
+  await page.getByLabel("Posting date FO-1").fill(correctedDate);
+  await page.getByLabel("Billed FO-1").fill("80");
+  await page.getByLabel("Bill number FO-1").fill("FRT-101");
+  await post.click();
+  await expect(done(page)).toContainText("FO-1 settled (their FRT-101): INR 80.00");
+  const corrected = await (await page.request.get(companyUrl)).json();
+  expect(corrected.meta.revision).toBe(4);
+  expect(corrected.dataset.freight_orders[0].bill_credits).toHaveLength(1);
+  const historical = await page.request.post(`/api/accounting?period_end=${date}`, {
+    data: corrected.dataset, headers: { "X-CSRF-Token": csrf },
+  });
+  expect(historical.ok(), await historical.text()).toBe(true);
+  expect(await historical.json()).toEqual(ledger);
+  const correctedBooks = await page.request.post(`/api/accounting?period_end=${correctedDate}`, {
+    data: corrected.dataset, headers: { "X-CSRF-Token": csrf },
+  });
+  expect(correctedBooks.ok(), await correctedBooks.text()).toBe(true);
+  const journal = await correctedBooks.json();
+  expect(journal.vouchers.map((v: { number: string }) => v.number).sort()).toEqual(["FO-1", "FO-1/B2", "FO-1/REV"]);
+  expect(journal.balances).toContainEqual(expect.objectContaining({ company: "E1", account: "PAYABLES", balance: -80 }));
 });
 
 test("loads built by weight and volume, the cheapest carrier, a rejection, the truck shipped and its bill settled", async ({ page }) => {

@@ -10,7 +10,8 @@ from ..actuals.transfer_price import freight_company
 from ..model import Dataset, MovementType
 
 
-def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[date], None]) -> None:
+def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[date], None], *,
+                       allow_freight_credit: bool = False) -> None:
     # Sales prices remain authoritative after shipment, including after roll-forward.
     for movement in old.movements:
         if movement.type is not MovementType.SALE or not movement.reference:
@@ -90,12 +91,22 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
         target = freight.get(prior.id)
         if target is None:
             raise ValueError(f"{prior.id}: shipped freight is retained")
-        if target.status == "settled":
+        if target.status == "settled" or prior.status == "settled" or prior.bill_credits:
             payer = freight_company(old, prior)
             if (payer != freight_company(proposed, target)
                     or (payer in old.entity_by_id and payer not in proposed.entity_by_id)):
                 raise ValueError(f"{prior.id}: the freight bill keeps its posting company")
-        if prior.status == "settled":
+        if target.bill_credits != prior.bill_credits:
+            if (not allow_freight_credit or prior.status != "settled"
+                    or len(target.bill_credits) != len(prior.bill_credits) + 1
+                    or target.bill_credits[:-1] != prior.bill_credits):
+                raise ValueError(f"{prior.id}: freight credits are retained and require a freight credit command")
+            credit = target.bill_credits[-1]
+            open_period(credit.date)
+            base = proposed.model_copy(update={"freight_orders": [prior if f.id == prior.id else f for f in proposed.freight_orders]})
+            result, _ = transport.credit_bill(base, prior.id, prior.bill_voucher(), credit.reference, credit.reason, credit.date)
+            expected = next(f for f in result.freight_orders if f.id == prior.id)
+        elif prior.status == "settled":
             expected = prior
         elif target.status == "settled":
             if target.settled_on is None or target.billed is None:
@@ -111,5 +122,5 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
             raise ValueError(f"{prior.id}: shipped freight and posted settlement facts cannot be replaced")
     for target in proposed.freight_orders:
         prior = next((f for f in old.freight_orders if f.id == target.id), None)
-        if target.status == "settled" and (prior is None or prior.status not in ("shipped", "settled")):
+        if (target.status == "settled" or target.bill_credits) and (prior is None or prior.status not in ("shipped", "settled")):
             raise ValueError(f"{target.id}: save the shipment before settling its carrier bill")

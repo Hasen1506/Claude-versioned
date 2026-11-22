@@ -33,7 +33,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 from ..actuals.transfer_price import destination, entity_of, freight_company, party
 from ..actuals.valuation import EPS, run_books
-from ..model import Dataset, GoodsMovement, MovementType, SupplierInvoice
+from ..model import Dataset, FreightOrder, GoodsMovement, MovementType, SupplierInvoice
 from ..model.common import Out
 from ..plan.costing import fx
 from .production import ProductionWip, production_wip
@@ -480,15 +480,23 @@ class _Journal:
                             ("BANK", inv.buyer, "", -s * p.amount, "", "")], "SUSPENSE")
             self._reverse(start, inv.id, inv.cancelled_on if inv.cancelled else None, day)
         for fo in ds.freight_orders:
-            if fo.status != "settled" or fo.billed is None or fo.settled_on is None or fo.settled_on > day:
-                continue
-            co = freight_company(ds, fo)
-            carrier = fo.carrier or ""
-            self._post(fo.settled_on, fo.id, "Journal", fo.id,
-                       f"freight bill {fo.bill or fo.id} from {_name(ds, carrier) or 'the carrier'}: "
-                       f"{_name(ds, fo.ship_from)} to {_name(ds, fo.ship_to)}",
-                       [("DELIVERY", co, "", fo.billed, fo.ship_from, ""),
-                        ("PAYABLES", co, carrier, -fo.billed, "", "")], "SUSPENSE")
+            for index, credit in enumerate(fo.bill_credits):
+                bill = fo.bill_voucher(index)
+                if credit.settled_on <= day:
+                    self._freight(fo, credit.settled_on, bill, credit.billed, credit.bill)
+                if credit.date <= day:
+                    self._freight(fo, credit.date, f"{bill}/REV", -credit.billed, credit.reference, reversal_of=bill)
+            if fo.status == "settled" and fo.billed is not None and fo.settled_on is not None and fo.settled_on <= day:
+                self._freight(fo, fo.settled_on, fo.bill_voucher(), fo.billed, fo.bill)
+
+    def _freight(self, fo: FreightOrder, on: date, number: str, amount: float, reference: str, reversal_of: str = "") -> None:
+        co = freight_company(self.ds, fo)
+        carrier = fo.carrier or ""
+        name = _name(self.ds, carrier) or "the carrier"
+        narration = (f"carrier credit {reference} from {name} against {reversal_of}" if reversal_of else
+                     f"freight bill {reference or fo.id} from {name}: {_name(self.ds, fo.ship_from)} to {_name(self.ds, fo.ship_to)}")
+        self._post(on, number, "Journal", fo.id, narration,
+                   [("DELIVERY", co, "", amount, fo.ship_from, ""), ("PAYABLES", co, carrier, -amount, "", "")], "SUSPENSE")
 
     def _reverse(self, start: int, document: str, cancelled_on: date | None, through: date) -> None:
         if cancelled_on is None or cancelled_on > through:
@@ -545,7 +553,8 @@ def _day(ds: Dataset) -> date:
                   if i.cancelled_on is not None),
                 *(i.date for i in ds.intercompany_invoices),
                 *(p.date for i in [*ds.invoices, *ds.supplier_invoices, *ds.intercompany_invoices] for p in i.payments),
-                *(f.settled_on for f in ds.freight_orders if f.settled_on is not None)])
+                *(f.settled_on for f in ds.freight_orders if f.settled_on is not None),
+                *(credit.date for f in ds.freight_orders for credit in f.bill_credits)])
 
 
 def _period(ds: Dataset, end: date, start: date | None) -> date:
@@ -679,6 +688,9 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
             rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
             pay[j._company_of_supplier_invoice(inv)] += (-1 if inv.credit else 1) * _r(_r(left) * rate)
     for fo in ds.freight_orders:
+        for credit in fo.bill_credits:
+            if credit.settled_on <= day < credit.date:
+                pay[freight_company(ds, fo)] += credit.billed
         if fo.status == "settled" and fo.billed is not None and fo.settled_on is not None and fo.settled_on <= day:
             pay[freight_company(ds, fo)] += fo.billed
     grir: dict[str, float] = defaultdict(float)
