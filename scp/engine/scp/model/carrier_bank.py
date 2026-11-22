@@ -1,9 +1,47 @@
 """Source statement lines and append-only matches to carrier cash vouchers."""
 from datetime import date
+from typing import Annotated
 
 from pydantic import Field, model_validator
 
 from .common import Id, Model
+
+
+BankAccountId = Annotated[str, Field(pattern=r"^[A-Z0-9][A-Z0-9_-]{0,31}$")]
+BankMinor = Annotated[int, Field(strict=True, ge=-999999999999999, le=999999999999999)]
+
+
+class BankAccountOpening(Model):
+    id: BankAccountId
+    company: str = Field(max_length=64)
+    starts_on: date
+    opening_minor: BankMinor
+
+
+class CarrierBankAccount(BankAccountOpening):
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+
+
+class BankStatementHeader(Model):
+    account: BankAccountId
+    number: str = Field(min_length=1, max_length=64)
+    starts_on: date
+    ends_on: date
+    opening_minor: BankMinor
+    closing_minor: BankMinor
+    line_count: int = Field(strict=True, ge=0, le=500)
+
+    @model_validator(mode="after")
+    def valid_window(self) -> "BankStatementHeader":
+        if self.ends_on < self.starts_on:
+            raise ValueError("a statement ends on or after its start date")
+        return self
+
+
+class CarrierBankPeriod(BankStatementHeader):
+    id: Id
+    file_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    line_ids: list[Id] = Field(max_length=500)
 
 
 class BankCashRef(Model):
@@ -26,7 +64,7 @@ class CarrierBankLine(Model):
     statement_line: str = Field(min_length=1, max_length=64)
     date: date
     reference: str = Field(min_length=1, max_length=64)
-    amount_minor: int = Field(strict=True, ge=-999999999999999, le=999999999999999)
+    amount_minor: BankMinor
     currency: str = Field(pattern=r"^[A-Z]{3}$")
     history: list[BankMatchEvent] = Field(default_factory=list)
 

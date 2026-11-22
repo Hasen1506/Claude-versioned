@@ -4,6 +4,7 @@ import { Edits, Empty, Panel } from "../components/ui";
 import { day, exactMoney } from "../lib/format";
 import { useSettlement, type CarrierBankEvent } from "../state/settlement";
 import { store } from "../state/store";
+import { CarrierBankAccounts } from "./CarrierBankAccounts";
 
 type Worklist = PayablesView["carrier_bank"];
 type Line = Worklist["lines"][number];
@@ -22,9 +23,13 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean }>();
   const selected = bank.lines.find((line) => line.id === lineId);
+  const periods = bank.periods ?? [];
+  const selectedPeriod = selected && periods.find(({ period }) => period.line_ids.includes(selected.id))?.period;
   const history = selected?.history ?? [];
   const active = history.at(-1)?.targets ?? [];
   const candidates = selected ? bank.unmatched_cash.filter((cash) => cash.company === selected.company
+    && (cash.bank_account ?? null) === (selectedPeriod?.account ?? null)
+    && (!selectedPeriod || (cash.date >= selectedPeriod.starts_on && cash.date <= selectedPeriod.ends_on))
     && Math.sign(cash.amount_minor) === Math.sign(selected.amount_minor)
     && cash.reference.toLowerCase() === selected.reference.toLowerCase()) : [];
   const selectedCash = candidates.filter((cash) => picked.has(cashKey(cash)));
@@ -53,9 +58,10 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
       setBusy(false);
     }
   };
-  if (!settlement.live && !bank.lines.length) return null;
+  if (!settlement.live && !bank.lines.length && !periods.length) return null;
 
   return <Panel title="Carrier bank statements">
+    <CarrierBankAccounts ds={ds} currency={currency} periods={periods} live={settlement.live} editable={editable} record={record} />
     {settlement.live && <Edits><details>
       <summary>Import statement CSV</summary>
       <p className="small">Use <code>line,date,reference,amount,currency</code> with ISO dates, unique line IDs, and signed amounts.</p>
@@ -98,7 +104,7 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
       </tr>)}</tbody>
     </table></div> : <Empty title="No imported statement lines" />}
     {selected && <section className="stack">
-      <h4>{selected.statement_line} · {selected.account}</h4>
+      <h4>{selected.statement_line} · {selected.account}{selectedPeriod && ` · ${selectedPeriod.number}`}</h4>
       {active.length ? <ul>{active.map((item) => <li key={JSON.stringify(item)}>{item.voucher}</li>)}</ul> : <>
         {candidates.length ? <Edits>{candidates.map((cash) => <label className="row" key={cashKey(cash)}>
           <input type="checkbox" checked={picked.has(cashKey(cash))} aria-label={`Select cash voucher ${cash.voucher}`}

@@ -13,6 +13,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
+from .carrier_bank import BankAccountId
 from .common import Id, Model, Ref, TransportMode, Unit
 from .sales import Payment
 
@@ -70,6 +71,11 @@ class CarrierRefund(Model):
     date: dt.date
     reference: str = Field(min_length=1, max_length=64)
     amount_minor: int = Field(gt=0)
+    bank_account: BankAccountId | None = Field(None, exclude_if=lambda value: value is None)
+
+
+class CarrierPayment(Payment):
+    bank_account: BankAccountId | None = Field(None, exclude_if=lambda value: value is None)
 
 
 class CarrierBankMatch(Model):
@@ -134,7 +140,7 @@ class FreightOrder(Model):
     bill_credits: list[FreightBillCredit] = Field(default_factory=list, exclude_if=lambda credits: not credits)
     bill_due_on: dt.date | None = Field(None, exclude_if=lambda day: day is None)
     bill_entered_by: str = Field("", max_length=200, exclude_if=lambda actor: not actor)
-    bill_payments: list[Payment] = Field(default_factory=list, exclude_if=lambda payments: not payments)
+    bill_payments: list[CarrierPayment] = Field(default_factory=list, exclude_if=lambda payments: not payments)
     bill_events: list[FreightBillEvent] = Field(default_factory=list, exclude_if=lambda events: not events)
 
     def bill_voucher(self, index: int | None = None) -> str:
@@ -187,13 +193,13 @@ class FreightOrder(Model):
         return self
 
     def _event_links(self) -> None:
-        cash = {f"{self.bill_voucher()}/P-{i}": (p.reference.casefold(), -round(p.amount * 100))
+        cash = {f"{self.bill_voucher()}/P-{i}": (p.reference.casefold(), -round(p.amount * 100), p.bank_account)
                 for i, p in enumerate(self.bill_payments, 1)}
         matches: dict[str, CarrierBankMatch] = {}
         allocations: dict[int, FreightLandedCost] = {}
         for i, event in enumerate(self.bill_events, 1):
             if isinstance(event, CarrierRefund):
-                cash[f"{self.bill_voucher()}/R-{i}"] = event.reference.casefold(), event.amount_minor
+                cash[f"{self.bill_voucher()}/R-{i}"] = event.reference.casefold(), event.amount_minor, event.bank_account
             elif isinstance(event, CarrierBankMatch):
                 if event.released:
                     original = matches.pop(event.cash_voucher, None)
@@ -202,7 +208,7 @@ class FreightOrder(Model):
                         raise ValueError("bank match release must retain its original statement line")
                 else:
                     if event.cash_voucher in matches or cash.get(event.cash_voucher) != (
-                            event.reference.casefold(), event.amount_minor):
+                            event.reference.casefold(), event.amount_minor, None):
                         raise ValueError("bank statement must match a posted carrier cash voucher exactly once")
                     matches[event.cash_voucher] = event
             elif isinstance(event, FreightLandedCost):

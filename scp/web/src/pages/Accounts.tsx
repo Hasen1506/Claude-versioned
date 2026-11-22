@@ -252,7 +252,8 @@ function Journal({ v, co, cur }: { v: AccountingView; co: string; cur: string })
   const names = useMemo(() => Object.fromEntries(v.accounts.map((a) => [a.code, a.name])), [v]);
   const q = find.trim().toLowerCase();
   const shown = v.vouchers.filter((x) => x.company === co && (!acc || x.lines.some((l) => l.account === acc))
-    && (!q || `${x.number} ${x.document} ${x.narration}`.toLowerCase().includes(q))).slice(0, 200);
+    && (!q || `${x.number} ${x.document} ${x.narration}`.toLowerCase().includes(q)
+      || x.lines.some((l) => l.bank_account?.toLowerCase().includes(q)))).slice(0, 200);
   const used = [...new Set(v.vouchers.filter((x) => x.company === co).flatMap((x) => x.lines.map((l) => l.account)))];
   return <Panel flush title="The journal, latest first" actions={<div className="row">
     <input className="input sm" placeholder="Find a voucher or document" aria-label="Find a voucher" value={find} onChange={(e) => setFind(e.target.value)} />
@@ -265,7 +266,8 @@ function Journal({ v, co, cur }: { v: AccountingView; co: string; cur: string })
           {i === 0 && <><td rowSpan={x.lines.length}>{day(x.date)}</td>
             <td rowSpan={x.lines.length} className="mono">{x.number}<div className="faint">{x.type}</div></td>
             <td rowSpan={x.lines.length}><Msg text={x.narration} /></td></>}
-          <td>{names[l.account] ?? l.account}{l.party ? <span className="faint"> · {nm.loc(l.party)}</span> : null}</td>
+          <td>{names[l.account] ?? l.account}{l.party ? <span className="faint"> · {nm.loc(l.party)}</span> : null}
+            {l.bank_account && <span className="faint"> · {l.bank_account}</span>}</td>
           <td className="num">{l.debit ? exactMoney(l.debit, cur) : ""}</td><td className="num">{l.credit ? exactMoney(l.credit, cur) : ""}</td>
         </tr>))}</tbody>
       </table></div>}

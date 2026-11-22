@@ -182,7 +182,8 @@ LABELS = {
     "batches": "batches", "inventory_docs": "physical inventory documents", "storage_types": "storage types",
     "bins": "storage bins", "putaway_rules": "put-away rules", "warehouse_tasks": "warehouse tasks", "waves": "waves",
     "carriers": "carriers", "freight_orders": "freight orders", "transport": "transport settings",
-    "carrier_bank_lines": "carrier bank statements",
+    "carrier_bank_accounts": "carrier bank accounts", "carrier_bank_lines": "carrier bank statements",
+    "carrier_bank_periods": "carrier bank statement periods",
     "third_party_orders": "third-party orders", "challans": "job-work challans", "job_work": "job-work settings",
     "shipping_notices": "shipping notices", "entities": "companies of the group", "transfer_prices": "transfer prices",
     "intercompany_invoices": "inter-company invoices",
@@ -1212,7 +1213,15 @@ class Companies:
         with self.lock:
             if self.is_key(user):
                 raise CompanyError("a key works only in its company; a person must create a company", 403)
-            if doc.get("carrier_bank_lines"):
+            bank_fields = ("carrier_bank_accounts", "carrier_bank_lines", "carrier_bank_periods")
+            freight = doc.get("freight_orders")
+            has_posted_bank_account = isinstance(freight, list) and any(
+                isinstance(entry, dict) and entry.get("bank_account") is not None
+                for order in freight if isinstance(order, dict)
+                for field in ("bill_payments", "bill_events") if isinstance(order.get(field), list)
+                for entry in order[field]
+            )
+            if any(doc.get(field) for field in bank_fields) or has_posted_bank_account:
                 from ..carrier_bank import protect_bank
                 from ..model import Dataset
                 try:

@@ -31,6 +31,8 @@ from collections import defaultdict
 from datetime import date
 from xml.sax.saxutils import escape, quoteattr
 
+from pydantic import Field
+
 from ..actuals.transfer_price import destination, entity_of, party
 from ..actuals.valuation import EPS, run_books
 from ..freight import bills_for_order, carrier_bills, freight_company
@@ -85,6 +87,7 @@ class JournalLine(Out):
     location: str = ""
     product: str = ""
     production_order: str = ""             # populated on WIP lines attributed to a production order
+    bank_account: str | None = Field(None, exclude_if=lambda value: value is None)
     debit: float = 0.0
     credit: float = 0.0
 
@@ -349,7 +352,8 @@ class _Journal:
 
     # -- writing a voucher ---------------------------------------------------------------------------------------
     def _post(self, day: date, number: str, vtype: str, doc: str, narration: str, lines: list, rest: str,
-              loc: str = "", prod: str = "", *, wip_order: str = "", wip_orders: dict[int, str] | None = None) -> None:
+              loc: str = "", prod: str = "", *, wip_order: str = "", wip_orders: dict[int, str] | None = None,
+              bank_account: str | None = None) -> None:
         by_co: dict[str, list[JournalLine]] = defaultdict(list)
         sums: dict[str, float] = defaultdict(float)
         for index, (acc, c, pa, amt, lo, pr) in enumerate(lines):
@@ -358,7 +362,8 @@ class _Journal:
                 continue
             order = wip_order if wip_orders is None else wip_orders.get(index, wip_order)
             by_co[c].append(JournalLine(account=acc, party=pa, location=lo, product=pr,
-                                        production_order=order if acc == "WIP" else "", debit=max(a, 0.0),
+                                        production_order=order if acc == "WIP" else "",
+                                        bank_account=bank_account if acc == "BANK" else None, debit=max(a, 0.0),
                                         credit=max(-a, 0.0)))
             sums[c] += a
         for c, total in sums.items():
@@ -499,13 +504,13 @@ class _Journal:
                     if isinstance(event, CarrierBillAdjustment) and event.date <= day:
                         self._freight(fo, event.date, f"{bill.voucher}/C-{index}", -event.amount_minor / 100,
                                       event.reference, reversal_of=bill.voucher)
-                for voucher, cash_date, reference, minor in bill.cash():
+                for voucher, cash_date, reference, minor, account in bill.cash():
                     if cash_date <= day:
                         verb = "refund" if minor > 0 else "payment"
                         self._post(cash_date, voucher, "Receipt" if minor > 0 else "Payment", fo.id,
                                    f"carrier {verb} {reference} against {bill.voucher}",
                                    [("PAYABLES", bill.company, bill.carrier, -minor / 100, "", ""),
-                                    ("BANK", bill.company, "", minor / 100, "", "")], "SUSPENSE")
+                                    ("BANK", bill.company, "", minor / 100, "", "")], "SUSPENSE", bank_account=account)
 
     def _freight(self, fo: FreightOrder, on: date, number: str, amount: float, reference: str, reversal_of: str = "") -> None:
         co = freight_company(self.ds, fo)
