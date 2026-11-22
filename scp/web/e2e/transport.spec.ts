@@ -15,7 +15,7 @@ async function openKaveri(page: Page) {
 
 const done = (page: Page) => page.locator('.banner[role="status"]').last();
 
-test("live carrier billing and credit recover after reload, then rebill with a new voucher", async ({ page }) => {
+test("live carrier billing, credit and AP payment recover after reload", async ({ page }) => {
   const shipped = "2026-01-06";
   const date = "2026-01-07";
   const company = {
@@ -47,7 +47,7 @@ test("live carrier billing and credit recover after reload, then rebill with a n
   const requests: { id: string; kind: string; action: string; posting_date: string; parameters: object }[] = [];
   await page.route("**/api/companies/*/commands", async (route) => {
     requests.push(route.request().postDataJSON());
-    if (requests.length === 1 || requests.length === 3) {
+    if ([1, 3, 6].includes(requests.length)) {
       companyUrl = route.request().url().replace(/\/commands$/, "");
       const committed = await route.fetch();
       expect(committed.ok(), await committed.text()).toBe(true);
@@ -122,6 +122,38 @@ test("live carrier billing and credit recover after reload, then rebill with a n
   const journal = await correctedBooks.json();
   expect(journal.vouchers.map((v: { number: string }) => v.number).sort()).toEqual(["FO-1", "FO-1/B2", "FO-1/REV"]);
   expect(journal.balances).toContainEqual(expect.objectContaining({ company: "E1", account: "PAYABLES", balance: -80 }));
+
+  await page.goto("/#/buying/owed");
+  const carrierBills = page.getByRole("table", { name: "Carrier bills" });
+  const rebill = carrierBills.getByRole("row").filter({ hasText: "FO-1/B2" });
+  await expect(rebill).toContainText("to pay");
+  await expect(carrierBills.getByText("CR-FRT-101")).toBeVisible();
+  await rebill.getByText("Record payment", { exact: true }).click();
+  const paymentDate = "2026-01-10";
+  await rebill.getByLabel("Payment date FO-1/B2").fill(paymentDate);
+  await rebill.getByLabel("Bank reference FO-1/B2").fill("WIRE-2026-001");
+  await rebill.getByRole("button", { name: "Record payment FO-1/B2" }).click();
+  await expect(rebill.getByRole("alert")).toContainText("Payment confirmation is unavailable");
+  await page.reload();
+  await expect(rebill).toContainText("paid");
+  await rebill.getByRole("button", { name: "Retry carrier payment FO-1/B2" }).click();
+  await expect(rebill.getByRole("status")).toContainText("INR 80.00 paid on FO-1/B2");
+  expect(requests).toHaveLength(7);
+  const payment = { kind: "transport", action: "pay_bill", posting_date: paymentDate,
+    parameters: { order: "FO-1", voucher: "FO-1/B2", amount: 80, reference: "WIRE-2026-001" } };
+  expect(requests[5]).toMatchObject(payment);
+  expect(requests[6]).toMatchObject({ ...payment, id: requests[5].id });
+  const cash = await (await page.request.get(companyUrl)).json();
+  expect(cash.meta.revision).toBe(5);
+  expect(cash.dataset.freight_orders[0].bill_payments).toEqual([expect.objectContaining({ date: paymentDate, amount: 80, reference: "WIRE-2026-001" })]);
+  const paymentBooks = await page.request.post(`/api/accounting?period_end=${paymentDate}`, {
+    data: cash.dataset, headers: { "X-CSRF-Token": csrf },
+  });
+  expect(paymentBooks.ok(), await paymentBooks.text()).toBe(true);
+  const paidJournal = await paymentBooks.json();
+  expect(paidJournal.vouchers.filter((v: { number: string }) => v.number === "FO-1/B2/P-1")).toHaveLength(1);
+  expect(paidJournal.balances).toContainEqual(expect.objectContaining({ company: "E1", account: "PAYABLES", balance: 0 }));
+  expect(paidJournal.balances).toContainEqual(expect.objectContaining({ company: "E1", account: "BANK", balance: -80 }));
 });
 
 test("loads built by weight and volume, the cheapest carrier, a rejection, the truck shipped and its bill settled", async ({ page }) => {

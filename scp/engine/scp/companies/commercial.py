@@ -11,7 +11,7 @@ from ..model import Dataset, MovementType
 
 
 def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[date], None], *,
-                       allow_freight_credit: bool = False) -> None:
+                       freight_action: str = "") -> None:
     # Sales prices remain authoritative after shipment, including after roll-forward.
     for movement in old.movements:
         if movement.type is not MovementType.SALE or not movement.reference:
@@ -97,7 +97,7 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
                     or (payer in old.entity_by_id and payer not in proposed.entity_by_id)):
                 raise ValueError(f"{prior.id}: the freight bill keeps its posting company")
         if target.bill_credits != prior.bill_credits:
-            if (not allow_freight_credit or prior.status != "settled"
+            if (freight_action != "credit" or prior.status != "settled"
                     or len(target.bill_credits) != len(prior.bill_credits) + 1
                     or target.bill_credits[:-1] != prior.bill_credits):
                 raise ValueError(f"{prior.id}: freight credits are retained and require a freight credit command")
@@ -105,6 +105,16 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
             open_period(credit.date)
             base = proposed.model_copy(update={"freight_orders": [prior if f.id == prior.id else f for f in proposed.freight_orders]})
             result, _ = transport.credit_bill(base, prior.id, prior.bill_voucher(), credit.reference, credit.reason, credit.date)
+            expected = next(f for f in result.freight_orders if f.id == prior.id)
+        elif target.bill_payments != prior.bill_payments:
+            if (freight_action != "pay_bill" or prior.status != "settled"
+                    or len(target.bill_payments) != len(prior.bill_payments) + 1
+                    or target.bill_payments[:-1] != prior.bill_payments):
+                raise ValueError(f"{prior.id}: carrier payments are retained and require a payment command")
+            payment = target.bill_payments[-1]
+            open_period(payment.date)
+            base = proposed.model_copy(update={"freight_orders": [prior if f.id == prior.id else f for f in proposed.freight_orders]})
+            result, _ = transport.pay_bill(base, prior.id, prior.bill_voucher(), payment.amount, payment.reference, payment.date)
             expected = next(f for f in result.freight_orders if f.id == prior.id)
         elif prior.status == "settled":
             expected = prior
@@ -116,6 +126,10 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
                 prior if f.id == prior.id else f for f in proposed.freight_orders]})
             result, _ = transport.settle(base, prior.id, target.billed, target.bill, target.settled_on)
             expected = next(f for f in result.freight_orders if f.id == prior.id)
+            # authorize() records the authenticated actor. Older preview callers can still submit a bill without terms.
+            expected = expected.model_copy(update={"bill_entered_by": target.bill_entered_by})
+            if target.bill_due_on is None:
+                expected = expected.model_copy(update={"bill_due_on": None})
         else:
             expected = prior
         if target.model_dump(exclude={"note"}) != expected.model_dump(exclude={"note"}):

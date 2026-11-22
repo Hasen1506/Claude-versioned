@@ -4269,6 +4269,49 @@ export interface components {
              */
             note: string;
         };
+        /** CarrierBill */
+        CarrierBill: {
+            /** Voucher */
+            voucher: string;
+            /** Order */
+            order: string;
+            /** Carrier */
+            carrier: string;
+            /** Name */
+            name: string;
+            /** Company */
+            company: string;
+            /** Reference */
+            reference: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Due On
+             * Format: date
+             */
+            due_on: string;
+            /** Amount */
+            amount: number;
+            /** Credited On */
+            credited_on: string | null;
+            /**
+             * Credit Reference
+             * @default
+             */
+            credit_reference: string;
+            /** Payments */
+            payments: components["schemas"]["Payment"][];
+            /** Open */
+            readonly open: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "to pay" | "paid" | "credited";
+        };
         /** CarrierRow */
         CarrierRow: {
             /** Carrier */
@@ -7465,6 +7508,13 @@ export interface components {
              * Format: date
              */
             date: string;
+            /** Due On */
+            due_on?: string | null;
+            /**
+             * Entered By
+             * @default
+             */
+            entered_by: string;
         };
         /** FreightLine */
         FreightLine: {
@@ -7585,6 +7635,15 @@ export interface components {
             note: string;
             /** Bill Credits */
             bill_credits?: components["schemas"]["FreightBillCredit"][];
+            /** Bill Due On */
+            bill_due_on?: string | null;
+            /**
+             * Bill Entered By
+             * @default
+             */
+            bill_entered_by: string;
+            /** Bill Payments */
+            bill_payments?: components["schemas"]["Payment"][];
         };
         /**
          * FreightRate
@@ -11529,6 +11588,17 @@ export interface components {
             next_due: string | null;
             /** Terms */
             terms: string;
+            /**
+             * Kind
+             * @default supplier
+             * @enum {string}
+             */
+            kind: "supplier" | "carrier";
+            /**
+             * Company
+             * @default
+             */
+            company: string;
         };
         /**
          * PayablesView
@@ -11537,6 +11607,8 @@ export interface components {
         PayablesView: {
             /** Invoices */
             invoices: components["schemas"]["SupplierInvoiceView"][];
+            /** Carrier Bills */
+            carrier_bills: components["schemas"]["CarrierBill"][];
             /** To Invoice */
             to_invoice: components["schemas"]["ToInvoice"][];
             /** Payables */
@@ -18037,7 +18109,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "plan" | "tender" | "accept" | "reject" | "ship" | "settle" | "credit" | "cancel";
+            action: "plan" | "tender" | "accept" | "reject" | "ship" | "settle" | "credit" | "pay_bill" | "cancel";
             /** Order */
             order?: string | null;
             /** Lanes */
@@ -18056,6 +18128,15 @@ export interface components {
              * @default
              */
             reason: string;
+            /** Voucher */
+            voucher?: string | null;
+            /** Amount */
+            amount?: number | null;
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
             /** Date */
             date?: string | null;
         };

@@ -32,7 +32,7 @@ def _rows(doc: dict, name: str) -> dict[str, dict]:
 
 
 def protect(before: dict, after: dict, email: str, *, allow_production_posting: bool = False,
-            allow_freight_credit: bool = False) -> dict:
+            freight_action: str = "") -> dict:
     """Return a normalized document or refuse an invalid financial state transition."""
     names = ("supplier_invoices", "movements", "purchase_orders", "invoices", "intercompany_invoices", "freight_orders",
              "inventory_docs", "challans", "third_party_orders", "purchase_valuation", "production_cost_postings")
@@ -327,7 +327,7 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
                 open_period(target.cancelled_on)
                 working, _ = cancel_invoice(working, iid, target.cancelled_on)
         from .commercial import protect_commercial
-        protect_commercial(old_ds, ds, open_period, allow_freight_credit=allow_freight_credit)
+        protect_commercial(old_ds, ds, open_period, freight_action=freight_action)
         from .outside import protect_outside
         protect_outside(old_ds, ds, open_period)
         from .materials import protect_materials

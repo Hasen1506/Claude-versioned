@@ -17,7 +17,7 @@ Going out:
 * **planned buying**: the plan's purchases (price, freight, duty, handling and ordering), on the supplier's terms after
   they arrive;
 * **production** and **transfers**: the plan's production and transfers, paid when they start;
-* **freight**: open freight orders, on the carrier's terms after loading; settled bills not yet due, on their date.
+* **freight**: open freight orders, on the carrier's terms after loading; posted carrier bills, for their unpaid balance.
 
 What falls due before the planning start is in the first week and counted as overdue; what falls due after the last
 week is counted as later. The running total starts at nothing: its lowest point is the most cash the plan needs on top
@@ -37,6 +37,7 @@ from ..model.common import Out
 from ..plan import PlanResult
 from ..plan.costing import fx
 from ..plan.rates import independent_demand
+from ..actuals.freight import carrier_bills
 
 IN = ("invoices", "to_bill", "orders", "forecast")
 OUT = ("supplier_invoices", "purchase_orders", "planned_buying", "production", "transfers", "freight")
@@ -154,10 +155,9 @@ def cash_view(ds: Dataset, plan: PlanResult, weeks: int | None = None) -> CashVi
         days = k.payment_days if k else 0
         if f.status in ("planned", "tendered", "accepted", "shipped") and not f.bill_credits:
             add("freight", f.planned_on + timedelta(days=days), f.planned_cost)
-        elif f.status == "settled" and f.billed is not None and f.settled_on is not None:
-            due = f.settled_on + timedelta(days=days)
-            if due >= start:
-                add("freight", due, f.billed)
+    for bill in carrier_bills(ds):
+        if bill.open:
+            add("freight", bill.due_on, bill.open)
 
     cum = 0.0
     for i in range(n):

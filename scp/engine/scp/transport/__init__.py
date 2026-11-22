@@ -28,10 +28,11 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from fractions import Fraction
 
+from ..actuals.freight import bills_for_order
 from ..actuals.post import PostingError, _ordered, _posted, origin
 from ..actuals.post import ship as ship_transfer
 from ..actuals.transfer_price import freight_company
-from ..model import Dataset, FreightOrder, ReceiptKind, TransportLane
+from ..model import Dataset, FreightOrder, Payment, ReceiptKind, TransportLane
 from ..model.common import Out, TransportMode
 from ..model.transport import FreightBillCredit
 from ..sales import SalesError
@@ -410,10 +411,10 @@ def view(ds: Dataset, on: date | None = None) -> TransportView:
     rows = []
     per: dict[str, CarrierRow] = {}
     for f in sorted(ds.freight_orders, key=lambda f: f.id, reverse=True):
-        k = ds.carrier_by_id.get(f.carrier or "")
-        pay_by = f.settled_on + timedelta(days=k.payment_days) if f.settled_on and k else None
+        bill = next((bill for bill in bills_for_order(ds, f) if bill.credited_on is None), None)
+        pay_by = bill.due_on if bill and f.carrier else None
         rows.append(FreightRow(order=f, lines=_lines(f), pay_by=pay_by,
-                               active_voucher=f.bill_voucher() if f.status == "settled" and f.billed is not None else None,
+                               active_voucher=bill.voucher if bill else None,
                                difference=round(f.billed - f.planned_cost, 2) if f.billed is not None else None))
         for cid in {*([f.carrier] if f.carrier else []), *f.rejected_by}:
             c = per.setdefault(cid, CarrierRow(carrier=cid, name=_carrier(ds, cid), orders=0, planned=0, billed=0,
@@ -424,8 +425,8 @@ def view(ds: Dataset, on: date | None = None) -> TransportView:
                 c.orders += 1
                 c.planned = round(c.planned + f.planned_cost, 2)
                 c.billed = round(c.billed + (f.billed or 0.0), 2)
-                if f.billed is not None:
-                    c.to_pay = round(c.to_pay + f.billed, 2)
+                if bill:
+                    c.to_pay = round(c.to_pay + bill.open, 2)
     open_ = [f for f in ds.freight_orders if f.status in ACTIVE | {"shipped"}]
     settled = [f for f in ds.freight_orders if f.billed is not None]
     notes = []
@@ -611,11 +612,13 @@ def settle(ds: Dataset, fid: str, billed: float, bill: str = "", on: date | None
         if duplicate:
             raise TransportError(f"carrier bill {bill} is already booked on {duplicate.id} for this company")
     billed = round(billed, 2)
-    new = f.model_copy(update={"status": "settled", "billed": billed, "bill": bill, "settled_on": day})
+    k = ds.carrier_by_id.get(f.carrier or "")
+    due = day + timedelta(days=k.payment_days) if k else day
+    new = f.model_copy(update={"status": "settled", "billed": billed, "bill": bill, "settled_on": day,
+                               "bill_due_on": due})
     ds2 = _put(ds, new)
     diff = billed - f.planned_cost
-    k = ds.carrier_by_id.get(f.carrier or "")
-    pay = f"; to pay by {_day(day + timedelta(days=k.payment_days))}" if k else ""
+    pay = f"; to pay by {_day(due)}" if k else ""
     shares = ", ".join(f"{x.id} {_money(ds, x.cost)}" for x in _lines(new)[:6])
     return (ds2, TransportReport(orders=[fid], message=f"{fid} settled" + (f" (their {bill})" if bill else "") +
                                  f": {_money(ds, billed)}, {diff:+,.2f} against the planned "
@@ -629,6 +632,8 @@ def credit_bill(ds: Dataset, fid: str, original: str, reference: str, reason: st
         raise TransportError(f"{fid} has no booked freight bill to credit")
     if original != f.bill_voucher():
         raise TransportError(f"{fid}: the active bill changed; review the current voucher before crediting it")
+    if f.bill_payments:
+        raise TransportError(f"{original} has recorded payments; reconcile them before correcting the bill")
     if day < f.settled_on:
         raise TransportError("a freight credit cannot be posted before the original bill")
     reference, reason = reference.strip(), reason.strip()
@@ -639,11 +644,40 @@ def credit_bill(ds: Dataset, fid: str, original: str, reference: str, reason: st
                          for other in ds.freight_orders):
         raise TransportError(f"carrier credit {reference} is already booked for this company")
     credit = FreightBillCredit(bill=f.bill, billed=f.billed, settled_on=f.settled_on,
-                               reference=reference, reason=reason, date=day)
+                               reference=reference, reason=reason, date=day, due_on=f.bill_due_on,
+                               entered_by=f.bill_entered_by)
     new = f.model_copy(update={"status": "shipped", "bill": "", "billed": None, "settled_on": None,
-                               "bill_credits": [*f.bill_credits, credit]})
+                               "bill_due_on": None, "bill_entered_by": "", "bill_credits": [*f.bill_credits, credit]})
     return (_put(ds, new), TransportReport(orders=[fid], message=f"{original} credited (their {reference}): "
                                            f"{_money(ds, credit.billed)} on {_day(day)}."))
+
+
+def pay_bill(ds: Dataset, fid: str, voucher: str, amount: float | None, reference: str,
+             day: date) -> tuple[Dataset, TransportReport]:
+    """Record a bank disbursement against one reviewed carrier bill."""
+    f = _fo(ds, fid)
+    bill = next((bill for bill in bills_for_order(ds, f) if bill.credited_on is None), None)
+    if bill is None or bill.voucher != voucher:
+        raise TransportError(f"{fid}: review its current carrier bill before recording a payment")
+    if not bill.carrier or bill.carrier not in ds.carrier_by_id:
+        raise TransportError(f"{voucher} requires a named carrier before payment")
+    if day < bill.date:
+        raise TransportError("a payment cannot be posted before its carrier bill")
+    reference = reference.strip()
+    if not reference:
+        raise TransportError("enter the bank reference for the carrier payment")
+    if any(p.reference.casefold() == reference.casefold() for p in bill.payments):
+        raise TransportError(f"bank reference {reference} is already recorded on {voucher}")
+    if not bill.open:
+        raise TransportError(f"{voucher} is already paid")
+    amount = bill.open if amount is None else amount
+    if not math.isfinite(amount) or amount <= 0 or round(amount, 2) != amount:
+        raise TransportError("enter a positive amount to the cent")
+    if amount > bill.open:
+        raise TransportError(f"{_money(ds, amount)} exceeds the {_money(ds, bill.open)} still open on {voucher}")
+    payment = Payment(date=day, amount=amount, reference=reference)
+    updated = f.model_copy(update={"bill_payments": [*f.bill_payments, payment]})
+    return _put(ds, updated), TransportReport(orders=[fid], message=f"{_money(ds, amount)} paid on {voucher}.")
 
 
 def cancel(ds: Dataset, fid: str) -> tuple[Dataset, TransportReport]:

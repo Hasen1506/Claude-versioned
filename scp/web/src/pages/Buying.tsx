@@ -91,7 +91,7 @@ function buyingAnswer(res: PurchasingView, window: number) {
   const todo = [t.awaiting_approval && `${t.awaiting_approval} to approve`, t.to_send && `${t.to_send} to send`,
     t.confirmations_overdue && `${t.confirmations_overdue} to chase for a confirmation`, t.late_lines && `${plural(t.late_lines, "line")} late`,
     t.blocked_invoices && `${plural(t.blocked_invoices, "invoice")} blocked for payment`,
-    t.payables_overdue && `${money(t.payables_overdue, res.currency)} owed to suppliers overdue`,
+    t.payables_overdue && `${money(t.payables_overdue, res.currency)} overdue to suppliers and carriers`,
     t.to_invoice && `${plural(t.to_invoice, "order line")} received but not invoiced`].filter(Boolean);
   return <>{parts.join("; ")}.{todo.length > 0 && <> Needs you: {todo.join(", ")}.</>}</>;
 }

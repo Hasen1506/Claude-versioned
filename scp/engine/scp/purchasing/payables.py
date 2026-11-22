@@ -29,6 +29,7 @@ from ..model import (
 )
 from ..plan.costing import contract_for, fx
 from ..model.currency import CurrencyPrecisionError, require_posting_currency
+from ..actuals.freight import carrier_bills
 from .result import (
     ActionReport, ContractLineView, ContractView, InvoiceLineView, PayableRow, PayablesView, SupplierInvoiceView,
     SupplierReturnView, ToInvoice,
@@ -707,6 +708,7 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
     invs = [invoice_view(ds, i, as_of, got, billed) for i in ds.supplier_invoices]
     order = {"blocked": 0, "to pay": 1, "released": 1, "credit open": 2, "paid": 3, "credited": 4, "cancelled": 5}
     invs.sort(key=lambda x: (order[x.status], x.due_date, x.id))
+    freight = sorted(carrier_bills(ds), key=lambda b: (not b.open, b.due_on, b.order, b.voucher))
     gr = to_invoice(ds)
     rows: dict[str, PayableRow] = {}
 
@@ -737,10 +739,28 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
     for g in gr:
         if g.qty > EPS:
             row(g.supplier).not_invoiced += g.value * fx(ds, g.currency if g.currency != ds.settings.currency else None)
-    for r in rows.values():
+    carriers: dict[tuple[str, str], PayableRow] = {}
+    for bill in freight:
+        if not bill.open:
+            continue
+        key = bill.company, bill.carrier
+        if key not in carriers:
+            carriers[key] = PayableRow(supplier=bill.carrier, name=bill.name, kind="carrier", company=bill.company,
+                                       open=0, overdue=0, due_soon=0, blocked=0, not_invoiced=0, next_due=None,
+                                       terms="Carrier bill")
+        r = carriers[key]
+        r.open += bill.open
+        if bill.due_on < as_of:
+            r.overdue += bill.open
+        elif (bill.due_on - as_of).days <= 7:
+            r.due_soon += bill.open
+        if r.next_due is None or bill.due_on < r.next_due:
+            r.next_due = bill.due_on
+    payables = [*rows.values(), *carriers.values()]
+    for r in payables:
         for f in ("open", "overdue", "due_soon", "blocked", "not_invoiced"):
             setattr(r, f, round(getattr(r, f), 2))
-    payables = sorted(rows.values(), key=lambda r: (-r.overdue, -r.open, r.supplier))
+    payables.sort(key=lambda r: (-r.overdue, -r.open, r.supplier, r.company))
     rets = []
     cms = {i.id: i for i in ds.supplier_invoices if not i.cancelled}
     for r in ds.supplier_returns:
@@ -754,7 +774,7 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
                                        stock_type=r.stock_type.value, batch=r.batch, status=status,
                                        credit_memo=r.credit_memo))
     return PayablesView(
-        invoices=invs, to_invoice=gr, payables=payables, contracts=contract_views(ds, as_of), returns=rets,
+        invoices=invs, carrier_bills=freight, to_invoice=gr, payables=payables, contracts=contract_views(ds, as_of), returns=rets,
         blocked=sum(x.status == "blocked" for x in invs),
         open_value=round(sum(r.open for r in payables), 2), overdue_value=round(sum(r.overdue for r in payables), 2),
         not_invoiced_value=round(sum(r.not_invoiced for r in payables), 2))
