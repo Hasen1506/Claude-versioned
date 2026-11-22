@@ -107,6 +107,10 @@ def _match(ds: Dataset, bill: CarrierBill, request: BankMatchInput | ReleaseMatc
         return existing.model_copy(update={"date": day, "released": True})
     if existing:
         raise TransportError("that cash voucher already has a bank statement match")
+    if any(row.source_key() == (bill.company, *key) for row in ds.carrier_bank_lines):
+        raise TransportError("that line was imported; match it from the carrier bank statement worklist")
+    if any(target.key() == (bill.order, request.cash_voucher) for row in ds.carrier_bank_lines for target in row.active):
+        raise TransportError("that cash voucher already belongs to a statement match")
     leg = next((row for row in bill.cash() if row[0] == request.cash_voucher), None)
     if (leg is None or not leg[2] or leg[2].casefold() != request.reference.casefold()
             or leg[3] != request.amount_minor or request.currency.upper() != ds.settings.currency):

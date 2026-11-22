@@ -68,7 +68,7 @@ class CommandRequest(Model):
     id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:/-]+$")
     base_revision: int = Field(ge=1)
     posting_date: date = Field(description="Explicit business date; never inferred from a planning scenario's start")
-    kind: Literal["purchasing", "sales", "stock", "transport", "intercompany", "outside", "production_cost"]
+    kind: Literal["purchasing", "sales", "stock", "transport", "intercompany", "outside", "production_cost", "carrier_bank"]
     action: str = Field(min_length=1, max_length=64)
     parameters: dict[str, Any] = Field(default_factory=dict, max_length=40)
 
@@ -146,6 +146,7 @@ def execute(c: Companies, user: User, cid: str, req: CommandRequest,
             saved = c.save(user, cid, document, req.base_revision, action="posted",
                            allow_production_posting=req.kind == "production_cost",
                            count_projection=req.kind == "stock" and req.action == "count_post",
+                           allow_carrier_bank=req.kind == "carrier_bank",
                            freight_action=req.action if req.kind == "transport" else "")
             if saved.held is not None:
                 raise CompanyError("this command needs a master-data change that has not been approved; approve it "

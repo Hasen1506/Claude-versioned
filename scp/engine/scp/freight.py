@@ -1,4 +1,5 @@
 """Posted carrier bills shared by the journal, payable worklist and cash forecast."""
+from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -29,6 +30,7 @@ class CarrierBill(Out):
     credit_reference: str = ""
     payments: list[Payment]
     events: list[FreightBillEvent] = []
+    statement_vouchers: list[str] = []
 
     def open_at(self, through: date) -> float:
         if self.date > through or (self.credited_on and self.credited_on <= through):
@@ -66,11 +68,11 @@ class CarrierBill(Out):
     @computed_field
     @property
     def unreconciled_cash(self) -> list[str]:
-        matched = active_bank_matches(self.events)
+        matched = set(active_bank_matches(self.events)) | set(self.statement_vouchers)
         return [voucher for voucher, _, _, _ in self.cash() if voucher not in matched]
 
 
-def bills_for_order(ds: Dataset, order: FreightOrder) -> Iterator[CarrierBill]:
+def bills_for_order(ds: Dataset, order: FreightOrder, statement_vouchers: list[str] | None = None) -> Iterator[CarrierBill]:
     carrier = ds.carrier_by_id.get(order.carrier or "")
     days = timedelta(days=carrier.payment_days if carrier else 0)
     identity = dict(order=order.id, carrier=order.carrier or "", company=freight_company(ds, order),
@@ -82,12 +84,16 @@ def bills_for_order(ds: Dataset, order: FreightOrder) -> Iterator[CarrierBill]:
     if order.status == "settled" and order.billed is not None and order.settled_on is not None:
         yield CarrierBill(**identity, voucher=order.bill_voucher(), reference=order.bill, date=order.settled_on,
                           due_on=order.bill_due_on or order.settled_on + days, amount=round(order.billed, 2),
-                          payments=order.bill_payments, events=order.bill_events)
+                          payments=order.bill_payments, events=order.bill_events, statement_vouchers=statement_vouchers or [])
 
 
 def carrier_bills(ds: Dataset) -> Iterator[CarrierBill]:
+    claimed: dict[str, list[str]] = defaultdict(list)
+    for line in ds.carrier_bank_lines:
+        for target in line.active:
+            claimed[target.order].append(target.voucher)
     for order in ds.freight_orders:
-        yield from bills_for_order(ds, order)
+        yield from bills_for_order(ds, order, claimed.get(order.id))
 
 
 def active_landed(order: FreightOrder) -> Iterator[tuple[int, FreightLandedCost]]:
