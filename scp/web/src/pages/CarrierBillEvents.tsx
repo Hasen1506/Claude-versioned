@@ -4,6 +4,7 @@ import { Edits } from "../components/ui";
 import { day, exactMoney } from "../lib/format";
 import { useSettlement, type CarrierEventInput } from "../state/settlement";
 import { store } from "../state/store";
+import { carrierPostingAccounts } from "./CarrierBankAccounts";
 
 type Bill = PayablesView["carrier_bills"][number];
 type Kind = CarrierEventInput["kind"];
@@ -14,7 +15,8 @@ const LABELS: Record<Kind, string> = {
 
 export function CarrierBillEvents({ bill, ds, currency }: { bill: Bill; ds: Dataset; currency: string }) {
   const history = bill.events ?? [];
-  const cash = bill.unreconciled_cash ?? [];
+  const unmatched = bill.unreconciled_cash ?? [];
+  const cash = bill.legacy_unmatched_cash ?? unmatched;
   const settlement = useSettlement("transportBillEvent", bill.voucher, bill.order);
   const [kind, setKind] = useState<Kind | "">("");
   const [on, setOn] = useState(ds.settings.planning_start > bill.date ? ds.settings.planning_start : bill.date);
@@ -23,6 +25,7 @@ export function CarrierBillEvents({ bill, ds, currency }: { bill: Bill; ds: Data
   const [reason, setReason] = useState("");
   const [target, setTarget] = useState("");
   const [account, setAccount] = useState("");
+  const [refundAccount, setRefundAccount] = useState("");
   const [line, setLine] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean }>();
@@ -52,13 +55,16 @@ export function CarrierBillEvents({ bill, ds, currency }: { bill: Bill; ds: Data
   const numericAmount = /^-?\d+(\.\d{1,2})?$/.test(amountText) ? Math.round(Number(amountText) * 100) : undefined;
   const minor = numericAmount !== undefined && Number.isSafeInteger(numericAmount) ? numericAmount : undefined;
   const ref = reference.trim();
+  const accounts = carrierPostingAccounts(ds, bill.company, on);
+  const postingAccount = accounts.find((entry) => entry.id === refundAccount)?.id;
 
   function input(): CarrierEventInput | undefined {
     switch (kind) {
       case "adjust_bill":
         return ref && reason.trim() && minor && minor > 0 ? { kind, reference: ref, reason: reason.trim(), amount_minor: minor } : undefined;
       case "refund_bill":
-        return ref && minor && minor > 0 ? { kind, reference: ref, amount_minor: minor } : undefined;
+        return ref && minor && minor > 0 && (!accounts.length || postingAccount)
+          ? { kind, reference: ref, amount_minor: minor, ...(postingAccount ? { bank_account: postingAccount } : {}) } : undefined;
       case "match_bank":
         return ref && cash.includes(target) && account.trim() && line.trim() && minor
           ? { kind, reference: ref, cash_voucher: target, account: account.trim(), statement_line: line.trim(), amount_minor: minor, currency }
@@ -107,10 +113,11 @@ export function CarrierBillEvents({ bill, ds, currency }: { bill: Bill; ds: Data
         text = `${entry.released ? "Released match" : "Bank match"} ${entry.cash_voucher} · ${entry.account} · ${entry.statement_line}`;
       } else {
         text = `${entry.kind === "adjust_bill" ? "Carrier credit" : "Carrier refund"} ${entry.reference} · ${exactMoney(entry.amount_minor / 100, currency)}`;
+        if (entry.kind === "refund_bill" && entry.bank_account) text += ` · ${entry.bank_account}`;
       }
       return <li key={index}>{day(entry.date)} · {text}</li>;
     })}</ul></details>}
-    {!!cash.length && <div className="small faint">Unmatched bank movements ({cash.length})</div>}
+    {!!unmatched.length && <div className="small faint">Unmatched bank movements ({unmatched.length})</div>}
     <Edits>{settlement.pending && <button className="btn sm accent" disabled={busy} onClick={() => record(true)}
       aria-label={`Retry carrier event ${bill.voucher}`}>Retry carrier event</button>}{!!choices.length && <details>
       <summary>Carrier bill actions</summary>
@@ -135,6 +142,10 @@ export function CarrierBillEvents({ bill, ds, currency }: { bill: Bill; ds: Data
         </>}
         {kind === "adjust_bill" && <label>Reason <input className="input" maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)}
           aria-label={`Carrier credit reason ${bill.voucher}`} /></label>}
+        {kind === "refund_bill" && !!accounts.length && <label>Bank account <select className="input" value={postingAccount ?? ""}
+          aria-label={`Refund account ${bill.voucher}`} onChange={(e) => setRefundAccount(e.target.value)}>
+          <option value="">Choose</option>{accounts.map((entry) => <option key={entry.id} value={entry.id}>{entry.id}</option>)}
+        </select></label>}
         {kind === "match_bank" && <>
           <label>Bank account <input className="input" maxLength={64} value={account} onChange={(e) => setAccount(e.target.value)}
             aria-label={`Statement account ${bill.voucher}`} /></label>

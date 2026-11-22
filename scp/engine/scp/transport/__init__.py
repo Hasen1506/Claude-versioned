@@ -31,9 +31,10 @@ from fractions import Fraction
 from ..actuals.post import PostingError, _ordered, _posted, origin
 from ..actuals.post import ship as ship_transfer
 from ..freight import bills_for_order, freight_company
-from ..model import Dataset, FreightOrder, Payment, ReceiptKind, TransportLane
+from ..carrier_accounts import BankAccounts
+from ..model import Dataset, FreightOrder, ReceiptKind, TransportLane
 from ..model.common import Out, TransportMode
-from ..model.transport import CarrierBillAdjustment, CarrierRefund, FreightBillCredit
+from ..model.transport import CarrierBillAdjustment, CarrierPayment, CarrierRefund, FreightBillCredit
 from ..sales import SalesError
 from ..sales import issue as goods_issue
 
@@ -656,7 +657,7 @@ def credit_bill(ds: Dataset, fid: str, original: str, reference: str, reason: st
 
 
 def pay_bill(ds: Dataset, fid: str, voucher: str, amount: float | None, reference: str,
-             day: date) -> tuple[Dataset, TransportReport]:
+             day: date, bank_account: str | None = None) -> tuple[Dataset, TransportReport]:
     """Record a bank disbursement against one reviewed carrier bill."""
     f = _fo(ds, fid)
     bill = next((bill for bill in bills_for_order(ds, f) if bill.credited_on is None), None)
@@ -680,9 +681,17 @@ def pay_bill(ds: Dataset, fid: str, voucher: str, amount: float | None, referenc
         raise TransportError("enter a positive amount to the cent")
     if amount > bill.open:
         raise TransportError(f"{_money(ds, amount)} exceeds the {_money(ds, bill.open)} still open on {voucher}")
-    payment = Payment(date=day, amount=amount, reference=reference)
+    require_cash_account(ds, bill.company, day, bank_account)
+    payment = CarrierPayment(date=day, amount=amount, reference=reference, bank_account=bank_account)
     updated = f.model_copy(update={"bill_payments": [*f.bill_payments, payment]})
     return _put(ds, updated), TransportReport(orders=[fid], message=f"{_money(ds, amount)} paid on {voucher}.")
+
+
+def require_cash_account(ds: Dataset, company: str, on: date, account: str | None) -> None:
+    try:
+        BankAccounts(ds).check_posting(company, on, account)
+    except ValueError as exc:
+        raise TransportError(str(exc)) from None
 
 
 def cancel(ds: Dataset, fid: str) -> tuple[Dataset, TransportReport]:

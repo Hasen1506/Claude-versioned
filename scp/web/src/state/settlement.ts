@@ -17,6 +17,9 @@ type SettlementAttempt = { key: string; id: string; details: string };
 type CreditDetails = { credit_of: string; reason: string };
 export type CarrierEventInput = NonNullable<TransportActionInput["event"]>;
 export type CarrierBankEvent = { kind: "import"; company: string; account: string; csv: string }
+  | { kind: "register_account"; id: string; company: string; starts_on: string; opening_minor: number }
+  | { kind: "import_period"; account: string; number: string; starts_on: string; ends_on: string;
+      opening_minor: number; closing_minor: number; line_count: number; csv: string }
   | { kind: "match"; line: string; version: number; targets: { order: string; voucher: string }[] }
   | { kind: "release"; line: string; version: number };
 type SettlementEvent = CarrierEventInput | CarrierBankEvent;
@@ -46,12 +49,13 @@ export function useSettlement(kind: SettlementKind, document?: string, order?: s
   const memory = useRef<SettlementAttempt | null>(null);
   const [, refresh] = useState(0);
   const pending = () => key && (memory.current?.key === key ? memory.current : readAttempt(key));
-  const parameters = (amount: number | null, reference: string, correction?: CreditDetails, event?: SettlementEvent) => bankEvent
+  const parameters = (amount: number | null, reference: string, correction?: CreditDetails, event?: SettlementEvent, bankAccount?: string) => bankEvent
     ? { event }
     : billEvent ? { voucher: document, order, event }
     : credit
     ? { [config.document]: document, [config.reference]: reference, ...correction }
-    : { [config.document]: document, [config.amount]: amount, [config.reference]: reference, ...(order ? { order } : {}) };
+    : { [config.document]: document, [config.amount]: amount, [config.reference]: reference, ...(order ? { order } : {}),
+        ...(kind === "transportPayment" && bankAccount ? { bank_account: bankAccount } : {}) };
 
   function remember(attempt: SettlementAttempt) {
     memory.current = attempt;
@@ -84,11 +88,12 @@ export function useSettlement(kind: SettlementKind, document?: string, order?: s
     }
   }
 
-  async function post(date?: string | null, amount: number | null = null, reference = "", correction?: CreditDetails, event?: SettlementEvent) {
+  async function post(date?: string | null, amount: number | null = null, reference = "", correction?: CreditDetails,
+                      event?: SettlementEvent, bankAccount?: string) {
     if (!userId) throw new Error(`Sign in again before posting the ${label}.`);
     if (!key || !date) throw new Error("Open the live document and choose the posting date.");
     reference = reference.trim();
-    const input = parameters(amount, reference, correction, event);
+    const input = parameters(amount, reference, correction, event, bankAccount);
     const details = JSON.stringify([date, input]);
     const previous = pending();
     if (previous && previous.details !== details) throw new Error(`Retry the unconfirmed ${label} before entering a new one.`);
@@ -104,12 +109,14 @@ export function useSettlement(kind: SettlementKind, document?: string, order?: s
     const correction = credit && typeof saved?.credit_of === "string" && typeof saved?.reason === "string"
       ? { credit_of: saved.credit_of, reason: saved.reason } : undefined;
     const event = (billEvent || bankEvent) && saved?.event && typeof saved.event === "object" ? saved.event as SettlementEvent : undefined;
-    if (typeof date !== "string" || typeof reference !== "string" || (amount !== null && typeof amount !== "number")
-        || (credit && !correction) || ((billEvent || bankEvent) && !event)
-        || JSON.stringify([date, parameters(amount, reference, correction, event)]) !== attempt.details) {
+    const bankAccount = typeof saved?.bank_account === "string" ? saved.bank_account : undefined;
+    const input = typeof reference === "string" && (amount === null || typeof amount === "number")
+      ? parameters(amount, reference, correction, event, bankAccount) : undefined;
+    if (typeof date !== "string" || !input || (credit && !correction) || ((billEvent || bankEvent) && !event)
+        || JSON.stringify([date, input]) !== attempt.details) {
       throw new Error(`The saved ${label} details could not be verified.`);
     }
-    return send(attempt, date, parameters(amount, reference, correction, event), true);
+    return send(attempt, date, input, true);
   }
 
   return { live: !!companyId, pending: !!pending(), post, retry };

@@ -3,17 +3,25 @@ from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pydantic import computed_field
 
-from .model import Dataset, FreightOrder, Payment
+from .model import Dataset, FreightOrder
 from .model.common import Out
-from .model.transport import CarrierBankMatch, CarrierBillAdjustment, CarrierRefund, FreightBillEvent, FreightLandedCost
+from .model.transport import CarrierBankMatch, CarrierBillAdjustment, CarrierPayment, CarrierRefund, FreightBillEvent, FreightLandedCost
 
 
 def freight_company(ds: Dataset, order: FreightOrder) -> str:
     return ds.entity_at(order.ship_to if order.purchases else order.ship_from)
+
+
+class BankPosting(NamedTuple):
+    voucher: str
+    date: date
+    reference: str
+    amount_minor: int
+    bank_account: str | None
 
 
 class CarrierBill(Out):
@@ -28,7 +36,7 @@ class CarrierBill(Out):
     amount: float
     credited_on: date | None = None
     credit_reference: str = ""
-    payments: list[Payment]
+    payments: list[CarrierPayment]
     events: list[FreightBillEvent] = []
     statement_vouchers: list[str] = []
 
@@ -58,18 +66,24 @@ class CarrierBill(Out):
             return "credited"
         return "paid"
 
-    def cash(self) -> Iterator[tuple[str, date, str, int]]:
+    def cash(self) -> Iterator[BankPosting]:
         for index, payment in enumerate(self.payments, 1):
-            yield f"{self.voucher}/P-{index}", payment.date, payment.reference, -round(payment.amount * 100)
+            yield BankPosting(f"{self.voucher}/P-{index}", payment.date, payment.reference, -round(payment.amount * 100), payment.bank_account)
         for index, event in enumerate(self.events, 1):
             if isinstance(event, CarrierRefund):
-                yield f"{self.voucher}/R-{index}", event.date, event.reference, event.amount_minor
+                yield BankPosting(f"{self.voucher}/R-{index}", event.date, event.reference, event.amount_minor, event.bank_account)
 
     @computed_field
     @property
     def unreconciled_cash(self) -> list[str]:
         matched = set(active_bank_matches(self.events)) | set(self.statement_vouchers)
-        return [voucher for voucher, _, _, _ in self.cash() if voucher not in matched]
+        return [posting.voucher for posting in self.cash() if posting.voucher not in matched]
+
+    @computed_field
+    @property
+    def legacy_unmatched_cash(self) -> list[str]:
+        available = set(self.unreconciled_cash)
+        return [posting.voucher for posting in self.cash() if posting.voucher in available and posting.bank_account is None]
 
 
 def bills_for_order(ds: Dataset, order: FreightOrder, statement_vouchers: list[str] | None = None) -> Iterator[CarrierBill]:

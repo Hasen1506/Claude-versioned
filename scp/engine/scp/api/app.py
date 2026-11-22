@@ -40,6 +40,7 @@ from ..demand.result import FoundationStatus
 from ..inventory import InventoryResult, PlacementApplied, apply_placement, run_inventory
 from ..inventory.policy import PolicyError, PolicyView, apply_policy, policy_view
 from ..model import Dataset, DemandRecord, ForecastModelId, StockType
+from ..model.carrier_bank import BankAccountId
 from ..model.common import Id, Model, Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
@@ -1080,6 +1081,7 @@ class TransportActionRequest(Out):
     voucher: str | None = Field(None, max_length=64)
     amount: float | None = Field(None, gt=0)
     reference: str = Field("", max_length=64)
+    bank_account: BankAccountId | None = None
     event: BillEventInput | None = None
     date: dt.date | None = None
 
@@ -1111,7 +1113,7 @@ def post_transport_action(req: TransportActionRequest) -> TransportActionRespons
         if a == "pay_bill":
             if not req.voucher or req.date is None:
                 raise TransportError("a carrier payment needs its bill voucher and posting date")
-            return tm.pay_bill(ds, req.order, req.voucher, req.amount, req.reference, req.date)
+            return tm.pay_bill(ds, req.order, req.voucher, req.amount, req.reference, req.date, req.bank_account)
         if a == "bill_event":
             if not req.voucher or req.date is None or req.event is None:
                 raise TransportError("a carrier bill event needs its voucher, date and supporting details")

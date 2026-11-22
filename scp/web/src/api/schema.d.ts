@@ -4323,6 +4323,22 @@ export interface components {
              */
             note: string;
         };
+        /** CarrierBankAccount */
+        CarrierBankAccount: {
+            /** Id */
+            id: string;
+            /** Company */
+            company: string;
+            /**
+             * Starts On
+             * Format: date
+             */
+            starts_on: string;
+            /** Opening Minor */
+            opening_minor: number;
+            /** Currency */
+            currency: string;
+        };
         /** CarrierBankLine */
         CarrierBankLine: {
             /** Id */
@@ -4375,12 +4391,57 @@ export interface components {
              */
             released: boolean;
         };
+        /** CarrierBankPeriod */
+        CarrierBankPeriod: {
+            /** Account */
+            account: string;
+            /** Number */
+            number: string;
+            /**
+             * Starts On
+             * Format: date
+             */
+            starts_on: string;
+            /**
+             * Ends On
+             * Format: date
+             */
+            ends_on: string;
+            /** Opening Minor */
+            opening_minor: number;
+            /** Closing Minor */
+            closing_minor: number;
+            /** Line Count */
+            line_count: number;
+            /** Id */
+            id: string;
+            /** File Sha256 */
+            file_sha256: string;
+            /** Line Ids */
+            line_ids: string[];
+        };
+        /** CarrierBankTieOut */
+        CarrierBankTieOut: {
+            period: components["schemas"]["CarrierBankPeriod"];
+            /** Ledger Opening Minor */
+            ledger_opening_minor: number;
+            /** Ledger Closing Minor */
+            ledger_closing_minor: number;
+            /** Unmatched Lines */
+            unmatched_lines: string[];
+            /** Unmatched Vouchers */
+            unmatched_vouchers: string[];
+            /** Reconciled */
+            reconciled: boolean;
+        };
         /** CarrierBankView */
         CarrierBankView: {
             /** Lines */
             lines: components["schemas"]["CarrierBankLine"][];
             /** Unmatched Cash */
             unmatched_cash: components["schemas"]["CarrierCash"][];
+            /** Periods */
+            periods: components["schemas"]["CarrierBankTieOut"][];
         };
         /** CarrierBill */
         CarrierBill: {
@@ -4416,7 +4477,7 @@ export interface components {
              */
             credit_reference: string;
             /** Payments */
-            payments: components["schemas"]["Payment"][];
+            payments: components["schemas"]["CarrierPayment"][];
             /**
              * Events
              * @default []
@@ -4436,6 +4497,8 @@ export interface components {
             readonly status: "to pay" | "paid" | "credited" | "refund due" | "refunded";
             /** Unreconciled Cash */
             readonly unreconciled_cash: string[];
+            /** Legacy Unmatched Cash */
+            readonly legacy_unmatched_cash: string[];
         };
         /** CarrierBillAdjustment */
         CarrierBillAdjustment: {
@@ -4475,6 +4538,37 @@ export interface components {
             reference: string;
             /** Amount Minor */
             amount_minor: number;
+            /** Bank Account */
+            bank_account: string | null;
+        };
+        /** CarrierPayment */
+        CarrierPayment: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Amount */
+            amount: number;
+            /**
+             * Reference
+             * @description Bank reference
+             * @default
+             */
+            reference: string;
+            /**
+             * Discount
+             * @description Cash discount taken with this payment
+             * @default 0
+             */
+            discount: number;
+            /**
+             * Fx Rate
+             * @description Company currency per invoice currency unit at settlement (supplier payments)
+             */
+            fx_rate?: number | null;
+            /** Bank Account */
+            bank_account?: string | null;
         };
         /** CarrierRefund */
         CarrierRefund: {
@@ -4492,6 +4586,8 @@ export interface components {
             reference: string;
             /** Amount Minor */
             amount_minor: number;
+            /** Bank Account */
+            bank_account?: string | null;
         };
         /** CarrierRow */
         CarrierRow: {
@@ -5984,8 +6080,12 @@ export interface components {
             carriers?: components["schemas"]["Carrier"][];
             /** Freight Orders */
             freight_orders?: components["schemas"]["FreightOrder"][];
+            /** Carrier Bank Accounts */
+            carrier_bank_accounts?: components["schemas"]["CarrierBankAccount"][];
             /** Carrier Bank Lines */
             carrier_bank_lines?: components["schemas"]["CarrierBankLine"][];
+            /** Carrier Bank Periods */
+            carrier_bank_periods?: components["schemas"]["CarrierBankPeriod"][];
             transport?: components["schemas"]["TransportSettings"];
             /** Third Party Orders */
             third_party_orders?: components["schemas"]["ThirdPartyOrder"][];
@@ -7849,7 +7949,7 @@ export interface components {
              */
             bill_entered_by: string;
             /** Bill Payments */
-            bill_payments?: components["schemas"]["Payment"][];
+            bill_payments?: components["schemas"]["CarrierPayment"][];
             /** Bill Events */
             bill_events?: (components["schemas"]["CarrierBillAdjustment"] | components["schemas"]["CarrierRefund"] | components["schemas"]["CarrierBankMatch"] | components["schemas"]["FreightLandedCost"])[];
         };
@@ -9279,6 +9379,8 @@ export interface components {
              * @default
              */
             production_order: string;
+            /** Bank Account */
+            bank_account?: string | null;
             /**
              * Debit
              * @default 0
@@ -14159,6 +14261,8 @@ export interface components {
             reference: string;
             /** Amount Minor */
             amount_minor: number;
+            /** Bank Account */
+            bank_account?: string | null;
         };
         /**
          * ReleaseLevel
@@ -18396,6 +18500,8 @@ export interface components {
              * @default
              */
             reference: string;
+            /** Bank Account */
+            bank_account?: string | null;
             /** Event */
             event?: (components["schemas"]["AdjustBillInput"] | components["schemas"]["RefundBillInput"] | components["schemas"]["BankMatchInput"] | components["schemas"]["ReleaseMatchInput"] | components["schemas"]["LandedCostInput"] | components["schemas"]["ReverseLandedInput"]) | null;
             /** Date */

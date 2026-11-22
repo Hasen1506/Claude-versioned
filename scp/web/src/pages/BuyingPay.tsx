@@ -11,6 +11,7 @@ import { useSettlement } from "../state/settlement";
 import { store } from "../state/store";
 import { CarrierBillEvents } from "./CarrierBillEvents";
 import { CarrierBankWorklist } from "./CarrierBankWorklist";
+import { carrierPostingAccounts } from "./CarrierBankAccounts";
 
 type Sev = "error" | "warning" | "info" | "ok";
 const INV_SEV: Record<string, Sev> = {
@@ -354,16 +355,19 @@ function CarrierBillRow({ bill, currency, ds }: {
   const [on, setOn] = useState(planningStart > bill.date ? planningStart : bill.date);
   const [amount, setAmount] = useState("");
   const [reference, setReference] = useState("");
+  const [account, setAccount] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ message: string; error: boolean }>();
   const paid = amount === "" ? bill.open : Number(amount);
+  const accounts = carrierPostingAccounts(ds, bill.company, on);
+  const postingAccount = accounts.find((entry) => entry.id === account)?.id;
   const record = async (retry: boolean) => {
     setBusy(true); setStatus(undefined);
     try {
       const reply = settlement.live
-        ? ((await (retry ? settlement.retry() : settlement.post(on, paid, reference))).result as Pick<TransportActionResponse, "report">)
+        ? ((await (retry ? settlement.retry() : settlement.post(on, paid, reference, undefined, undefined, postingAccount))).result as Pick<TransportActionResponse, "report">)
         : await applyPurchasing((dataset) => api.transportAct(dataset, "pay_bill", {
-          order: bill.order, voucher: bill.voucher, date: on, amount: paid, reference: reference.trim(),
+          order: bill.order, voucher: bill.voucher, date: on, amount: paid, reference: reference.trim(), bank_account: postingAccount,
         }));
       if (settlement.live) await Promise.allSettled([store.run("purchasing"), store.run("plan")]);
       setStatus({ message: reply.report.message, error: false });
@@ -382,7 +386,8 @@ function CarrierBillRow({ bill, currency, ds }: {
       {bill.credit_reference && <div className="faint small">{bill.credit_reference}</div>}</td>
     <td>
       {!!bill.payments.length && <details><summary>Payments ({bill.payments.length})</summary>
-        <ul>{bill.payments.map((p) => <li key={p.reference}>{day(p.date)} · {p.reference} · {exactMoney(p.amount, currency)}</li>)}</ul>
+        <ul>{bill.payments.map((p) => <li key={p.reference}>{day(p.date)} · {p.reference} · {exactMoney(p.amount, currency)}
+          {p.bank_account && ` · ${p.bank_account}`}</li>)}</ul>
       </details>}
       <Edits>{settlement.pending ? <button className="btn sm accent" disabled={busy}
         aria-label={`Retry carrier payment ${bill.voucher}`} onClick={() => record(true)}>Retry payment</button>
@@ -395,7 +400,12 @@ function CarrierBillRow({ bill, currency, ds }: {
               onChange={(e) => setAmount(e.target.value)} />
             <input className="input" maxLength={64} value={reference} placeholder="Bank reference" aria-label={`Bank reference ${bill.voucher}`}
               onChange={(e) => setReference(e.target.value)} />
-            <button className="btn sm accent" disabled={busy || !on || on < bill.date || !(paid > 0 && paid <= bill.open) || !reference.trim()}
+            {!!accounts.length && <label>Bank account <select className="input" value={postingAccount ?? ""} aria-label={`Payment account ${bill.voucher}`}
+              onChange={(e) => setAccount(e.target.value)}>
+              <option value="">Choose</option>{accounts.map((entry) => <option key={entry.id} value={entry.id}>{entry.id}</option>)}
+            </select></label>}
+            <button className="btn sm accent" disabled={busy || !on || on < bill.date || !(paid > 0 && paid <= bill.open)
+              || !reference.trim() || (!!accounts.length && !postingAccount)}
               aria-label={`Record payment ${bill.voucher}`} onClick={() => record(false)}>Record {exactMoney(paid, currency)}</button>
           </div>
         </details>}

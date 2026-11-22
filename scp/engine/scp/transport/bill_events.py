@@ -4,11 +4,13 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
+from ..carrier_accounts import BankAccounts
 from ..freight import CarrierBill, active_bank_matches, active_landed, bills_for_order, freight_company
 from ..model import Dataset, FreightOrder, MovementType
+from ..model.carrier_bank import BankAccountId
 from ..model.common import Id, Model
 from ..model.transport import CarrierBankMatch, CarrierBillAdjustment, CarrierRefund, FreightBillEvent, FreightLandedCost
-from . import TransportError, TransportReport, _fo, _put
+from . import TransportError, TransportReport, _fo, _put, require_cash_account
 
 
 class AdjustBillInput(Model):
@@ -22,6 +24,7 @@ class RefundBillInput(Model):
     kind: Literal["refund_bill"]
     reference: str = Field(min_length=1, max_length=64)
     amount_minor: int = Field(gt=0, strict=True)
+    bank_account: BankAccountId | None = None
 
 
 class BankMatchInput(Model):
@@ -107,13 +110,18 @@ def _match(ds: Dataset, bill: CarrierBill, request: BankMatchInput | ReleaseMatc
         return existing.model_copy(update={"date": day, "released": True})
     if existing:
         raise TransportError("that cash voucher already has a bank statement match")
+    account = BankAccounts(ds).by_id.get(request.account.upper())
+    if account and account.company == bill.company and day >= account.starts_on:
+        raise TransportError("use the registered account's statement period for this bank evidence")
     if any(row.source_key() == (bill.company, *key) for row in ds.carrier_bank_lines):
         raise TransportError("that line was imported; match it from the carrier bank statement worklist")
     if any(target.key() == (bill.order, request.cash_voucher) for row in ds.carrier_bank_lines for target in row.active):
         raise TransportError("that cash voucher already belongs to a statement match")
-    leg = next((row for row in bill.cash() if row[0] == request.cash_voucher), None)
-    if (leg is None or not leg[2] or leg[2].casefold() != request.reference.casefold()
-            or leg[3] != request.amount_minor or request.currency.upper() != ds.settings.currency):
+    leg = next((row for row in bill.cash() if row.voucher == request.cash_voucher), None)
+    if leg and leg.bank_account:
+        raise TransportError("match registered bank cash from the account's imported statement period")
+    if (leg is None or not leg.reference or leg.reference.casefold() != request.reference.casefold()
+            or leg.amount_minor != request.amount_minor or request.currency.upper() != ds.settings.currency):
         raise TransportError("statement direction, amount, currency and bank reference must match the cash voucher")
     for other in ds.freight_orders:
         if freight_company(ds, other) == bill.company and any(
@@ -157,6 +165,7 @@ def record_event(ds: Dataset, fid: str, voucher: str, request: BillEventInput, d
                 raise TransportError("that carrier credit reference is already posted in this company")
             event = CarrierBillAdjustment(date=day, **request.model_dump())
         else:
+            require_cash_account(ds, bill.company, day, request.bank_account)
             if request.amount_minor > -round(bill.open * 100):
                 raise TransportError("that refund exceeds the amount owed back on this carrier voucher")
             if any(isinstance(e, CarrierRefund) and e.reference.casefold() == request.reference.casefold() for e in bill.events):

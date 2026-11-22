@@ -130,7 +130,8 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
             payment = target.bill_payments[-1]
             open_period(payment.date)
             base = proposed.model_copy(update={"freight_orders": [prior if f.id == prior.id else f for f in proposed.freight_orders]})
-            result, _ = transport.pay_bill(base, prior.id, prior.bill_voucher(), payment.amount, payment.reference, payment.date)
+            result, _ = transport.pay_bill(base, prior.id, prior.bill_voucher(), payment.amount, payment.reference, payment.date,
+                                           payment.bank_account)
             expected = next(f for f in result.freight_orders if f.id == prior.id)
         elif prior.status == "settled":
             expected = prior
