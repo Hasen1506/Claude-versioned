@@ -22,6 +22,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
+from ..freight import landed_postings
 from ..model import Dataset, GoodsMovement, MovementType, PriceControl
 from ..model.common import Out
 from ..network import Node, build_graph
@@ -333,7 +334,8 @@ class _Books:
         return amount
 
     # -- a price difference on stock ---------------------------------------------------------------------------
-    def reprice(self, day: date, loc: str, prod: str, qty: float, amount: float, what: str, ref: str | None) -> None:
+    def reprice(self, day: date, loc: str, prod: str, qty: float, amount: float, what: str, ref: str | None,
+                *, floor_stock: bool = False) -> None:
         """``amount`` more (or less) for ``qty`` units received earlier: to the stock while it is there (moving
         average), the rest aside."""
         n = self.node(loc, prod)
@@ -345,9 +347,12 @@ class _Books:
             return
         share = max(0.0, min(1.0, n.qty / qty)) if n.qty > EPS else 0.0
         to_stock = round(amount * share, 2)
-        if share < 1.0:
+        if floor_stock and to_stock < -round(max(n.value, 0), 2):
+            to_stock = -round(max(n.value, 0), 2)
+        if abs(amount - to_stock) > 0.005:
             self.diff(day, loc, prod, ref, amount - to_stock,
-                      f"{what}: {max(0.0, qty - max(n.qty, 0.0)):g} of {qty:g} had already gone")
+                      f"{what}: {max(0.0, qty - max(n.qty, 0.0)):g} of {qty:g} had already gone" if share < 1.0 else
+                      f"{what}: stock value cannot be reduced below zero")
         if abs(to_stock) > 0.005:
             before = n.price
             n.value += to_stock
@@ -393,6 +398,9 @@ def run_books(ds: Dataset, day: date, books: str = "entity", watch=None) -> tupl
                 reversal = inv.model_copy(update={"id": f"{inv.id}/REV", "date": inv.cancelled_on,
                     "kind": opposite[inv.kind], "cancelled": False, "cancelled_on": None})
                 events.append((inv.cancelled_on, 1, len(ds.supplier_invoices) + i, reversal, inv))
+    for i, posting in enumerate(landed_postings(ds)):
+        if posting.event.date <= day and posting.event.receipt in by_id:
+            events.append((posting.event.date, 2, i, posting, None))
     events.sort(key=lambda e: (e[0], e[1], e[2]))
     if watch is not None:
         watch.start(books_, po, kinds, by_id)
@@ -403,8 +411,13 @@ def run_books(ds: Dataset, day: date, books: str = "entity", watch=None) -> tupl
             watch.before(kind, ev)
         if kind == 0:
             _movement(books_, ev, po, kinds, by_id)        # type: ignore[arg-type]
-        else:
+        elif kind == 1:
             _invoice(books_, ds, ev, po, lines, reversed_invoice)
+        else:
+            receipt = by_id[ev.event.receipt]
+            books_.reprice(ev.event.date, receipt.location, receipt.product, receipt.qty, ev.event.delta,
+                           "carrier landed-cost reversal" if ev.event.reverses else "carrier landed cost", ev.voucher,
+                           floor_stock=True)
         if watch is not None:
             watch.after(kind, ev)
 
@@ -416,6 +429,7 @@ def value_stock(ds: Dataset, as_of: date | None = None, limit: int = 500, books:
     earliest: the week under way is in the books): its quantity, value and price, the postings that moved the value,
     and the price differences booked aside. ``books``: "entity" (each company's own) or "group" (consolidated)."""
     day = as_of or max([ds.settings.planning_start, *(m.date for m in ds.movements),
+                        *(p.event.date for p in landed_postings(ds)),
                         *(i.date for i in ds.supplier_invoices if not i.cancelled),
                         *(i.cancelled_on for i in ds.supplier_invoices if i.cancelled_on is not None)])
     books_, std = run_books(ds, day, books)

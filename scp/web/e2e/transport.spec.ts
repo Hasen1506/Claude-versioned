@@ -156,6 +156,115 @@ test("live carrier billing, credit and AP payment recover after reload", async (
   expect(paidJournal.balances).toContainEqual(expect.objectContaining({ company: "E1", account: "BANK", balance: -80 }));
 });
 
+test("Receiving and AP allocate freight, match its payment and recover the carrier refund", async ({ page }) => {
+  test.setTimeout(90_000);
+  const company = {
+    settings: { company_name: "Carrier closeout fixture", planning_start: "2026-01-05", horizon_days: 28, currency: "INR" },
+    execution: { price_control: "moving_average" },
+    locations: [{ id: "W", type: "dc", entity: "E1" }, { id: "S", type: "supplier" }],
+    products: [{ id: "X", type: "FG", weight_kg: 1 }], entities: [{ id: "E1" }],
+    location_products: [{ location: "W", product: "X", on_hand: 0 }],
+    purchasing_sources: [{ id: "PS", supplier: "S", location: "W", product: "X", price: 1, lead_time_days: 1 }],
+    purchase_orders: [{ id: "PO-1", supplier: "S", location: "W", order_date: "2026-01-05", sent_on: "2026-01-05" }],
+    receipts: [{ id: "PO-1-10", kind: "purchase", location: "W", product: "X", qty: 400, due_date: "2026-01-07",
+      source: "PS", po: "PO-1", price: 1 }],
+    purchase_valuation: [{ id: "PO-1-10", supplier: "S", location: "W", product: "X", currency: "INR", base: 1,
+      duty: 0, freight: 0, handling: 0 }],
+    movements: [{ id: "M-1", date: "2026-01-07", type: "receipt", location: "W", product: "X", qty: 400,
+      reference: "PO-1-10", counterparty: "S" }],
+    lanes: [{ id: "L", origin: "S", destination: "W", modes: [{ mode: "truck_ftl", transit_days: 1 }] }],
+    carriers: [{ id: "CR", rates: [{ lane: "L", per_shipment: 900 }] }],
+    freight_orders: [{ id: "FO-1", lane: "L", mode: "truck_ftl", carrier: "CR", ship_from: "S", ship_to: "W",
+      planned_on: "2026-01-06", shipped_on: "2026-01-06", status: "settled", planned_cost: 900, billed: 950,
+      bill: "FRT-950", settled_on: "2026-01-08", purchases: ["PO-1-10"] }],
+  };
+  await page.goto("/");
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Import a file", exact: true }).click();
+  await (await chooser).setFiles({ name: "inbound-freight.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(company)) });
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  await page.goto("/#/account");
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill(`freight-closeout-${Date.now()}@example.invalid`);
+  await page.getByLabel("Your name").fill("Freight AP");
+  await page.getByLabel(/^Password/).fill("fixture-only-spring-clover");
+  await page.getByRole("button", { name: "Make the account", exact: true }).click();
+  await page.getByRole("button", { name: "Keep it on the server", exact: true }).click();
+  await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+  await page.goto("/#/buying/owed");
+  const row = page.getByRole("table", { name: "Carrier bills" }).getByRole("row").filter({ hasText: "FO-1" });
+  const choice = row.getByLabel("Carrier event FO-1", { exact: true });
+  const eventDate = row.getByLabel("Carrier event date FO-1");
+  const target = row.getByLabel("Carrier event target FO-1");
+  const reference = row.getByLabel("Carrier event reference FO-1");
+  const amount = row.getByLabel("Carrier event amount FO-1");
+  await row.getByText("Carrier bill actions").click();
+  await choice.selectOption("landed_cost");
+  await eventDate.fill("2026-01-09");
+  await target.selectOption("M-1");
+  await reference.fill("SERVICE-950");
+  await amount.fill("950");
+  await row.getByRole("button", { name: "Allocate landed cost" }).click();
+  await expect(row.getByRole("status")).toContainText("Landed cost recorded on FO-1");
+
+  await row.getByText("Record payment", { exact: true }).click();
+  await row.getByLabel("Payment date FO-1").fill("2026-01-10");
+  await row.getByLabel("Bank reference FO-1").fill("WIRE-950");
+  await row.getByRole("button", { name: "Record payment FO-1" }).click();
+  await expect(row.getByText("Unmatched bank movements (1)")).toBeVisible();
+  await choice.selectOption("match_bank");
+  await eventDate.fill("2026-01-11");
+  await target.selectOption("FO-1/P-1");
+  await reference.fill("WIRE-950");
+  await amount.fill("-950");
+  await row.getByLabel("Statement account FO-1").fill("OPERATING");
+  await row.getByLabel("Statement line FO-1").fill("JAN/L50");
+  await row.getByRole("button", { name: "Match bank statement" }).click();
+  await expect(row.getByText("Unmatched bank movements (1)")).toHaveCount(0);
+
+  await choice.selectOption("reverse_landed");
+  await target.selectOption("1");
+  await eventDate.fill("2026-01-12");
+  await row.getByRole("button", { name: "Reverse landed cost" }).click();
+  await expect(row.getByText("Landed-cost reversal recorded on FO-1.")).toBeVisible();
+  await choice.selectOption("adjust_bill");
+  await eventDate.fill("2026-01-13");
+  await reference.fill("CR-100");
+  await amount.fill("100");
+  await row.getByLabel("Carrier credit reason FO-1").fill("Disputed rate");
+  await row.getByRole("button", { name: "Post carrier credit" }).click();
+  await expect(row).toContainText("refund due");
+
+  let companyUrl = "";
+  const attempts: { id: string; parameters: { event?: { kind: string } } }[] = [];
+  await page.route("**/api/companies/*/commands", async (route) => {
+    const payload = route.request().postDataJSON();
+    if (payload.parameters.event?.kind === "refund_bill") {
+      attempts.push(payload);
+      if (attempts.length === 1) {
+        companyUrl = route.request().url().replace(/\/commands$/, "");
+        const committed = await route.fetch();
+        expect(committed.ok(), await committed.text()).toBe(true);
+        return route.abort("failed");
+      }
+    }
+    await route.continue();
+  });
+  await choice.selectOption("refund_bill");
+  await eventDate.fill("2026-01-14");
+  await reference.fill("WIRE-BACK-100");
+  await row.getByRole("button", { name: "Record carrier refund" }).click();
+  await expect(row.getByRole("alert")).toContainText("Carrier event confirmation is unavailable");
+  await page.reload();
+  await expect(row).toContainText("refunded");
+  await row.getByRole("button", { name: "Retry carrier event FO-1" }).click();
+  await expect(row.getByText("Carrier refund recorded on FO-1.")).toBeVisible();
+  expect(attempts).toHaveLength(2);
+  expect(attempts[1]).toMatchObject({ id: attempts[0].id, parameters: attempts[0].parameters });
+  const final = await (await page.request.get(companyUrl)).json();
+  expect(final.dataset.freight_orders[0].bill_events.filter((entry: { kind: string }) => entry.kind === "refund_bill")).toHaveLength(1);
+});
+
 test("loads built by weight and volume, the cheapest carrier, a rejection, the truck shipped and its bill settled", async ({ page }) => {
   test.setTimeout(240_000);
   await openKaveri(page);

@@ -3324,6 +3324,20 @@ export interface components {
             /** Resource */
             resource: string;
         };
+        /** AdjustBillInput */
+        AdjustBillInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "adjust_bill";
+            /** Reference */
+            reference: string;
+            /** Reason */
+            reason: string;
+            /** Amount Minor */
+            amount_minor: number;
+        };
         /**
          * Allocation
          * @description Product allocation (PAL): caps what can be confirmed for a product or a product family (and optionally a set
@@ -3702,6 +3716,26 @@ export interface components {
             actual: number;
             /** Forecast */
             forecast: number;
+        };
+        /** BankMatchInput */
+        BankMatchInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "match_bank";
+            /** Cash Voucher */
+            cash_voucher: string;
+            /** Account */
+            account: string;
+            /** Statement Line */
+            statement_line: string;
+            /** Reference */
+            reference: string;
+            /** Amount Minor */
+            amount_minor: number;
+            /** Currency */
+            currency: string;
         };
         /**
          * Batch
@@ -4269,6 +4303,34 @@ export interface components {
              */
             note: string;
         };
+        /** CarrierBankMatch */
+        CarrierBankMatch: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "match_bank";
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Cash Voucher */
+            cash_voucher: string;
+            /** Account */
+            account: string;
+            /** Statement Line */
+            statement_line: string;
+            /** Reference */
+            reference: string;
+            /** Amount Minor */
+            amount_minor: number;
+            /**
+             * Released
+             * @default false
+             */
+            released: boolean;
+        };
         /** CarrierBill */
         CarrierBill: {
             /** Voucher */
@@ -4304,13 +4366,56 @@ export interface components {
             credit_reference: string;
             /** Payments */
             payments: components["schemas"]["Payment"][];
+            /**
+             * Events
+             * @default []
+             */
+            events: (components["schemas"]["CarrierBillAdjustment"] | components["schemas"]["CarrierRefund"] | components["schemas"]["CarrierBankMatch"] | components["schemas"]["FreightLandedCost"])[];
             /** Open */
             readonly open: number;
             /**
              * Status
              * @enum {string}
              */
-            readonly status: "to pay" | "paid" | "credited";
+            readonly status: "to pay" | "paid" | "credited" | "refund due" | "refunded";
+            /** Unreconciled Cash */
+            readonly unreconciled_cash: string[];
+        };
+        /** CarrierBillAdjustment */
+        CarrierBillAdjustment: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "adjust_bill";
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Reference */
+            reference: string;
+            /** Reason */
+            reason: string;
+            /** Amount Minor */
+            amount_minor: number;
+        };
+        /** CarrierRefund */
+        CarrierRefund: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "refund_bill";
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Reference */
+            reference: string;
+            /** Amount Minor */
+            amount_minor: number;
         };
         /** CarrierRow */
         CarrierRow: {
@@ -7516,6 +7621,29 @@ export interface components {
              */
             entered_by: string;
         };
+        /** FreightLandedCost */
+        FreightLandedCost: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "landed_cost";
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Service */
+            service: string;
+            /** Receipt */
+            receipt: string;
+            /** Actual Minor */
+            actual_minor: number;
+            /** Absorbed Minor */
+            absorbed_minor: number;
+            /** Reverses */
+            reverses?: number | null;
+        };
         /** FreightLine */
         FreightLine: {
             /** Kind */
@@ -7644,6 +7772,8 @@ export interface components {
             bill_entered_by: string;
             /** Bill Payments */
             bill_payments?: components["schemas"]["Payment"][];
+            /** Bill Events */
+            bill_events?: (components["schemas"]["CarrierBillAdjustment"] | components["schemas"]["CarrierRefund"] | components["schemas"]["CarrierBankMatch"] | components["schemas"]["FreightLandedCost"])[];
         };
         /**
          * FreightRate
@@ -9319,6 +9449,20 @@ export interface components {
             available: number;
             /** Overload */
             overload: boolean;
+        };
+        /** LandedCostInput */
+        LandedCostInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "landed_cost";
+            /** Service */
+            service: string;
+            /** Receipt */
+            receipt: string;
+            /** Actual Minor */
+            actual_minor: number;
         };
         /** LaneDelayChip */
         "LaneDelayChip-Input": {
@@ -13925,6 +14069,18 @@ export interface components {
             /** Notes */
             notes: string[];
         };
+        /** RefundBillInput */
+        RefundBillInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "refund_bill";
+            /** Reference */
+            reference: string;
+            /** Amount Minor */
+            amount_minor: number;
+        };
         /**
          * ReleaseLevel
          * @description A level of the release strategy: orders worth more than ``above`` need a release at this level, in order of
@@ -13941,6 +14097,20 @@ export interface components {
             above: number;
             /** Approvers */
             approvers?: string[];
+        };
+        /** ReleaseMatchInput */
+        ReleaseMatchInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "release_match";
+            /** Cash Voucher */
+            cash_voucher: string;
+            /** Account */
+            account: string;
+            /** Statement Line */
+            statement_line: string;
         };
         /** ReleaseRequest */
         ReleaseRequest: {
@@ -14402,6 +14572,16 @@ export interface components {
             order: string | null;
             /** Credit Note */
             credit_note: string | null;
+        };
+        /** ReverseLandedInput */
+        ReverseLandedInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "reverse_landed";
+            /** Reverses */
+            reverses: number;
         };
         /** RollReport */
         RollReport: {
@@ -18109,7 +18289,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "plan" | "tender" | "accept" | "reject" | "ship" | "settle" | "credit" | "pay_bill" | "cancel";
+            action: "plan" | "tender" | "accept" | "reject" | "ship" | "settle" | "credit" | "pay_bill" | "bill_event" | "cancel";
             /** Order */
             order?: string | null;
             /** Lanes */
@@ -18137,6 +18317,8 @@ export interface components {
              * @default
              */
             reference: string;
+            /** Event */
+            event?: (components["schemas"]["AdjustBillInput"] | components["schemas"]["RefundBillInput"] | components["schemas"]["BankMatchInput"] | components["schemas"]["ReleaseMatchInput"] | components["schemas"]["LandedCostInput"] | components["schemas"]["ReverseLandedInput"]) | null;
             /** Date */
             date?: string | null;
         };

@@ -6,8 +6,10 @@ from datetime import date
 
 from .. import intercompany as ic, sales, transport
 from ..actuals.post import delivered, ordered_now, ship_point
-from ..freight import freight_company
+from ..freight import active_landed, freight_company
 from ..model import Dataset, MovementType
+from ..model.transport import CarrierBankMatch
+from ..transport.bill_events import record_event, replay_input
 
 
 def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[date], None], *,
@@ -85,12 +87,15 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
 
     # Shipped/settled carrier facts drive the ledger and cannot be rewritten as a draft.
     freight = {f.id: f for f in proposed.freight_orders}
+    reversed_receipts = {m.reversal_of for m in proposed.movements if m.reversal_of}
     for prior in old.freight_orders:
         if prior.status not in ("shipped", "settled"):
             continue
         target = freight.get(prior.id)
         if target is None:
             raise ValueError(f"{prior.id}: shipped freight is retained")
+        if any(e.receipt in reversed_receipts for _, e in active_landed(target)):
+            raise ValueError(f"{prior.id}: reverse the landed-cost allocation before reversing the goods receipt")
         if target.status == "settled" or prior.status == "settled" or prior.bill_credits:
             payer = freight_company(old, prior)
             if (payer != freight_company(proposed, target)
@@ -105,6 +110,17 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
             open_period(credit.date)
             base = proposed.model_copy(update={"freight_orders": [prior if f.id == prior.id else f for f in proposed.freight_orders]})
             result, _ = transport.credit_bill(base, prior.id, prior.bill_voucher(), credit.reference, credit.reason, credit.date)
+            expected = next(f for f in result.freight_orders if f.id == prior.id)
+        elif target.bill_events != prior.bill_events:
+            if (freight_action != "bill_event" or prior.status != "settled"
+                    or len(target.bill_events) != len(prior.bill_events) + 1
+                    or target.bill_events[:-1] != prior.bill_events):
+                raise ValueError(f"{prior.id}: carrier adjustments and matches require an authoritative bill event")
+            event = target.bill_events[-1]
+            if not isinstance(event, CarrierBankMatch):
+                open_period(event.date)
+            base = proposed.model_copy(update={"freight_orders": [prior if f.id == prior.id else f for f in proposed.freight_orders]})
+            result, _ = record_event(base, prior.id, prior.bill_voucher(), replay_input(event, proposed.settings.currency), event.date)
             expected = next(f for f in result.freight_orders if f.id == prior.id)
         elif target.bill_payments != prior.bill_payments:
             if (freight_action != "pay_bill" or prior.status != "settled"
@@ -136,5 +152,5 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
             raise ValueError(f"{prior.id}: shipped freight and posted settlement facts cannot be replaced")
     for target in proposed.freight_orders:
         prior = next((f for f in old.freight_orders if f.id == target.id), None)
-        if (target.status == "settled" or target.bill_credits) and (prior is None or prior.status not in ("shipped", "settled")):
+        if (target.status == "settled" or target.bill_credits or target.bill_events) and (prior is None or prior.status not in ("shipped", "settled")):
             raise ValueError(f"{target.id}: save the shipment before settling its carrier bill")

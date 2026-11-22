@@ -52,6 +52,7 @@ from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..sales import SalesError, act as sales_act, sales_view
 from .. import transport as tm
 from ..transport import TransportError, TransportReport, TransportView
+from ..transport.bill_events import BillEventInput, record_event
 from ..transport import view as transport_view
 from .. import dropship as tp
 from .. import accounting as acct
@@ -1069,7 +1070,7 @@ def post_transport(ds: PlanData, as_of: dt.date | None = None) -> Response:
 class TransportActionRequest(Out):
     model_config = ConfigDict(allow_inf_nan=False)
     dataset: PlanData
-    action: Literal["plan", "tender", "accept", "reject", "ship", "settle", "credit", "pay_bill", "cancel"]
+    action: Literal["plan", "tender", "accept", "reject", "ship", "settle", "credit", "pay_bill", "bill_event", "cancel"]
     order: str | None = None                        # every action but plan: the freight order
     lanes: list[str] | None = None                  # plan: only these lanes (default: every one)
     billed: float | None = Field(None, ge=0)        # settle: what the carrier billed
@@ -1079,6 +1080,7 @@ class TransportActionRequest(Out):
     voucher: str | None = Field(None, max_length=64)
     amount: float | None = Field(None, gt=0)
     reference: str = Field("", max_length=64)
+    event: BillEventInput | None = None
     date: dt.date | None = None
 
 
@@ -1110,6 +1112,10 @@ def post_transport_action(req: TransportActionRequest) -> TransportActionRespons
             if not req.voucher or req.date is None:
                 raise TransportError("a carrier payment needs its bill voucher and posting date")
             return tm.pay_bill(ds, req.order, req.voucher, req.amount, req.reference, req.date)
+        if a == "bill_event":
+            if not req.voucher or req.date is None or req.event is None:
+                raise TransportError("a carrier bill event needs its voucher, date and supporting details")
+            return record_event(ds, req.order, req.voucher, req.event, req.date)
         if a == "cancel":
             return tm.cancel(ds, req.order)
         return {"tender": tm.tender, "accept": tm.accept, "reject": tm.reject, "ship": tm.ship}[a](ds, req.order, req.date)

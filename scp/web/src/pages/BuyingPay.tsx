@@ -9,10 +9,12 @@ import { Loc, Msg, Prod, namesOf } from "../lib/names";
 import { go, href } from "../lib/router";
 import { useSettlement } from "../state/settlement";
 import { store } from "../state/store";
+import { CarrierBillEvents } from "./CarrierBillEvents";
 
 type Sev = "error" | "warning" | "info" | "ok";
 const INV_SEV: Record<string, Sev> = {
   blocked: "error", released: "info", "to pay": "info", paid: "ok", cancelled: "warning", "credit open": "info", credited: "ok",
+  "refund due": "warning", refunded: "ok",
 };
 /** Credit memos and subsequent credits are owed to us; invoices and subsequent debits by us (N132). */
 const isCredit = (kind: string) => kind === "credit_memo" || kind === "subsequent_credit";
@@ -332,7 +334,7 @@ export function Owed({ res, ds }: { res: PurchasingView; ds: Dataset }) {
           <thead><tr><th>Voucher</th><th>Carrier</th><th>Paying company</th><th>Bill date</th><th>Due</th>
             <th className="num">Billed</th><th className="num">Open</th><th>Status</th><th aria-label="Payment" /></tr></thead>
           <tbody>{pay.carrier_bills.map((bill) => <CarrierBillRow key={`${bill.order}:${bill.voucher}`}
-            bill={bill} currency={res.currency} planningStart={ds.settings.planning_start} />)}</tbody>
+            bill={bill} currency={res.currency} ds={ds} />)}</tbody>
         </table></div>
       </Panel>}
       <Reading formula="Open: invoices not yet paid, less credit memos not yet refunded. Received, not invoiced: goods in at the order price with no invoice for them yet."
@@ -342,9 +344,10 @@ export function Owed({ res, ds }: { res: PurchasingView; ds: Dataset }) {
   );
 }
 
-function CarrierBillRow({ bill, currency, planningStart }: {
-  bill: PayablesView["carrier_bills"][number]; currency: string; planningStart: string;
+function CarrierBillRow({ bill, currency, ds }: {
+  bill: PayablesView["carrier_bills"][number]; currency: string; ds: Dataset;
 }) {
+  const planningStart = ds.settings.planning_start;
   const settlement = useSettlement("transportPayment", bill.voucher, bill.order);
   const [on, setOn] = useState(planningStart > bill.date ? planningStart : bill.date);
   const [amount, setAmount] = useState("");
@@ -396,6 +399,7 @@ function CarrierBillRow({ bill, currency, planningStart }: {
         </details>}
       </Edits>
       {status && <div className={`small ${status.error ? "tone-error" : ""}`} role={status.error ? "alert" : "status"}>{status.message}</div>}
+      <CarrierBillEvents bill={bill} currency={currency} ds={ds} />
     </td>
   </tr>;
 }

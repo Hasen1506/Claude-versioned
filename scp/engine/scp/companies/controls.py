@@ -62,21 +62,27 @@ def authorize(before: dict, after: dict, email: str, *, count_projection: bool =
             booked = b.get("status") == "settled" and a.get("status") != "settled"
             credited = (a.get("bill_credits") or []) != (b.get("bill_credits") or [])
             paid = (a.get("bill_payments") or []) != (b.get("bill_payments") or [])
+            recorded = (a.get("bill_events") or []) != (b.get("bill_events") or [])
+            events = b.get("bill_events") or []
+            appended = events[-1] if recorded and isinstance(events, list) and events and isinstance(events[-1], dict) else {}
+            kind = appended.get("kind")
+            if recorded:
+                required.add("payments" if kind in ("match_bank", "refund_bill") else "billing")
             if booked:
                 if str(b.get("bill_entered_by") or actor).strip().lower() != actor:
                     raise ValueError("a carrier bill entrant is recorded from the signed-in identity")
                 newly_billed.add(b.get("id"))
             if booked or credited:
                 required.add("billing")
-            if paid:
+            if paid or kind == "refund_bill":
                 required.add("payments")
-                if finance.get("separate_payments") and b.get("bill_payments"):
+                if finance.get("separate_payments") and (b.get("bill_payments") or kind == "refund_bill"):
                     entrant = str(a.get("bill_entered_by") or "").lower()
                     if not entrant:
                         raise ValueError("legacy carrier bill has no recorded entrant; reconcile it before payment")
                     if actor == entrant:
                         raise ValueError("carrier payment requires a different person from the bill entrant")
-            if not (booked or credited or paid):
+            if not (booked or credited or paid or recorded):
                 required.add("transport")
         elif name == "finance":
             a, b = old or {}, new or {}

@@ -750,6 +750,8 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
                                        terms="Carrier bill")
         r = carriers[key]
         r.open += bill.open
+        if bill.open < 0:
+            continue
         if bill.due_on < as_of:
             r.overdue += bill.open
         elif (bill.due_on - as_of).days <= 7:

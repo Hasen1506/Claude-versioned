@@ -101,6 +101,7 @@ function MoneyAnswer({ res, cur, days }: { res: FinanceResult; cur: string; days
 const CASH_KIND: Record<string, string> = {
   invoices: "customers' invoices", to_bill: "delivered, to bill", orders: "open orders", forecast: "forecast",
   supplier_invoices: "supplier invoices", purchase_orders: "purchase orders", planned_buying: "planned buying",
+  carrier_refunds: "carrier refunds",
   production: "production", transfers: "transfers", freight: "freight",
 };
 
