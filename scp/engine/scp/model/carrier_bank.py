@@ -1,6 +1,6 @@
 """Source statement lines and append-only matches to carrier cash vouchers."""
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
@@ -9,6 +9,7 @@ from .common import Id, Model
 
 BankAccountId = Annotated[str, Field(pattern=r"^[A-Z0-9][A-Z0-9_-]{0,31}$")]
 BankMinor = Annotated[int, Field(strict=True, ge=-999999999999999, le=999999999999999)]
+BankDigest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
 class BankAccountOpening(Model):
@@ -18,8 +19,14 @@ class BankAccountOpening(Model):
     opening_minor: BankMinor
 
 
+class CamtAccountBinding(Model):
+    account_sha256: BankDigest
+    starts_on: date
+
+
 class CarrierBankAccount(BankAccountOpening):
     currency: str = Field(pattern=r"^[A-Z]{3}$")
+    camt_source: CamtAccountBinding | None = Field(None, exclude_if=lambda value: value is None)
 
 
 class BankStatementHeader(Model):
@@ -38,10 +45,17 @@ class BankStatementHeader(Model):
         return self
 
 
+class CamtSourceEvidence(Model):
+    format: Literal["camt.053.001.08"] = "camt.053.001.08"
+    message_id: str = Field(min_length=1, max_length=35)
+    byte_count: int = Field(strict=True, ge=1, le=256_000)
+
+
 class CarrierBankPeriod(BankStatementHeader):
     id: Id
-    file_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    file_sha256: BankDigest
     line_ids: list[Id] = Field(max_length=500)
+    camt_source: CamtSourceEvidence | None = Field(None, exclude_if=lambda value: value is None)
 
 
 class BankCashRef(Model):

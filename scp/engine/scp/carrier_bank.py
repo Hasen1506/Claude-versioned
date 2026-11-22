@@ -10,11 +10,13 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, TypeAdapter, ValidationError
 
-from .carrier_accounts import BankAccounts, CarrierBankTieOut, check_window, period_id, protect_accounts, statement_periods, tie_out
+from .camt_statements import file_evidence, read_statement
+from .carrier_accounts import (BankAccounts, CarrierBankTieOut, check_window, last_period, next_start,
+                               period_id, protect_accounts, statement_periods, tie_out)
 from .freight import BankPosting, CarrierBill, active_bank_matches, carrier_bills, freight_company
 from .model import Dataset
-from .model.carrier_bank import (BankAccountOpening, BankCashRef, BankMatchEvent, BankStatementHeader,
-                                 CarrierBankAccount, CarrierBankLine, CarrierBankPeriod)
+from .model.carrier_bank import (BankAccountId, BankAccountOpening, BankCashRef, BankMatchEvent, BankStatementHeader,
+                                 CamtAccountBinding, CamtSourceEvidence, CarrierBankAccount, CarrierBankLine, CarrierBankPeriod)
 from .model.common import Model, Out
 from .model.transport import CarrierBankMatch
 
@@ -35,6 +37,16 @@ class ImportBankPeriod(BankStatementHeader):
     csv: Annotated[str, StringConstraints(min_length=1, max_length=256_000, strip_whitespace=False)]
 
 
+class CamtFile(Model):
+    kind: Literal["link_camt_source", "import_camt"]
+    account: BankAccountId
+    xml: Annotated[str, StringConstraints(min_length=1, max_length=256_000, strip_whitespace=False)]
+
+    def receipt_event(self) -> dict:
+        data, digest = file_evidence(self.xml)
+        return {"kind": self.kind, "account": self.account, "file_sha256": digest, "byte_count": len(data)}
+
+
 class MatchStatement(Model):
     kind: Literal["match"]
     line: str = Field(min_length=1, max_length=64)
@@ -48,7 +60,7 @@ class ReleaseStatement(Model):
     version: int = Field(gt=0, strict=True)
 
 
-BankOperation = Annotated[ImportStatement | MatchStatement | ReleaseStatement | RegisterBankAccount | ImportBankPeriod,
+BankOperation = Annotated[ImportStatement | MatchStatement | ReleaseStatement | RegisterBankAccount | ImportBankPeriod | CamtFile,
                           Field(discriminator="kind")]
 parse_operation = TypeAdapter(BankOperation)
 HEADER = ["line", "date", "reference", "amount", "currency"]
@@ -164,32 +176,69 @@ def _register(ds: Dataset, request: RegisterBankAccount) -> tuple[Dataset, str]:
     prior = BankAccounts(ds).by_id.get(account.id)
     if request.company and request.company not in ds.entity_by_id:
         raise ValueError("choose the owning legal entity for this bank account")
-    if prior == account:
+    if prior and prior.model_copy(update={"camt_source": None}) == account:
         return ds, f"Bank account {account.id} is already registered."
     if prior:
         raise ValueError("the opening basis of a registered account is retained")
     return ds.model_copy(update={"carrier_bank_accounts": [*ds.carrier_bank_accounts, account]}), f"Registered bank account {account.id}."
 
 
-def _import_period(ds: Dataset, request: ImportBankPeriod) -> tuple[Dataset, str]:
-    account = BankAccounts(ds).by_id.get(request.account)
-    if account is None:
-        raise ValueError("register the bank account before importing its statement period")
-    rows = _read_lines(account.company, account.id, account.currency, request.csv)
-    lines = {line.id: line for line in rows.values()}
-    period = CarrierBankPeriod(**request.model_dump(exclude={"kind", "csv"}), id=period_id(account.id, request.number),
-                               file_sha256=hashlib.sha256(request.csv.encode()).hexdigest(), line_ids=list(lines))
+def _append_period(ds: Dataset, account: CarrierBankAccount, header: BankStatementHeader, rows: list[CarrierBankLine],
+                   digest: str, source: CamtSourceEvidence | None = None) -> tuple[Dataset, str]:
+    lines = {line.id: line for line in rows}
+    period = CarrierBankPeriod(**header.model_dump(), id=period_id(account.id, header.number), file_sha256=digest,
+                               line_ids=list(lines), camt_source=source)
     prior = next((p for p in ds.carrier_bank_periods if p.id == period.id), None)
     if prior == period:
         return ds, f"Statement {period.number} is already recorded."
     if prior:
         raise ValueError("the offered file differs from the retained source statement")
-    if rows.keys() & ({line.source_key() for line in ds.carrier_bank_lines} | _legacy(ds).keys()):
+    bound = account.camt_source
+    if bool(source) != bool(bound and period.starts_on >= bound.starts_on):
+        raise ValueError("import the original camt.053 file for the linked account beginning on its linked date")
+    if {line.source_key() for line in rows} & ({line.source_key() for line in ds.carrier_bank_lines} | _legacy(ds).keys()):
         raise ValueError("a source line was already recorded outside this statement period")
-    preceding = next((p for p in reversed(ds.carrier_bank_periods) if p.account == account.id), None)
-    check_window(period, account, preceding, lines)
+    check_window(period, account, last_period(ds, account.id), lines)
     return ds.model_copy(update={"carrier_bank_periods": [*ds.carrier_bank_periods, period],
                                  "carrier_bank_lines": [*ds.carrier_bank_lines, *lines.values()]}), f"Imported statement {period.number}."
+
+
+def _account(ds: Dataset, identifier: str) -> CarrierBankAccount:
+    account = BankAccounts(ds).by_id.get(identifier)
+    if account is None:
+        raise ValueError("register the bank account before importing its statement period")
+    return account
+
+
+def _import_period(ds: Dataset, request: ImportBankPeriod) -> tuple[Dataset, str]:
+    account = _account(ds, request.account)
+    rows = _read_lines(account.company, account.id, account.currency, request.csv)
+    header = BankStatementHeader(**request.model_dump(exclude={"kind", "csv"}))
+    return _append_period(ds, account, header, list(rows.values()), hashlib.sha256(request.csv.encode()).hexdigest())
+
+
+def _camt(ds: Dataset, request: CamtFile, day: date) -> tuple[Dataset, str]:
+    account = _account(ds, request.account)
+    statement = read_statement(request.xml, account.id, account.currency)
+    if statement.header.ends_on > day:
+        raise ValueError("the bank evidence date cannot precede the statement close")
+    bound = account.camt_source
+    if request.kind == "link_camt_source":
+        if bound:
+            if bound.account_sha256 != statement.account_hash:
+                raise ValueError("the registered account's camt.053 source is retained")
+            return ds, f"Bank account {account.id} already has a camt.053 source."
+        begins = date.fromordinal(next_start(account, last_period(ds, account.id)))
+        linked = account.model_copy(update={"camt_source": CamtAccountBinding(account_sha256=statement.account_hash, starts_on=begins)})
+        return ds.model_copy(update={"carrier_bank_accounts": [linked if a.id == account.id else a for a in ds.carrier_bank_accounts]}), (
+            f"Linked camt.053 source for {account.id}.")
+    if bound is None or bound.account_sha256 != statement.account_hash:
+        raise ValueError("the file does not identify the selected account's linked bank source")
+    rows = [CarrierBankLine(id=_line_id((account.company, account.id.casefold(), entry.identifier.casefold())),
+                            company=account.company, account=account.id, statement_line=entry.identifier, date=entry.date,
+                            reference=entry.reference, amount_minor=entry.amount_minor, currency=account.currency)
+            for entry in statement.entries]
+    return _append_period(ds, account, statement.header, rows, statement.file_sha256, statement.source)
 
 
 def _validate_match(line: CarrierBankLine, targets: list[BankCashRef], cash: dict[tuple[str, str], CarrierCash], day: date,
@@ -220,6 +269,8 @@ def record_bank(ds: Dataset, request: BankOperation, day: date) -> tuple[Dataset
         return _register(ds, request)
     if isinstance(request, ImportBankPeriod):
         return _import_period(ds, request)
+    if isinstance(request, CamtFile):
+        return _camt(ds, request, day)
     line = next((row for row in ds.carrier_bank_lines if row.id == request.line), None)
     if line is None:
         raise ValueError("select an imported statement line in this company")

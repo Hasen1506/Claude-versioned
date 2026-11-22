@@ -63,7 +63,8 @@ export function CarrierBankAccounts({ ds, currency, periods, live, editable, rec
         <div className="row wrap" style={{ gap: 8 }}>
           <label>Account <select className="input" value={period.account} aria-label="Statement period account"
             onChange={(e) => setPeriod({ ...period, account: e.target.value })}>
-            <option value="">Choose</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.id} · {account.company || "Main company"}</option>)}
+            <option value="">Choose</option>{accounts.filter((account) => !account.camt_source)
+              .map((account) => <option key={account.id} value={account.id}>{account.id} · {account.company || "Main company"}</option>)}
           </select></label>
           <label>Statement number <input className="input" maxLength={64} value={period.number}
             onChange={(e) => setPeriod({ ...period, number: e.target.value })} /></label>
@@ -107,7 +108,10 @@ export function CarrierBankAccounts({ ds, currency, periods, live, editable, rec
       <thead><tr><th>Statement</th><th>Account</th><th>Dates</th><th className="num">Statement opening</th>
         <th className="num">Ledger opening</th><th className="num">Statement closing</th><th className="num">Ledger closing</th><th>Reconciliation</th></tr></thead>
       <tbody>{periods.map((row) => <tr key={row.period.id}>
-        <td>{row.period.number}</td><td>{row.period.account}</td><td>{day(row.period.starts_on)} – {day(row.period.ends_on)}</td>
+        <td>{row.period.number}{row.period.camt_source && <details className="small">
+          <summary>Original camt.053</summary><div>{row.period.camt_source.message_id}</div>
+          <code>{row.period.file_sha256}</code>
+        </details>}</td><td>{row.period.account}</td><td>{day(row.period.starts_on)} – {day(row.period.ends_on)}</td>
         {[row.period.opening_minor, row.ledger_opening_minor, row.period.closing_minor, row.ledger_closing_minor]
           .map((value, i) => <td className="num" key={i}>{exactMoney(value / 100, currency)}</td>)}
         <td><Badge sev={row.reconciled ? "ok" : "warning"}>{row.reconciled ? "Reconciled" : "Review differences"}</Badge>
