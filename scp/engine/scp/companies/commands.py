@@ -145,7 +145,8 @@ def execute(c: Companies, user: User, cid: str, req: CommandRequest,
             document = _changes(current.dataset, baseline, changed.model_dump(mode="json"))
             saved = c.save(user, cid, document, req.base_revision, action="posted",
                            allow_production_posting=req.kind == "production_cost",
-                           count_projection=req.kind == "stock" and req.action == "count_post")
+                           count_projection=req.kind == "stock" and req.action == "count_post",
+                           allow_freight_credit=req.kind == "transport" and req.action == "credit")
             if saved.held is not None:
                 raise CompanyError("this command needs a master-data change that has not been approved; approve it "
                                    "before posting the transaction", 409)

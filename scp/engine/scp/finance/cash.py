@@ -152,7 +152,7 @@ def cash_view(ds: Dataset, plan: PlanResult, weeks: int | None = None) -> CashVi
     for f in ds.freight_orders:
         k = ds.carrier_by_id.get(f.carrier or "")
         days = k.payment_days if k else 0
-        if f.status in ("planned", "tendered", "accepted", "shipped"):
+        if f.status in ("planned", "tendered", "accepted", "shipped") and not f.bill_credits:
             add("freight", f.planned_on + timedelta(days=days), f.planned_cost)
         elif f.status == "settled" and f.billed is not None and f.settled_on is not None:
             due = f.settled_on + timedelta(days=days)

@@ -42,6 +42,17 @@ class Carrier(Model):
 FREIGHT_STATUS = r"^(planned|tendered|accepted|shipped|settled|cancelled)$"
 
 
+class FreightBillCredit(Model):
+    """The original bill and the carrier's later full credit, kept together in the journal."""
+
+    bill: str = Field("", max_length=64)
+    billed: float = Unit("money", ge=0)
+    settled_on: dt.date
+    reference: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=1, max_length=200)
+    date: dt.date
+
+
 class FreightOrder(Model):
     """One vehicle from one place to another (≈ TM freight order): what it carries, its load and its cost."""
 
@@ -72,11 +83,28 @@ class FreightOrder(Model):
     billed: float | None = Unit("money", default=None, description="Settled: what the carrier billed")
     settled_on: dt.date | None = None
     note: str = Field("", max_length=400)
+    bill_credits: list[FreightBillCredit] = Field(default_factory=list, exclude_if=lambda credits: not credits)
+
+    def bill_voucher(self, index: int | None = None) -> str:
+        ordinal = len(self.bill_credits) if index is None else index
+        return self.id if ordinal == 0 else f"{self.id}/B{ordinal + 1}"
 
     @model_validator(mode="after")
     def _carries(self) -> FreightOrder:
         if not self.deliveries and not self.transfers and not self.purchases:
             raise ValueError("a freight order carries at least one delivery, stock transfer or purchase")
+        if self.bill_credits:
+            last = self.shipped_on
+            if last is None or self.status not in ("shipped", "settled"):
+                raise ValueError("credited freight retains its shipment and billing history")
+            for credit in self.bill_credits:
+                if not last <= credit.settled_on <= credit.date:
+                    raise ValueError("freight bills and credits must be in posting order")
+                last = credit.date
+            if self.status == "settled" and (self.billed is None or self.settled_on is None or self.settled_on < last):
+                raise ValueError("the replacement freight bill must follow its preceding credit")
+            if self.status == "shipped" and (self.bill or self.billed is not None or self.settled_on is not None):
+                raise ValueError("credited freight has no active bill until it is billed again")
         return self
 
 

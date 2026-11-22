@@ -10,7 +10,7 @@ import type {
   User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
   WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, PolicyView, PolicyApplyResponse, PolicyApplyInput, AccountingView, AccountingExport, IntercompanyView, IntercompanyAction, IntercompanyActionInput, IntercompanyActionResponse, CyclePlan, PutawayProposal, RefillProposal, PickList, WarehouseActionResponse,
-  TransportView, TransportAction, TransportActionResponse,
+  TransportView, TransportAction, TransportActionInput, TransportActionResponse,
   OutsideView, OutsideAction, OutsideActionInput, OutsideActionResponse,
   PortalView, PortalAction, PortalActionInput, PortalActionResponse, PortalLink,
   WarehouseAction,
@@ -384,9 +384,8 @@ export const api = {
   /** What is waiting to load, in vehicles with the cheapest carrier, and the freight orders (Enterprise 6.3). */
   transport: (ds: Dataset) => planPost<TransportView>("/api/transport", ds),
   /** One transport step: freight orders for what is waiting, tender, accept, reject, ship, settle, cancel. */
-  transportAct: (dataset: Dataset, action: TransportAction, extra: {
-    order?: string; lanes?: string[]; billed?: number; bill?: string; date?: string;
-  } = {}) => write<TransportActionResponse>("/api/transport/act", dataset, { action, ...extra }),
+  transportAct: (dataset: Dataset, action: TransportAction, extra: TransportActionInput = {}) =>
+    write<TransportActionResponse>("/api/transport/act", dataset, { action, ...extra }),
   /** Work done outside: third-party orders suppliers ship to customers, job-work challans and ITC-04 (Enterprise 7.1). */
   outside: (ds: Dataset, asOf?: string) =>
     planPost<OutsideView>(`/api/outside${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ""}`, ds),
