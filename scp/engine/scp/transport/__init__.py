@@ -34,7 +34,7 @@ from ..freight import bills_for_order, freight_company
 from ..carrier_accounts import BankAccounts
 from ..model import Dataset, FreightOrder, ReceiptKind, TransportLane
 from ..model.common import Out, TransportMode
-from ..model.transport import CarrierBillAdjustment, CarrierPayment, CarrierRefund, FreightBillCredit
+from ..model.transport import CarrierBankReversal, CarrierBillAdjustment, CarrierPayment, CarrierRefund, FreightBillCredit
 from ..sales import SalesError
 from ..sales import issue as goods_issue
 
@@ -667,8 +667,8 @@ def pay_bill(ds: Dataset, fid: str, voucher: str, amount: float | None, referenc
         raise TransportError(f"{voucher} requires a named carrier before payment")
     if day < bill.date:
         raise TransportError("a payment cannot be posted before its carrier bill")
-    if any(isinstance(e, (CarrierBillAdjustment, CarrierRefund)) and e.date > day for e in bill.events):
-        raise TransportError("a payment cannot precede an existing credit or refund on this carrier bill")
+    if any(isinstance(e, (CarrierBillAdjustment, CarrierRefund, CarrierBankReversal)) and e.date > day for e in bill.events):
+        raise TransportError("a payment cannot precede an existing credit, refund or reversal on this carrier bill")
     reference = reference.strip()
     if not reference:
         raise TransportError("enter the bank reference for the carrier payment")

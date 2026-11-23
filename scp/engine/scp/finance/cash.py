@@ -157,11 +157,12 @@ def cash_view(ds: Dataset, plan: PlanResult, weeks: int | None = None) -> CashVi
         if f.status in ("planned", "tendered", "accepted", "shipped") and not f.bill_credits:
             add("freight", f.planned_on + timedelta(days=days), f.planned_cost)
     for bill in carrier_bills(ds):
+        last_reversal = max((event.date for _, event in bill.reversals()), default=bill.date)
         if bill.open > 0:
-            add("freight", bill.due_on, bill.open)
+            add("freight", max(bill.due_on, last_reversal), bill.open)
         elif bill.open < 0:
             latest_credit = max(e.date for e in bill.events if isinstance(e, CarrierBillAdjustment))
-            add("carrier_refunds", latest_credit, -bill.open)
+            add("carrier_refunds", max(latest_credit, last_reversal), -bill.open)
 
     cum = 0.0
     for i in range(n):

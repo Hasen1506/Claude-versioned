@@ -8,7 +8,8 @@ from .. import intercompany as ic, sales, transport
 from ..actuals.post import delivered, ordered_now, ship_point
 from ..freight import active_landed, freight_company
 from ..model import Dataset, MovementType
-from ..model.transport import CarrierBankMatch
+from ..model.carrier_bank import BankCashRef
+from ..model.transport import CarrierBankMatch, CarrierBankReversal
 from ..transport.bill_events import record_event, replay_input
 
 
@@ -112,15 +113,23 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
             result, _ = transport.credit_bill(base, prior.id, prior.bill_voucher(), credit.reference, credit.reason, credit.date)
             expected = next(f for f in result.freight_orders if f.id == prior.id)
         elif target.bill_events != prior.bill_events:
-            if (freight_action != "bill_event" or prior.status != "settled"
+            if (prior.status != "settled"
                     or len(target.bill_events) != len(prior.bill_events) + 1
                     or target.bill_events[:-1] != prior.bill_events):
                 raise ValueError(f"{prior.id}: carrier adjustments and matches require an authoritative bill event")
             event = target.bill_events[-1]
+            if freight_action != ("reverse_bank_cash" if isinstance(event, CarrierBankReversal) else "bill_event"):
+                raise ValueError(f"{prior.id}: carrier adjustments and matches require an authoritative bill event")
             if not isinstance(event, CarrierBankMatch):
                 open_period(event.date)
-            base = proposed.model_copy(update={"freight_orders": [prior if f.id == prior.id else f for f in proposed.freight_orders]})
-            result, _ = record_event(base, prior.id, prior.bill_voucher(), replay_input(event, proposed.settings.currency), event.date)
+            if isinstance(event, CarrierBankReversal):
+                from ..carrier_bank import ReverseBankCash, record_bank
+                request = ReverseBankCash(kind="reverse_cash", line=event.statement_line,
+                                          original=BankCashRef(order=prior.id, voucher=event.reverses))
+                result, _ = record_bank(old, request, event.date)
+            else:
+                base = proposed.model_copy(update={"freight_orders": [prior if f.id == prior.id else f for f in proposed.freight_orders]})
+                result, _ = record_event(base, prior.id, prior.bill_voucher(), replay_input(event, proposed.settings.currency), event.date)
             expected = next(f for f in result.freight_orders if f.id == prior.id)
         elif target.bill_payments != prior.bill_payments:
             if (freight_action != "pay_bill" or prior.status != "settled"

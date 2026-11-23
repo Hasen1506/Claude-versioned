@@ -4397,6 +4397,11 @@ export interface components {
             amount_minor: number;
             /** Currency */
             currency: string;
+            /**
+             * Reversal
+             * @default false
+             */
+            reversal: boolean;
             /** History */
             history?: components["schemas"]["BankMatchEvent"][];
         };
@@ -4458,6 +4463,31 @@ export interface components {
             line_ids: string[];
             camt_source?: components["schemas"]["CamtSourceEvidence"] | null;
         };
+        /** CarrierBankReversal */
+        CarrierBankReversal: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "reverse_bank_cash";
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Reverses */
+            reverses: string;
+            /** Original Line */
+            original_line: string;
+            /** Statement Line */
+            statement_line: string;
+            /** Reference */
+            reference: string;
+            /** Amount Minor */
+            amount_minor: number;
+            /** Bank Account */
+            bank_account: string;
+        };
         /** CarrierBankTieOut */
         CarrierBankTieOut: {
             period: components["schemas"]["CarrierBankPeriod"];
@@ -4480,6 +4510,10 @@ export interface components {
             unmatched_cash: components["schemas"]["CarrierCash"][];
             /** Periods */
             periods: components["schemas"]["CarrierBankTieOut"][];
+            /** Reversible Cash */
+            reversible_cash: components["schemas"]["ReversibleCash"][];
+            /** Locked Lines */
+            locked_lines: string[];
         };
         /** CarrierBill */
         CarrierBill: {
@@ -4520,7 +4554,7 @@ export interface components {
              * Events
              * @default []
              */
-            events: (components["schemas"]["CarrierBillAdjustment"] | components["schemas"]["CarrierRefund"] | components["schemas"]["CarrierBankMatch"] | components["schemas"]["FreightLandedCost"])[];
+            events: (components["schemas"]["CarrierBillAdjustment"] | components["schemas"]["CarrierRefund"] | components["schemas"]["CarrierBankMatch"] | components["schemas"]["CarrierBankReversal"] | components["schemas"]["FreightLandedCost"])[];
             /**
              * Statement Vouchers
              * @default []
@@ -7989,7 +8023,7 @@ export interface components {
             /** Bill Payments */
             bill_payments?: components["schemas"]["CarrierPayment"][];
             /** Bill Events */
-            bill_events?: (components["schemas"]["CarrierBillAdjustment"] | components["schemas"]["CarrierRefund"] | components["schemas"]["CarrierBankMatch"] | components["schemas"]["FreightLandedCost"])[];
+            bill_events?: (components["schemas"]["CarrierBillAdjustment"] | components["schemas"]["CarrierRefund"] | components["schemas"]["CarrierBankMatch"] | components["schemas"]["CarrierBankReversal"] | components["schemas"]["FreightLandedCost"])[];
         };
         /**
          * FreightRate
@@ -14803,6 +14837,35 @@ export interface components {
             kind: "reverse_landed";
             /** Reverses */
             reverses: number;
+        };
+        /** ReversibleCash */
+        ReversibleCash: {
+            /** Order */
+            order: string;
+            /** Voucher */
+            voucher: string;
+            /** Company */
+            company: string;
+            /** Carrier */
+            carrier: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Reference */
+            reference: string;
+            /** Amount Minor */
+            amount_minor: number;
+            /** Bank Account */
+            bank_account: string | null;
+            /** Original Line */
+            original_line: string;
+            /**
+             * Eligible From
+             * Format: date
+             */
+            eligible_from: string;
         };
         /** RollReport */
         RollReport: {

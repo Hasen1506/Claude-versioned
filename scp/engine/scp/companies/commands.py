@@ -144,11 +144,13 @@ def execute(c: Companies, user: User, cid: str, req: CommandRequest,
             baseline = ds.model_dump(mode="json")
             changed, result = operation(ds)
             document = _changes(current.dataset, baseline, changed.model_dump(mode="json"))
+            freight_action = (req.action if req.kind == "transport" else
+                              "reverse_bank_cash" if req.kind == "carrier_bank" and req.action == "reverse_cash" else "")
             saved = c.save(user, cid, document, req.base_revision, action="posted",
                            allow_production_posting=req.kind == "production_cost",
                            count_projection=req.kind == "stock" and req.action == "count_post",
                            allow_carrier_bank=req.kind == "carrier_bank",
-                           freight_action=req.action if req.kind == "transport" else "")
+                           freight_action=freight_action)
             if saved.held is not None:
                 raise CompanyError("this command needs a master-data change that has not been approved; approve it "
                                    "before posting the transaction", 409)

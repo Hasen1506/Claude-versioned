@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>MSG-2026-01-09-WIRE-GROUP</MsgId>
+      <CreDtTm>2026-01-09T23:59:59+05:30</CreDtTm>
+      <MsgPgntn><PgNb>1</PgNb><LastPgInd>true</LastPgInd></MsgPgntn>
+    </GrpHdr>
+    <Stmt>
+      <Id>STMT-2026-01-09</Id>
+      <StmtPgntn><PgNb>1</PgNb><LastPgInd>true</LastPgInd></StmtPgntn>
+      <FrToDt>
+        <FrDtTm>2026-01-09T00:00:00+05:30</FrDtTm>
+        <ToDtTm>2026-01-09T23:59:59+05:30</ToDtTm>
+      </FrToDt>
+      <Acct>
+        <Id><IBAN>DE89370400440532013000</IBAN></Id>
+        <Ccy>INR</Ccy>
+        <Nm>PRIVATE-FIXTURE-ACCOUNT-NAME</Nm>
+      </Acct>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="INR">200.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-01-08</Dt></Dt>
+      </Bal>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="INR">159.75</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-01-09</Dt></Dt>
+      </Bal>
+      <TxsSummry>
+        <TtlNtries>
+          <NbOfNtries>1</NbOfNtries>
+          <Sum>40.25</Sum>
+          <TtlNetNtry><Amt>40.25</Amt><CdtDbtInd>DBIT</CdtDbtInd></TtlNetNtry>
+        </TtlNtries>
+        <TtlCdtNtries><NbOfNtries>0</NbOfNtries><Sum>0</Sum></TtlCdtNtries>
+        <TtlDbtNtries><NbOfNtries>1</NbOfNtries><Sum>40.25</Sum></TtlDbtNtries>
+      </TxsSummry>
+      <Ntry>
+        <NtryRef>BANK-ENTRY-001</NtryRef>
+        <Amt Ccy="INR">40.25</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-01-09</Dt></BookgDt>
+        <AcctSvcrRef>SVCR-2026-01-09</AcctSvcrRef>
+        <BkTxCd><Prtry><Cd>TRF</Cd><Issr>Fixture bank</Issr></Prtry></BkTxCd>
+        <NtryDtls>
+          <Btch><PmtInfId>WIRE-GROUP</PmtInfId><NbOfTxs>2</NbOfTxs></Btch>
+          <TxDtls><Refs><EndToEndId>FO-1-EXTERNAL</EndToEndId></Refs></TxDtls>
+          <TxDtls><Refs><EndToEndId>FO-2-EXTERNAL</EndToEndId></Refs></TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <AddtlStmtInf>PRIVATE-FIXTURE-XML-MARKER</AddtlStmtInf>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

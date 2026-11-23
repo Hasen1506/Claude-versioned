@@ -1409,8 +1409,8 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
     the original result and current company state, even after intervening saves.
     """
     if req.kind == "carrier_bank":
-        from ..carrier_bank import CamtFile, CamtFiles, parse_operation, record_bank
-        if req.action != "record" or set(req.parameters) != {"event"}:
+        from ..carrier_bank import CamtFile, CamtFiles, ReverseBankCash, parse_operation, record_bank
+        if set(req.parameters) != {"event"}:
             raise HTTPException(422, "carrier bank commands require a single event")
         try:
             event = parse_operation.validate_python(req.parameters["event"])
@@ -1418,6 +1418,8 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
             problems = [f"{'.'.join(map(str, error['loc']))}: {error['msg']}"
                         for error in exc.errors(include_input=False, include_url=False, include_context=False)]
             raise HTTPException(422, "invalid carrier bank event: " + "; ".join(problems)) from None
+        if req.action != ("reverse_cash" if isinstance(event, ReverseBankCash) else "record"):
+            raise HTTPException(422, "carrier bank action must match the requested event")
         try:
             receipt = {"event": event.receipt_event()} if isinstance(event, CamtFile) else None
             if isinstance(event, CamtFiles):

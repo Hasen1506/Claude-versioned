@@ -13,7 +13,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
-from .carrier_bank import BankAccountId
+from .carrier_bank import BankAccountId, BankMinor
 from .common import Id, Model, Ref, TransportMode, Unit
 from .sales import Payment
 
@@ -78,6 +78,17 @@ class CarrierPayment(Payment):
     bank_account: BankAccountId | None = Field(None, exclude_if=lambda value: value is None)
 
 
+class CarrierBankReversal(Model):
+    kind: Literal["reverse_bank_cash"] = "reverse_bank_cash"
+    date: dt.date
+    reverses: str = Field(min_length=1, max_length=64)
+    original_line: Id
+    statement_line: Id
+    reference: str = Field(min_length=1, max_length=64)
+    amount_minor: BankMinor
+    bank_account: BankAccountId
+
+
 class CarrierBankMatch(Model):
     kind: Literal["match_bank"] = "match_bank"
     date: dt.date
@@ -103,7 +114,7 @@ class FreightLandedCost(Model):
         return (self.actual_minor - self.absorbed_minor) * (-1 if self.reverses else 1) / 100
 
 
-FreightBillEvent = Annotated[CarrierBillAdjustment | CarrierRefund | CarrierBankMatch | FreightLandedCost,
+FreightBillEvent = Annotated[CarrierBillAdjustment | CarrierRefund | CarrierBankMatch | CarrierBankReversal | FreightLandedCost,
                             Field(discriminator="kind")]
 
 
@@ -173,8 +184,7 @@ class FreightOrder(Model):
             references = {p.reference.casefold() for p in self.bill_payments}
             if ("" in references or len(references) != len(self.bill_payments)
                     or any(p.date < self.settled_on or p.discount or p.fx_rate is not None
-                           or round(p.amount, 2) != p.amount for p in self.bill_payments)
-                    or sum(round(p.amount * 100) for p in self.bill_payments) > round(self.billed * 100)):
+                           or round(p.amount, 2) != p.amount for p in self.bill_payments)):
                 raise ValueError("invalid freight payment dates, references or amounts")
             credits = [e for e in self.bill_events if isinstance(e, CarrierBillAdjustment)]
             refunds = [e for e in self.bill_events if isinstance(e, CarrierRefund)]
@@ -184,10 +194,19 @@ class FreightOrder(Model):
                 raise ValueError("carrier adjustments cannot precede the bill")
             if sum(e.amount_minor for e in credits) > round(self.billed * 100):
                 raise ValueError("carrier credits cannot exceed the original bill")
-            for day in {e.date for e in refunds}:
-                due = (sum(round(p.amount * 100) for p in self.bill_payments if p.date <= day)
-                       + sum(e.amount_minor for e in credits if e.date <= day) - round(self.billed * 100))
-                if sum(e.amount_minor for e in refunds if e.date <= day) > due:
+            reversals = [e for e in self.bill_events if isinstance(e, CarrierBankReversal)]
+            billed = round(self.billed * 100)
+            first_reversal = min((e.date for e in reversals), default=dt.date.max)
+            # Same-day payments and bill events are stored in separate lists. After a
+            # return, the authoritative commands enforce the balance in posting order.
+            original_payments = [p for p in self.bill_payments if not reversals or p.date < first_reversal]
+            if sum(round(p.amount * 100) for p in original_payments) > billed:
+                raise ValueError("carrier payments exceed the original bill amount")
+            for day in {e.date for e in refunds if not reversals or e.date < first_reversal}:
+                paid = sum(round(p.amount * 100) for p in original_payments if p.date <= day)
+                refunded = sum(e.amount_minor for e in refunds if e.date <= day)
+                due = paid + sum(e.amount_minor for e in credits if e.date <= day) - billed
+                if refunded > due:
                     raise ValueError("carrier refunds exceed the dated credit balance")
             self._event_links()
         return self
@@ -195,11 +214,21 @@ class FreightOrder(Model):
     def _event_links(self) -> None:
         cash = {f"{self.bill_voucher()}/P-{i}": (p.reference.casefold(), -round(p.amount * 100), p.bank_account)
                 for i, p in enumerate(self.bill_payments, 1)}
+        cash_dates = {f"{self.bill_voucher()}/P-{i}": p.date for i, p in enumerate(self.bill_payments, 1)}
+        reversed_cash: set[str] = set()
         matches: dict[str, CarrierBankMatch] = {}
         allocations: dict[int, FreightLandedCost] = {}
         for i, event in enumerate(self.bill_events, 1):
             if isinstance(event, CarrierRefund):
-                cash[f"{self.bill_voucher()}/R-{i}"] = event.reference.casefold(), event.amount_minor, event.bank_account
+                voucher = f"{self.bill_voucher()}/R-{i}"
+                cash[voucher] = event.reference.casefold(), event.amount_minor, event.bank_account
+                cash_dates[voucher] = event.date
+            elif isinstance(event, CarrierBankReversal):
+                if (not event.amount_minor or event.reverses in reversed_cash or cash.get(event.reverses) != (
+                        event.reference.casefold(), -event.amount_minor, event.bank_account)
+                        or event.date < cash_dates[event.reverses]):
+                    raise ValueError("a bank reversal must exactly offset one earlier carrier payment or refund")
+                reversed_cash.add(event.reverses)
             elif isinstance(event, CarrierBankMatch):
                 if event.released:
                     original = matches.pop(event.cash_voucher, None)

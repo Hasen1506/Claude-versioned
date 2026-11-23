@@ -9,7 +9,8 @@ from pydantic import computed_field
 
 from .model import Dataset, FreightOrder
 from .model.common import Out
-from .model.transport import CarrierBankMatch, CarrierBillAdjustment, CarrierPayment, CarrierRefund, FreightBillEvent, FreightLandedCost
+from .model.transport import (CarrierBankMatch, CarrierBankReversal, CarrierBillAdjustment, CarrierPayment, CarrierRefund,
+                              FreightBillEvent, FreightLandedCost)
 
 
 def freight_company(ds: Dataset, order: FreightOrder) -> str:
@@ -43,10 +44,9 @@ class CarrierBill(Out):
     def open_at(self, through: date) -> float:
         if self.date > through or (self.credited_on and self.credited_on <= through):
             return 0.0
-        paid = sum(round(p.amount * 100) for p in self.payments if p.date <= through)
         credit = sum(e.amount_minor for e in self.events if isinstance(e, CarrierBillAdjustment) and e.date <= through)
-        refunded = sum(e.amount_minor for e in self.events if isinstance(e, CarrierRefund) and e.date <= through)
-        return (round(self.amount * 100) - paid - credit + refunded) / 100
+        cash = sum(posting.amount_minor for posting in self.cash() if posting.date <= through)
+        return (round(self.amount * 100) - credit + cash) / 100
 
     @computed_field
     @property
@@ -60,9 +60,12 @@ class CarrierBill(Out):
             return "credited"
         if self.open:
             return "refund due" if self.open < 0 else "to pay"
-        if any(isinstance(e, CarrierRefund) for e in self.events):
+        reversed_vouchers = {event.reverses for _, event in self.reversals()}
+        if any(isinstance(event, CarrierRefund) and f"{self.voucher}/R-{index}" not in reversed_vouchers
+               for index, event in enumerate(self.events, 1)):
             return "refunded"
-        if not self.payments and any(isinstance(e, CarrierBillAdjustment) for e in self.events):
+        if all(f"{self.voucher}/P-{index}" in reversed_vouchers for index in range(1, len(self.payments) + 1)) and any(
+                isinstance(e, CarrierBillAdjustment) for e in self.events):
             return "credited"
         return "paid"
 
@@ -72,6 +75,17 @@ class CarrierBill(Out):
         for index, event in enumerate(self.events, 1):
             if isinstance(event, CarrierRefund):
                 yield BankPosting(f"{self.voucher}/R-{index}", event.date, event.reference, event.amount_minor, event.bank_account)
+        for voucher, event in self.reversals():
+            yield BankPosting(voucher, event.date, event.reference, event.amount_minor, event.bank_account)
+
+    def reversals(self) -> Iterator[tuple[str, CarrierBankReversal]]:
+        for index, event in enumerate(self.events, 1):
+            if isinstance(event, CarrierBankReversal):
+                yield f"{self.voucher}/V-{index}", event
+
+    def latest_monetary_date(self) -> date:
+        return max([self.date, *(posting.date for posting in self.cash()),
+                    *(e.date for e in self.events if isinstance(e, CarrierBillAdjustment))])
 
     @computed_field
     @property
