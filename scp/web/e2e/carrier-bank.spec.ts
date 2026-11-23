@@ -401,7 +401,7 @@ test("recover a grouped partial return with changed reference and an included fe
   await page.route("**/api/companies/*/commands", async (route) => {
     const payload = route.request().postDataJSON();
     if (payload.action !== "allocate_return") return route.continue();
-    attempts.push(payload);
+    attempts.push({ id: payload.id, posting_date: payload.posting_date, parameters: payload.parameters });
     companyUrl = route.request().url().replace(/\/commands$/, "");
     if (attempts.length === 1) {
       expect((await route.fetch()).ok()).toBe(true);
@@ -411,7 +411,7 @@ test("recover a grouped partial return with changed reference and an included fe
   });
   await page.getByRole("button", { name: `SVCR-${returnDate}` }).click();
   await page.getByText("Allocate partial, grouped or changed-reference return", { exact: true }).click();
-  const add = page.getByLabel("Add original cash voucher");
+  const add = page.getByLabel("Add voucher to return");
   await add.selectOption({ value: JSON.stringify(["FO-1", "FO-1/P-1"]) });
   await add.selectOption({ value: JSON.stringify(["FO-2", "FO-2/P-1"]) });
   await page.getByLabel("Principal for FO-1/P-1").fill("20");

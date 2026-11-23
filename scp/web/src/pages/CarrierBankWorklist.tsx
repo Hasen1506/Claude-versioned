@@ -40,7 +40,7 @@ function ReturnAllocation({ line, sources, currency, editable, submit }: {
   return <details>
     <summary>Allocate partial, grouped or changed-reference return</summary>
     <div className="stack">
-      <label>Add original cash voucher <select className="input" value="" disabled={!editable || chosen.length >= 100}
+      <label>Add voucher to return <select className="input" value="" disabled={!editable || chosen.length >= 100}
         onChange={(event) => {
           const key = event.target.value;
           if (key) setAmounts((before) => ({ ...before, [key]: "" }));
