@@ -160,3 +160,35 @@ test("a cycle count by ABC class at the Delhi DC: what is due counted, one short
   await expect(page.getByRole("button", { name: /Nothing due at Delhi NCR DC/ })).toBeVisible();
   await page.screenshot({ path: "test-results/cycle-counts.png", fullPage: true });
 });
+
+test("count-date book starts from the intervening receipt and creates no adjustment", async ({ page }) => {
+  const company = {
+    settings: { company_name: "Count-date inventory", planning_start: "2026-01-08", horizon_days: 28, default_calendar: "CAL" },
+    calendars: [{ id: "CAL", workdays: [0, 1, 2, 3, 4, 5, 6] }],
+    locations: [{ id: "P", type: "plant" }],
+    products: [{ id: "A", type: "FG" }],
+    location_products: [{ location: "P", product: "A", on_hand: 30 }],
+    movements: [
+      { id: "GM-00001", type: "opening", date: "2026-01-02", location: "P", product: "A", qty: 20 },
+      { id: "GM-00002", type: "receipt", date: "2026-01-06", location: "P", product: "A", qty: 10 },
+    ],
+  };
+  await page.goto("/");
+  const file = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Import a file", exact: true }).click();
+  await (await file).setFiles({ name: "count-date.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(company)) });
+  await page.goto("/#/execution/count");
+  await page.getByLabel("Place to count").selectOption("P");
+  await page.getByLabel("Count date", { exact: true }).fill("2026-01-05");
+  await page.getByLabel("Book quantity", { exact: true }).selectOption("at_count");
+  await page.getByLabel(/Hold postings/).uncheck();
+  await page.getByRole("button", { name: "Start counting 1 product" }).click();
+  await page.getByLabel("Actual count date").fill("2026-01-07");
+  await page.getByRole("button", { name: "Record book stock" }).click();
+  await page.getByLabel("Show the book stock").check();
+  await expect(page.getByRole("row", { name: /^A no batch/ })).toContainText("30");
+  await page.getByLabel(/^Counted A\s*$/).fill("30");
+  await page.getByRole("button", { name: "Save 1 count", exact: true }).click();
+  await page.getByRole("button", { name: "Post differences" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "PI-00001 posted" })).toContainText("the counts match the book");
+});

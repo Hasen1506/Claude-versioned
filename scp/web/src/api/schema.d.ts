@@ -5698,7 +5698,7 @@ export interface components {
             stock_type: components["schemas"]["StockType"];
             /**
              * Book Qty
-             * @description The journal's stock when the document was made (frozen)
+             * @description The journal quantity at the document's recorded baseline
              */
             book_qty: number;
             /**
@@ -8753,9 +8753,7 @@ export interface components {
         };
         /**
          * InventoryDoc
-         * @description A physical inventory document (≈ MI01/MI04/MI07): places and products to count on a day, their book stock
-         *     frozen when the document is made, the counts entered, and the differences posted against the frozen stock.
-         *     With ``block``, postings for its places and products are refused until it is posted or cancelled.
+         * @description A physical inventory document with independent book quantity and movement-block policies.
          */
         InventoryDoc: {
             /** Id */
@@ -8763,7 +8761,7 @@ export interface components {
             /**
              * Date
              * Format: date
-             * @description Count date: the differences are posted at the end of this day
+             * @description Planned count date and posting date for a frozen-book document
              */
             date: string;
             /**
@@ -8789,6 +8787,18 @@ export interface components {
              * @description The material document of the differences
              */
             posted_doc?: string | null;
+            /**
+             * Book Basis
+             * @description Freeze the book at document creation or establish it when the physical count is recorded
+             * @default frozen
+             * @enum {string}
+             */
+            book_basis: "frozen" | "at_count";
+            /**
+             * Counted On
+             * @description Actual count and adjustment date for a count-date book baseline
+             */
+            counted_on?: string | null;
         };
         /** InventoryResult */
         InventoryResult: {
@@ -13163,7 +13173,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ship" | "receive" | "deliver" | "count" | "move" | "scrap" | "scrap_expired" | "reverse" | "shorten" | "count_doc" | "count_enter" | "count_post" | "count_cancel" | "cycle_count";
+            action: "ship" | "receive" | "deliver" | "count" | "move" | "scrap" | "scrap_expired" | "reverse" | "shorten" | "count_doc" | "count_book" | "count_enter" | "count_post" | "count_cancel" | "cycle_count";
             /** Order */
             order?: string | null;
             /** Qty */
@@ -13211,6 +13221,12 @@ export interface components {
              * @default true
              */
             block: boolean;
+            /**
+             * Book Basis
+             * @default frozen
+             * @enum {string}
+             */
+            book_basis: "frozen" | "at_count";
             /**
              * Uncounted Zero
              * @default false

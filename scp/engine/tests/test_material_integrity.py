@@ -198,3 +198,68 @@ def test_inventory_adjustment_requires_a_separate_named_grant():
                              "location": "P", "product": "A", "qty": -1})
     assert save(picker, cid, doc, 2).status_code == 403
     assert save(owner, cid, doc, 2).status_code == 200
+
+
+def test_count_date_book_uses_receipts_known_when_captured_and_preserves_a_later_same_day_receipt():
+    from .factory import base, lp
+
+    data = base()
+    lp(data, "P", "B")["on_hand"] = 20
+    data["receipts"] = [{"id": "COUNT-PO", "kind": "purchase", "location": "P", "product": "B", "qty": 20,
+                         "due_date": "2026-01-07", "source": "PIR-B"}]
+    owner, _, cid = team(Dataset.model_validate(data))
+
+    def apply(identifier, action, rev, day, **parameters):
+        response = command(owner, cid, identifier, "stock", action, rev, date=day, **parameters)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    started = apply("begin", "count_doc", 1, "2026-01-05", nodes=[{"location": "P", "product": "B"}],
+                    block=False, book_basis="at_count")
+    did = started["result"]["report"]["doc"]
+    counted = [{"location": "P", "product": "B", "qty": 30}]
+    early = command(owner, cid, "early", "stock", "count_enter", 2, date="2026-01-05", doc=did, counts=counted)
+    assert early.status_code == 409 and "record the count-date book stock" in early.text
+    apply("first", "receive", 2, "2026-01-06", order="COUNT-PO", qty=10)
+
+    opened = client.get(f"/api/companies/{cid}", headers=h(owner)).json()["dataset"]
+    candidate = Dataset.model_validate(opened)
+    from scp.actuals.documents import capture_count_book
+    projection, _ = capture_count_book(candidate, did, date(2026, 1, 7))
+    forged = projection.model_dump(mode="json")
+    forged["inventory_docs"][0]["items"][0]["book_qty"] = 20
+    assert save(owner, cid, forged, 3).status_code == 403
+
+    captured = apply("book", "count_book", 3, "2026-01-07", doc=did)["company"]["dataset"]
+    assert captured["inventory_docs"][0]["counted_on"] == "2026-01-07"
+    assert captured["inventory_docs"][0]["items"][0]["book_qty"] == 30
+    apply("enter", "count_enter", 4, "2026-01-07", doc=did, counts=counted)
+    apply("later", "receive", 5, "2026-01-07", order="COUNT-PO", qty=10)
+    posted = apply("post", "count_post", 6, "2026-01-07", doc=did, counts=counted)
+    replay = apply("post", "count_post", 6, "2026-01-07", doc=did, counts=counted)
+    assert posted["revision"] == replay["revision"] == 7 and replay["duplicate"]
+    saved = Dataset.model_validate(replay["company"]["dataset"])
+    assert saved.inventory_docs[0].status == "posted" and saved.inventory_docs[0].posted_doc is None
+    assert saved.inventory_docs[0].items[0].book_qty == 30
+    assert stock(before(saved, date(2026, 1, 8)))["P", "B"] == 40
+
+
+def test_count_date_posting_checks_the_actual_period_and_applies_a_real_difference_on_that_date():
+    from scp.actuals.documents import capture_count_book
+
+    original = taken()[0]
+    on = JAN + timedelta(days=2)
+    opened, _ = count_doc(original, [("P", "A")], JAN, book_basis="at_count")
+    did = opened.inventory_docs[0].id
+    counted, _ = capture_count_book(opened, did, on)
+    counted, _ = enter_counts(counted, did, [{"location": "P", "product": "A", "qty": 97}])
+    for closed in (JAN, on):
+        candidate = counted.model_copy(update={"finance": counted.finance.model_copy(update={"closed_through": closed})})
+        posted, _ = post_counts(candidate, did)
+        assert posted.movements[-1].date == on and posted.movements[-1].qty == -3
+        from scp.companies.transactions import TransactionRefused, protect
+        if closed == on:
+            with pytest.raises(TransactionRefused, match="accounting period"):
+                protect(candidate.model_dump(mode="json"), posted.model_dump(mode="json"), "warehouse@example.test")
+        else:
+            protect(candidate.model_dump(mode="json"), posted.model_dump(mode="json"), "warehouse@example.test")

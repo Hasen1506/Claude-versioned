@@ -261,7 +261,7 @@ export interface PostExtra {
   note?: string; ship_from?: string | null; batch?: string | null; expires_on?: string | null; supplier_batch?: string | null;
   serials?: string[] | null; stock_type?: StockType | null; to_type?: StockType | null; location?: string | null;
   product?: string | null; movement?: string | null; doc?: string | null; nodes?: { location: string; product: string }[] | null;
-  block?: boolean; uncounted_zero?: boolean; classes?: ("A" | "B" | "C")[] | null;
+  block?: boolean; book_basis?: "frozen" | "at_count"; uncounted_zero?: boolean; classes?: ("A" | "B" | "C")[] | null;
 }
 
 /** Sign-in calls ask for the session in the HttpOnly cookie (roadmap D), prove they come from this page with the
@@ -342,7 +342,8 @@ export const api = {
       ship_from: extra.ship_from ?? null, batch: extra.batch ?? null, expires_on: extra.expires_on ?? null,
       supplier_batch: extra.supplier_batch ?? null, serials: extra.serials ?? null, stock_type: extra.stock_type ?? null,
       to_type: extra.to_type ?? null, location: extra.location ?? null, product: extra.product ?? null, movement: extra.movement ?? null,
-      doc: extra.doc ?? null, nodes: extra.nodes ?? null, block: extra.block ?? true, uncounted_zero: extra.uncounted_zero ?? false }),
+      doc: extra.doc ?? null, nodes: extra.nodes ?? null, block: extra.block ?? true,
+      book_basis: extra.book_basis ?? "frozen", uncounted_zero: extra.uncounted_zero ?? false }),
   /** Take a checked customer order (with its promise), change one (promised again), cancel what is still open, or ship
    *  part of one as a substitute product. */
   salesOrder: (dataset: Dataset, action: "accept" | "change" | "cancel" | "substitute",

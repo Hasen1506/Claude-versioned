@@ -6,7 +6,7 @@ from collections.abc import Callable
 from datetime import date
 import json
 
-from ..actuals.documents import cancel_counts, count_doc, enter_counts, post_counts
+from ..actuals.documents import cancel_counts, capture_count_book, count_doc, enter_counts, post_counts
 from ..actuals.stock import pending_openings, stock
 from ..model import Dataset, MovementType
 
@@ -65,22 +65,25 @@ def protect_materials(old: Dataset, proposed: Dataset, open_period: Callable[[da
             continue
         if prior is None:
             nodes = list(dict.fromkeys((i.location, i.product) for i in target.items))
-            working, _ = count_doc(old, nodes, target.date, target.block, target.note)
+            working, _ = count_doc(old, nodes, target.date, target.block, target.note, book_basis=target.book_basis)
             made = working.inventory_docs[-1].model_copy(update={"id": did})
             working = working.model_copy(update={"inventory_docs": [*working.inventory_docs[:-1], made]})
             opening_allowance.update(_signature(m) for m in working.movements if m.id not in old_ids
                                      and m.type is MovementType.OPENING)
         else:
             working = old
-        working, _ = enter_counts(working, did, [
-            {"location": i.location, "product": i.product, "batch": i.batch, "stock_type": i.stock_type.value,
-             "qty": i.counted} for i in target.items])
+        if target.counted_on is not None and (prior is None or prior.counted_on != target.counted_on):
+            working, _ = capture_count_book(working, did, target.counted_on)
+        if target.book_basis == "frozen" or target.counted_on is not None:
+            working, _ = enter_counts(working, did, [
+                {"location": i.location, "product": i.product, "batch": i.batch, "stock_type": i.stock_type.value,
+                 "qty": i.counted} for i in target.items])
         expected = next(d for d in working.inventory_docs if d.id == did)
         frozen = {"status", "posted_doc", "note"}
         if expected.model_dump(exclude=frozen) != target.model_dump(exclude=frozen):
-            raise ValueError(f"{did}: physical inventory retains its count date, block and frozen book quantities")
+            raise ValueError(f"{did}: physical inventory retains its dates, book policy, block and book quantities")
         if target.status == "posted":
-            open_period(target.date)
+            open_period(target.posting_date)
             result, _ = post_counts(working, did, uncounted_zero=any(i.counted is None for i in target.items))
             done = next(d for d in result.inventory_docs if d.id == did)
             expected_moves = [m for m in result.movements if done.posted_doc and m.doc == done.posted_doc
@@ -88,7 +91,7 @@ def protect_materials(old: Dataset, proposed: Dataset, open_period: Callable[[da
             actual_moves = [m for m in additions if target.posted_doc and m.doc == target.posted_doc]
             if (bool(done.posted_doc) != bool(target.posted_doc) or target.posted_doc in old_docs
                     or Counter(map(_signature, expected_moves)) != Counter(map(_signature, actual_moves))):
-                raise ValueError(f"{did}: the posted count differences do not match the frozen book and physical counts")
+                raise ValueError(f"{did}: the posted count differences do not match the recorded book and physical counts")
             count_movements.update(m.id for m in actual_moves)
         elif target.status == "cancelled":
             cancel_counts(working, did)

@@ -25,6 +25,7 @@ from ..model import (
     Batch, CountItem, Dataset, DemandRecord, Confirmation, GoodsMovement, InventoryDoc, MovementType, NegativeStock, ReceiptKind, ScheduledReceipt,
     StockType,
 )
+from ..model.actuals import CountBookBasis
 from ..model.common import STOCKING_LOCATION_TYPES
 from ..purchasing.result import ActionReport, ShortOrder
 from .lots import EPS, new_batch, node_lots, pick
@@ -619,32 +620,39 @@ def reverse(ds: Dataset, movement: str, on: date | None = None, note: str = "") 
 
 
 # ---- physical inventory (MI01 / MI04 / MI07) ----------------------------------------------------------------
+def _book_items(ds: Dataset, nodes: list[Node], on: date) -> list[CountItem]:
+    journal = before(ds, on + timedelta(days=1))
+    items = []
+    for loc, prod in nodes:
+        lots = [lot for lot in node_lots(ds, journal, (loc, prod)) if abs(lot.qty) > EPS]
+        items.extend(CountItem(location=loc, product=prod, batch=lot.batch, stock_type=lot.stock_type,
+                               book_qty=round(lot.qty, 6)) for lot in lots)
+        if not lots:
+            items.append(CountItem(location=loc, product=prod, book_qty=0.0))
+    return items
+
+
 def count_doc(ds: Dataset, nodes: list[Node], on: date | None = None, block: bool = True,
-              note: str = "") -> tuple[Dataset, ActionReport]:
-    """Make a physical inventory document: the places and products to count on ``on`` (default: the day before the
-    planning start), each lot's book stock frozen now. With ``block``, postings for them wait until it is posted."""
+              note: str = "", *, book_basis: CountBookBasis = "frozen") -> tuple[Dataset, ActionReport]:
+    """Open a count for the selected stock. The movement block and book baseline are independent."""
     ds = _with_openings(ds)
     if not nodes:
         raise StockError("say which places and products to count")
     day = on or ds.settings.planning_start - timedelta(days=1)
     busy = {(it.location, it.product): d.id for d in ds.inventory_docs if d.status == "open" for it in d.items}
-    items: list[CountItem] = []
-    journal = before(ds, day + timedelta(days=1))
-    for loc, prod in dict.fromkeys(nodes):
+    nodes = list(dict.fromkeys(nodes))
+    for loc, prod in nodes:
         _stock_node(ds, loc, prod)
         if (loc, prod) in busy:
             raise StockError(f"{_name(ds, prod)} at {_at(ds, loc)} is on {busy[(loc, prod)]} already")
-        lots = [lot for lot in node_lots(ds, journal, (loc, prod)) if abs(lot.qty) > EPS]
-        if not lots:
-            items.append(CountItem(location=loc, product=prod, book_qty=0.0))
-        for lot in lots:
-            items.append(CountItem(location=loc, product=prod, batch=lot.batch, stock_type=lot.stock_type,
-                                   book_qty=round(lot.qty, 6)))
-    doc = InventoryDoc(id=next_doc(ds, "PI"), date=day, block=block, items=items, note=note[:200])
+    items = (_book_items(ds, nodes, day) if book_basis == "frozen" else
+             [CountItem(location=loc, product=prod, book_qty=0.0) for loc, prod in nodes])
+    doc = InventoryDoc(id=next_doc(ds, "PI"), date=day, block=block, items=items, note=note[:200], book_basis=book_basis)
+    basis_message = "book stock frozen" if book_basis == "frozen" else "book stock will be recorded at count entry"
     return (ds.model_copy(update={"inventory_docs": [*ds.inventory_docs, doc]}),
             ActionReport(ok=True, doc=doc.id,
                          message=f"{doc.id}: {len(items)} line{'s' if len(items) != 1 else ''} to count on "
-                                 f"{day.isoformat()}, book stock frozen"
+                                 f"{day.isoformat()}, {basis_message}"
                                  + ("; postings for them wait until it is posted" if block else "") + "."))
 
 
@@ -661,10 +669,26 @@ def _replace(ds: Dataset, d: InventoryDoc) -> list[InventoryDoc]:
     return [d if x.id == d.id else x for x in ds.inventory_docs]
 
 
+def capture_count_book(ds: Dataset, did: str, on: date | None) -> tuple[Dataset, ActionReport]:
+    """Record the authoritative lot balances known for the physical count date, once."""
+    d = _doc(ds, did)
+    if d.book_basis != "at_count" or on is None:
+        raise StockError("choose a physical count date on a count-date inventory document")
+    if d.counted_on != on and d.counted_on is not None:
+        raise StockError(f"{did}: the count-date book quantity is already recorded for {d.counted_on}")
+    if d.counted_on is None:
+        nodes = list(dict.fromkeys((i.location, i.product) for i in d.items))
+        d = d.model_copy(update={"items": _book_items(ds, nodes, on), "counted_on": on})
+        ds = ds.model_copy(update={"inventory_docs": _replace(ds, d)})
+    return ds, ActionReport(ok=True, doc=did, message=f"{did}: book stock recorded for {on.isoformat()}")
+
+
 def enter_counts(ds: Dataset, did: str, counts: list[dict]) -> tuple[Dataset, ActionReport]:
     """Enter what was found (``[{"location", "product", "batch"?, "stock_type"?, "qty"}]``); a batch found that
     the book does not have gets a line of its own."""
     d = _doc(ds, did)
+    if d.book_basis == "at_count" and d.counted_on is None:
+        raise StockError(f"{did}: record the count-date book stock before entering quantities")
     items = [it.model_copy() for it in d.items]
     for c in counts:
         loc, prod = str(c.get("location") or ""), str(c.get("product") or "")
@@ -690,6 +714,9 @@ def post_counts(ds: Dataset, did: str, uncounted_zero: bool = False) -> tuple[Da
     """Post the differences between the counts and the frozen book stock (≈ MI07), dated the count date. Lines not
     counted are posted as zero only with ``uncounted_zero``."""
     d = _doc(ds, did)
+    if d.book_basis == "at_count" and d.counted_on is None:
+        raise StockError(f"{did}: record the count-date book stock before posting differences")
+    day = d.posting_date
     missing = [it for it in d.items if it.counted is None]
     if missing and not uncounted_zero:
         raise StockError(f"{did}: {len(missing)} line{'s are' if len(missing) != 1 else ' is'} not counted yet "
@@ -701,24 +728,24 @@ def post_counts(ds: Dataset, did: str, uncounted_zero: bool = False) -> tuple[Da
         diff = round(found - it.book_qty, 6)
         if abs(diff) <= EPS:
             continue
-        moves.append(GoodsMovement(id=next(ids), date=d.date, type=MovementType.ADJUSTMENT, location=it.location,
+        moves.append(GoodsMovement(id=next(ids), date=day, type=MovementType.ADJUSTMENT, location=it.location,
                                    product=it.product, qty=diff, batch=it.batch, stock_type=it.stock_type,
                                    note=f"Physical inventory {did}: {_n(it.book_qty)} → {_n(found)}"))
     doc_no = None
     new = ds
     if moves:
-        moves, _, _ = complete(ds, moves, d.date, counting=True)
+        moves, _, _ = complete(ds, moves, day, counting=True)
         doc_no = moves[0].doc
         new = ds.model_copy(update={"movements": [*ds.movements, *moves]})
     done = d.model_copy(update={"status": "posted", "posted_doc": doc_no})
     new = new.model_copy(update={"inventory_docs": _replace(new, done)})
-    if d.date < ds.settings.planning_start:
+    if day < ds.settings.planning_start:
         new = _sync_on_hand(new, {(it.location, it.product) for it in d.items})
     plus = sum(m.qty for m in moves if m.qty > 0)
     minus = -sum(m.qty for m in moves if m.qty < 0)
     msg = (f"{did} posted: " + (f"{len(moves)} difference{'s' if len(moves) != 1 else ''} (+{_n(plus)}, −{_n(minus)})"
                                 if moves else "the counts match the book")
-           + (" and planning's stock follows" if d.date < ds.settings.planning_start else
+           + (" and planning's stock follows" if day < ds.settings.planning_start else
               "; they count when the plan moves past the count date") + ".")
     return new, ActionReport(ok=True, message=msg, movements=[m.id for m in moves], doc=doc_no)
 

@@ -25,11 +25,12 @@ from ..model import (
     Dataset, DemandKind, DemandRecord, GoodsMovement, LocationProduct, MovementType, ReceiptKind, ScheduledReceipt,
     StockType,
 )
+from ..model.actuals import CountBookBasis
 from ..model.common import STOCKING_LOCATION_TYPES
 from ..purchasing import PurchasingError, receive as receive_purchase
 from ..purchasing.result import ActionReport
 from .documents import (
-    StockError, cancel_counts, complete, count_doc, enter_counts, move_stock, post_counts, reverse, scrap, short_orders,
+    StockError, cancel_counts, capture_count_book, complete, count_doc, enter_counts, move_stock, post_counts, reverse, scrap, short_orders,
     shorten,
 )
 from .lots import order_stock, planning_stock
@@ -462,7 +463,8 @@ def post(ds: Dataset, action: str, *, order: str | None = None, qty: float | Non
          note: str = "", ship_from: str | None = None, lot: Lot | None = None, location: str | None = None,
          product: str | None = None, to_type: StockType | None = None, movement: str | None = None,
          doc: str | None = None, nodes: list[tuple[str, str]] | None = None, block: bool = True,
-         uncounted_zero: bool = False, classes: list[str] | None = None) -> tuple[Dataset, ActionReport]:
+         uncounted_zero: bool = False, classes: list[str] | None = None,
+         book_basis: CountBookBasis = "frozen") -> tuple[Dataset, ActionReport]:
     lot = lot or {}
     if qty is not None and action in {"receive", "deliver", "ship", "move", "scrap"}:
         qty = round(float(qty), 6)
@@ -482,7 +484,9 @@ def post(ds: Dataset, action: str, *, order: str | None = None, qty: float | Non
         if action == "reverse":
             return reverse(ds, movement or "", on, note)
         if action == "count_doc":
-            return count_doc(ds, nodes or [], on, block, note)
+            return count_doc(ds, nodes or [], on, block, note, book_basis=book_basis)
+        if action == "count_book":
+            return capture_count_book(ds, doc or "", on)
         if action == "count_enter":
             return enter_counts(ds, doc or "", counts or [])
         if action == "count_post":
