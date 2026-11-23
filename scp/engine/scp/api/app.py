@@ -40,6 +40,7 @@ from ..demand.result import FoundationStatus
 from ..inventory import InventoryResult, PlacementApplied, apply_placement, run_inventory
 from ..inventory.policy import PolicyError, PolicyView, apply_policy, policy_view
 from ..model import Dataset, DemandRecord, ForecastModelId, StockType
+from ..model.actuals import CountBookBasis
 from ..model.carrier_bank import BankAccountId
 from ..model.common import Id, Model, Out
 from ..network import build_graph, location_edges, location_layers
@@ -1321,7 +1322,7 @@ class NodeInput(Out):
 class PostRequest(Out):
     dataset: PlanData
     action: Literal["ship", "receive", "deliver", "count", "move", "scrap", "scrap_expired", "reverse", "shorten",
-                    "count_doc", "count_enter", "count_post", "count_cancel", "cycle_count"]
+                    "count_doc", "count_book", "count_enter", "count_post", "count_cancel", "cycle_count"]
     order: str | None = None                        # the firm order (ship / receive / shorten) or sales order (deliver)
     qty: float | None = None                        # default: everything still open (shorten: the new quantity)
     date: dt.date | None = None                     # posting date (default: the planning start; a count: the day before)
@@ -1342,6 +1343,7 @@ class PostRequest(Out):
     doc: str | None = None                          # count_enter / count_post / count_cancel: the inventory document
     nodes: list[NodeInput] | None = None            # count_doc: places and products to count
     block: bool = True                              # count_doc: refuse postings for them until the count is posted
+    book_basis: CountBookBasis = "frozen"           # count_doc: when to establish the book quantity
     uncounted_zero: bool = False                    # count_post: lines not counted are posted as zero
     classes: list[Literal["A", "B", "C"]] | None = None   # cycle_count: only these classes (default: all that are due)
 
@@ -1357,7 +1359,7 @@ def post_posting(req: PostRequest) -> PoActionResponse:
                              "serials": req.serials, "stock_type": req.stock_type},
                         location=req.location, product=req.product, to_type=req.to_type, movement=req.movement,
                         doc=req.doc, nodes=None if req.nodes is None else [(n.location, n.product) for n in req.nodes],
-                        block=req.block, uncounted_zero=req.uncounted_zero,
+                        block=req.block, uncounted_zero=req.uncounted_zero, book_basis=req.book_basis,
                         ship_from=req.ship_from, classes=req.classes)
     except PostingError as e:
         raise HTTPException(409, str(e)) from e
@@ -1510,12 +1512,14 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
             raise HTTPException(422, "invalid command: " + str(exc)) from None
         if req.kind == "stock" and req.action in ("count_enter", "count_post"):
             count = next((d for d in ds.inventory_docs if d.id == parsed.doc), None)
-            if count is not None and count.date != req.posting_date:
+            if count is not None and count.posting_date != req.posting_date:
                 raise HTTPException(409, "the posting date must match the physical inventory document")
             if count is not None and req.action == "count_post" and parsed.counts is not None:
                 reviewed = [CountInput(location=i.location, product=i.product, batch=i.batch, stock_type=i.stock_type,
                                        qty=i.counted) for i in count.items]
-                if reviewed != parsed.counts:
+                supplied = [item.model_copy(update={"stock_type": item.stock_type or StockType.UNRESTRICTED})
+                            for item in parsed.counts]
+                if reviewed != supplied:
                     raise HTTPException(409, "the saved counts changed; review them before posting differences")
         response = handler(parsed)
         if response.dataset is None:

@@ -129,9 +129,9 @@ def cycle_plan(ds: Dataset, location: str | None = None, as_of: date | None = No
     for d in ds.inventory_docs:
         for it in d.items:
             n = (it.location, it.product)
-            if d.status == "posted" and d.date <= day:
-                last[n] = max(last.get(n, d.date), d.date)
-                if d.date > since and it.counted is not None:
+            if d.status == "posted" and d.posting_date <= day:
+                last[n] = max(last.get(n, d.posting_date), d.posting_date)
+                if d.posting_date > since and it.counted is not None:
                     lines[n].append((it.book_qty, it.counted))
             elif d.status == "open":
                 open_doc[n] = d.id
