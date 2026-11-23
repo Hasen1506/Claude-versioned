@@ -24,7 +24,7 @@ export type CarrierBankEvent = { kind: "import"; company: string; account: strin
   | { kind: "import_period"; account: string; number: string; starts_on: string; ends_on: string;
       opening_minor: number; closing_minor: number; line_count: number; csv: string }
   | { kind: "match"; line: string; version: number; targets: { order: string; voucher: string }[] }
-  | { kind: "reverse_cash"; line: string; original: { order: string; voucher: string } }
+  | { kind: "reverse_cash"; line: string; original: { order: string; voucher: string }; late_reason?: string }
   | { kind: "release"; line: string; version: number };
 type SettlementEvent = CarrierEventInput | CarrierBankEvent;
 

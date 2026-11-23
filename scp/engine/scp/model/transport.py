@@ -87,6 +87,7 @@ class CarrierBankReversal(Model):
     reference: str = Field(min_length=1, max_length=64)
     amount_minor: BankMinor
     bank_account: BankAccountId
+    late_reason: str = Field("", max_length=200, exclude_if=lambda value: not value)
 
 
 class CarrierBankMatch(Model):

@@ -4487,6 +4487,11 @@ export interface components {
             amount_minor: number;
             /** Bank Account */
             bank_account: string;
+            /**
+             * Late Reason
+             * @default
+             */
+            late_reason: string;
         };
         /** CarrierBankTieOut */
         CarrierBankTieOut: {
@@ -4495,12 +4500,41 @@ export interface components {
             ledger_opening_minor: number;
             /** Ledger Closing Minor */
             ledger_closing_minor: number;
+            /** Opening Timing Minor */
+            opening_timing_minor: number;
+            /** Closing Timing Minor */
+            closing_timing_minor: number;
+            /** Has Timing */
+            has_timing: boolean;
             /** Unmatched Lines */
             unmatched_lines: string[];
             /** Unmatched Vouchers */
             unmatched_vouchers: string[];
             /** Reconciled */
             reconciled: boolean;
+        };
+        /** CarrierBankTiming */
+        CarrierBankTiming: {
+            /** Account */
+            account: string;
+            /** Voucher */
+            voucher: string;
+            /** Statement Line */
+            statement_line: string;
+            /**
+             * Bank Date
+             * Format: date
+             */
+            bank_date: string;
+            /**
+             * Posting Date
+             * Format: date
+             */
+            posting_date: string;
+            /** Amount Minor */
+            amount_minor: number;
+            /** Reason */
+            reason: string;
         };
         /** CarrierBankView */
         CarrierBankView: {
@@ -4514,6 +4548,8 @@ export interface components {
             reversible_cash: components["schemas"]["ReversibleCash"][];
             /** Locked Lines */
             locked_lines: string[];
+            /** Timing */
+            timing: components["schemas"]["CarrierBankTiming"][];
         };
         /** CarrierBill */
         CarrierBill: {
@@ -14868,6 +14904,11 @@ export interface components {
             bank_account: string | null;
             /** Original Line */
             original_line: string;
+            /**
+             * Original Bank Date
+             * Format: date
+             */
+            original_bank_date: string;
             /**
              * Eligible From
              * Format: date

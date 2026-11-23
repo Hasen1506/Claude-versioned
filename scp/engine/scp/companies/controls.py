@@ -69,6 +69,8 @@ def authorize(before: dict, after: dict, email: str, *, count_projection: bool =
             kind = appended.get("kind")
             if recorded:
                 required.add("payments" if kind in ("match_bank", "refund_bill", "reverse_bank_cash") else "billing")
+            if kind == "reverse_bank_cash" and appended.get("late_reason"):
+                required.add("period_close")
             if booked:
                 if str(b.get("bill_entered_by") or actor).strip().lower() != actor:
                     raise ValueError("a carrier bill entrant is recorded from the signed-in identity")
