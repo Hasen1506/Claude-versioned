@@ -281,7 +281,7 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
       <button className="btn sm" onClick={show} disabled={busy}>{busy && !asking ? "Working…" : "Show what levelling moves"}</button>
       {on ? <Edits><button className="btn sm ghost" onClick={() => toggle(false)} disabled={busy}>Go back to unlimited capacity</button></Edits>
         : <Edits><button className="btn sm accent" onClick={() => toggle(true)} disabled={busy}>Plan within capacity</button></Edits>}
-      {on && moved.length > 0 && <Edits><button className="btn sm" onClick={() => setAsking(plan.firming_sha256)} disabled={busy || stale || !plan.firming_sha256}
+      {on && moved.length > 0 && <Edits><button className="btn sm" onClick={() => setAsking(plan.firming_sha256 ?? null)} disabled={busy || stale || !plan.firming_sha256}
         title={stale ? "Recalculate the supply plan first" : "Make the moved orders firm production orders at their levelled dates"}>Keep these dates</button></Edits>}
     </div>}>
       <p className="small" style={{ marginTop: 0 }}>{on

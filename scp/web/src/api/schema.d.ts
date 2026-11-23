@@ -12356,7 +12356,7 @@ export interface components {
             /** Planned Again */
             planned_again: number | null;
             /** Firming Sha256 */
-            firming_sha256: string | null;
+            firming_sha256?: string | null;
         };
         /** PlanSummary */
         PlanSummary: {
