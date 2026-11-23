@@ -231,6 +231,7 @@ test("the dinar material trial balance and CSV keep three decimal places", async
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Import a file", exact: true }).click();
   await (await chooser).setFiles({ name: "dinar-stock.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(data)) });
+  await expect(page).toHaveURL(/#\/home$/);
   await page.goto("/#/accounts");
   const balances = page.getByRole("table", { name: "Trial balance" });
   await expect(balances.getByRole("row", { name: /^Stock/ })).toContainText("KWD 2.469");

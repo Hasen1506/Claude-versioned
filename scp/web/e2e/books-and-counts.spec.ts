@@ -177,6 +177,7 @@ test("count-date book starts from the intervening receipt and creates no adjustm
   const file = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Import a file", exact: true }).click();
   await (await file).setFiles({ name: "count-date.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(company)) });
+  await expect(page).toHaveURL(/#\/home$/);
   await page.goto("/#/execution/count");
   await page.getByLabel("Place to count").selectOption("P");
   await page.getByLabel("Count date", { exact: true }).fill("2026-01-05");
