@@ -18,7 +18,7 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
   const [entity, setEntity] = useState("");
   const [account, setAccount] = useState("");
   const [file, setFile] = useState<string>();
-  const [nativeFile, setNativeFile] = useState<string>();
+  const [nativeFiles, setNativeFiles] = useState<string[]>();
   const [lineId, setLineId] = useState("");
   const [date, setDate] = useState(today);
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
@@ -48,7 +48,7 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
   const record = async (event?: CarrierBankEvent, postingDate = date) => {
     setBusy(true); setMessage(undefined);
     try {
-      const reply = await (event ? settlement.post(postingDate, null, "", undefined, event) : settlement.retry(nativeFile));
+      const reply = await (event ? settlement.post(postingDate, null, "", undefined, event) : settlement.retry(nativeFiles));
       const result = reply.result as { report: { message: string } };
       setMessage({ text: result.report.message, error: false });
       setPicked(new Set());
@@ -65,7 +65,7 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
   return <Panel title="Carrier bank statements">
     <CarrierBankAccounts ds={ds} currency={currency} periods={periods} live={settlement.live} editable={editable} record={record} />
     {settlement.live && <CamtStatementImport ds={ds} editable={editable} pending={settlement.pendingBankFile}
-      xml={nativeFile} setXml={setNativeFile} record={record} />}
+      originals={nativeFiles} setOriginals={setNativeFiles} record={record} />}
     {settlement.live && <Edits><details>
       <summary>Import statement CSV</summary>
       <p className="small">Use <code>line,date,reference,amount,currency</code> with ISO dates, unique line IDs, and signed amounts.</p>
@@ -96,7 +96,7 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
           onClick={() => file && record({ kind: "import", company: entity, account: account.trim(), csv: file }, today())}>Import statement</button>
       </div>
     </details></Edits>}
-    {settlement.pending && <Edits><button className="btn sm accent" disabled={busy || (settlement.pendingBankFile && !nativeFile)}
+    {settlement.pending && <Edits><button className="btn sm accent" disabled={busy || (settlement.pendingBankFile && !nativeFiles?.length)}
       onClick={() => record()}>Retry bank statement operation</button></Edits>}
     {message && <p className="small" role={message.error ? "alert" : "status"}>{message.text}</p>}
     {bank.lines.length ? <div className="table-wrap"><table className="t" aria-label="Imported bank statements">

@@ -107,10 +107,10 @@ def protect_accounts(old: Dataset, new: Dataset, command: bool, lines: dict[str,
         if native and period.starts_on < native.starts_on <= period.ends_on:
             raise ValueError("the camt.053 link must start at a statement boundary")
         if period.camt_source:
-            message = (account.id, period.camt_source.message_id)
-            if message in messages:
+            source_messages = {(account.id, identifier) for identifier in period.camt_source.message_ids()}
+            if source_messages & messages:
                 raise ValueError("a camt.053 message identifier can only be retained once per statement account")
-            messages.add(message)
+            messages.update(source_messages)
         previous[period.account] = period
         identifiers.add(period.id)
         owned.update(dict.fromkeys(period.line_ids, period))

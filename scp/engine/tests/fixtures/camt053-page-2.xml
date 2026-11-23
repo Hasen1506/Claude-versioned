@@ -1,0 +1,48 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>SPLIT-MSG-2</MsgId>
+      <CreDtTm>2026-03-03T23:59:58+05:30</CreDtTm>
+      </GrpHdr>
+    <Stmt>
+      <Id>SPLIT-STMT</Id>
+      <StmtPgntn><PgNb>2</PgNb><LastPgInd>true</LastPgInd></StmtPgntn>
+      <ElctrncSeqNb>2026030301</ElctrncSeqNb><FrToDt>
+        <FrDtTm>2026-03-03T00:00:00+05:30</FrDtTm>
+        <ToDtTm>2026-03-03T23:59:59+05:30</ToDtTm>
+      </FrToDt>
+      <Acct>
+        <Id><IBAN>DE89370400440532013000</IBAN></Id>
+        <Ccy>INR</Ccy>
+        <Nm>PRIVATE-FIXTURE-ACCOUNT-NAME</Nm>
+      </Acct>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry><SubTp><Cd>INTM</Cd></SubTp></Tp>
+        <Amt Ccy="INR">159.75</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-03-03</Dt></Dt>
+      </Bal>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="INR">100.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-03-03</Dt></Dt>
+      </Bal>
+      <Ntry>
+        <NtryRef>PAGE-BANK-ENTRY-2</NtryRef>
+        <Amt Ccy="INR">59.75</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-03-03</Dt></BookgDt>
+        <AcctSvcrRef>PAGE-SVCR-2</AcctSvcrRef>
+        <BkTxCd><Prtry><Cd>TRF</Cd><Issr>Fixture bank</Issr></Prtry></BkTxCd>
+        <NtryDtls>
+          <Btch><PmtInfId>WIRE-COMB</PmtInfId><NbOfTxs>1</NbOfTxs></Btch>
+          <TxDtls><Refs><EndToEndId>FO-2-EXTERNAL</EndToEndId></Refs></TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <AddtlStmtInf>PRIVATE-FIXTURE-XML-MARKER</AddtlStmtInf>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

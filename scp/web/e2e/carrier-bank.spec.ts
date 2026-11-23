@@ -225,3 +225,73 @@ test("import original camt.053, reattach the exact bytes after a lost receipt an
   await page.getByRole("button", { name: "Match selected vouchers" }).click();
   await expect(accountReport).toContainText("Reconciled");
 });
+
+test("import every original statement page once and recover after reattaching them in reverse order", async ({ page }) => {
+  test.setTimeout(90_000);
+  await saveCarrierCompany(page, "registered");
+  const files = [1, 2].map((number) => {
+    const name = `camt053-page-${number}.xml`;
+    const xml = readFileSync(new URL(`../../engine/tests/fixtures/${name}`, import.meta.url), "utf-8");
+    const buffer = Buffer.from(xml.replaceAll("2026-03-02", billDate).replaceAll("2026-03-03", paymentDate).replaceAll("WIRE-COMB", "WIRE-GROUP"));
+    return { name, mimeType: "application/xml", buffer };
+  });
+  const hashes = files.map((f) => createHash("sha256").update(f.buffer).digest("hex"));
+  await page.goto("/#/buying/owed");
+  await page.getByText("Import original camt.053 statement", { exact: true }).click();
+  await page.getByLabel("Original statement account").selectOption("BANK-A");
+  const input = page.getByLabel("Original camt.053 file");
+  await input.setInputFiles([...files].reverse());
+  await page.getByRole("button", { name: "Link bank source" }).click();
+  await expect(page.getByText("Linked camt.053 source for BANK-A.")).toBeVisible();
+  const post = page.getByRole("button", { name: "Import original statement", exact: true });
+  await input.setInputFiles(files[0]);
+  await post.click();
+  await expect(page.getByText(/all pages of one split statement/)).toBeVisible();
+
+  const attempts: { id: string; files: string[] }[] = [];
+  await page.route("**/api/companies/*/commands", async (route) => {
+    const payload = route.request().postDataJSON();
+    if (payload.kind === "carrier_bank" && payload.parameters.event.kind === "import_camt_pages") {
+      attempts.push({ id: payload.id, files: payload.parameters.event.files });
+      const response = await route.fetch();
+      expect(response.ok(), await response.text()).toBe(true);
+      expect((await response.json()).duplicate).toBe(attempts.length > 1);
+      if (attempts.length === 1) return route.abort("failed");
+      return route.fulfill({ response });
+    }
+    await route.continue();
+  });
+  await input.setInputFiles(files);
+  await post.click();
+  await expect(page.getByText(/Bank statement operation confirmation is unavailable/)).toBeVisible();
+  const pending = await page.evaluate(() => Object.entries(sessionStorage)
+    .find(([key]) => key.startsWith("scp.carrier-bank.pending.v1:"))?.[1]);
+  for (const hash of hashes) expect(pending).toContain(hash);
+  expect(pending).not.toContain("PRIVATE-FIXTURE-XML-MARKER");
+  await page.reload();
+  const retry = page.getByRole("button", { name: "Retry bank statement operation" });
+  await input.setInputFiles(files[0]);
+  await retry.click();
+  await expect(page.getByText("Choose the exact original camt.053 files to retry.")).toBeVisible();
+  expect(attempts).toHaveLength(1);
+  await input.setInputFiles([...files].reverse());
+  await retry.click();
+  await expect(page.getByText("Imported statement SPLIT-STMT.")).toBeVisible();
+  expect(attempts).toHaveLength(2);
+  expect(attempts[1].id).toBe(attempts[0].id);
+  expect([...attempts[1].files].sort()).toEqual([...attempts[0].files].sort());
+  const table = page.getByRole("table", { name: "Carrier bank account reconciliation" });
+  await expect(table.getByRole("row").filter({ hasText: "SPLIT-STMT" })).toHaveCount(1);
+  await table.getByText("Original camt.053", { exact: true }).click();
+  for (const [index, hash] of hashes.entries()) {
+    await expect(table.getByText(`SPLIT-MSG-${index + 1} · Page ${index + 1}`)).toBeVisible();
+    await expect(table.getByText(hash)).toBeVisible();
+  }
+  for (const number of [1, 2]) {
+    await page.getByRole("button", { name: `PAGE-SVCR-${number}`, exact: true }).click();
+    await page.getByLabel(`Select cash voucher FO-${number}/P-1`).check();
+    await page.getByRole("button", { name: "Match selected vouchers" }).click();
+    await expect(page.getByText(`Matched PAGE-SVCR-${number} to 1 carrier cash vouchers.`)).toBeVisible();
+  }
+  await expect(table).toContainText("Reconciled");
+});

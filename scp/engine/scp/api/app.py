@@ -1409,7 +1409,7 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
     the original result and current company state, even after intervening saves.
     """
     if req.kind == "carrier_bank":
-        from ..carrier_bank import CamtFile, parse_operation, record_bank
+        from ..carrier_bank import CamtFile, CamtFiles, parse_operation, record_bank
         if req.action != "record" or set(req.parameters) != {"event"}:
             raise HTTPException(422, "carrier bank commands require a single event")
         try:
@@ -1420,6 +1420,10 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
             raise HTTPException(422, "invalid carrier bank event: " + "; ".join(problems)) from None
         try:
             receipt = {"event": event.receipt_event()} if isinstance(event, CamtFile) else None
+            if isinstance(event, CamtFiles):
+                canonical, metadata = event.canonical_events()
+                req = req.model_copy(update={"parameters": {"event": canonical}})
+                receipt = {"event": metadata}
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from None
 

@@ -1,5 +1,6 @@
 """Source statement lines and append-only matches to carrier cash vouchers."""
 from datetime import date
+from hashlib import sha256
 from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
@@ -10,6 +11,9 @@ from .common import Id, Model
 BankAccountId = Annotated[str, Field(pattern=r"^[A-Z0-9][A-Z0-9_-]{0,31}$")]
 BankMinor = Annotated[int, Field(strict=True, ge=-999999999999999, le=999999999999999)]
 BankDigest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+CAMT_MAX_PAGES = 20
+CAMT_MAX_BYTES = 256_000
+CamtPageNumber = Annotated[int, Field(strict=True, ge=1, le=CAMT_MAX_PAGES)]
 
 
 class BankAccountOpening(Model):
@@ -45,10 +49,38 @@ class BankStatementHeader(Model):
         return self
 
 
+class CamtOriginal(Model):
+    message_id: str = Field(min_length=1, max_length=35)
+    file_sha256: BankDigest
+    byte_count: int = Field(strict=True, ge=1, le=CAMT_MAX_BYTES)
+    pages: list[CamtPageNumber] = Field(min_length=1, max_length=CAMT_MAX_PAGES)
+
+
 class CamtSourceEvidence(Model):
     format: Literal["camt.053.001.08"] = "camt.053.001.08"
     message_id: str = Field(min_length=1, max_length=35)
-    byte_count: int = Field(strict=True, ge=1, le=256_000)
+    byte_count: int = Field(strict=True, ge=1, le=CAMT_MAX_BYTES)
+    originals: list[CamtOriginal] = Field(default_factory=list, max_length=CAMT_MAX_PAGES, exclude_if=lambda files: not files)
+
+    @model_validator(mode="after")
+    def complete_manifest(self) -> "CamtSourceEvidence":
+        if self.originals:
+            pages = [page for file in self.originals for page in file.pages]
+            if (not 2 <= len(pages) <= CAMT_MAX_PAGES or pages != list(range(1, len(pages) + 1))
+                    or len({file.file_sha256 for file in self.originals}) != len(self.originals)
+                    or (len(self.originals) > 1 and any(len(file.pages) != 1 for file in self.originals))
+                    or sum(file.byte_count for file in self.originals) != self.byte_count
+                    or self.originals[0].message_id != self.message_id):
+                raise ValueError("camt.053 originals must account for every contiguous source page and byte")
+        return self
+
+    def manifest_sha256(self) -> str:
+        if len(self.originals) == 1:
+            return self.originals[0].file_sha256
+        return sha256(b"scp/camt.053/page-set/v1\0" + b"".join(bytes.fromhex(file.file_sha256) for file in self.originals)).hexdigest()
+
+    def message_ids(self) -> set[str]:
+        return {file.message_id for file in self.originals} or {self.message_id}
 
 
 class CarrierBankPeriod(BankStatementHeader):
@@ -56,6 +88,12 @@ class CarrierBankPeriod(BankStatementHeader):
     file_sha256: BankDigest
     line_ids: list[Id] = Field(max_length=500)
     camt_source: CamtSourceEvidence | None = Field(None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def valid_manifest(self) -> "CarrierBankPeriod":
+        if self.camt_source and self.camt_source.originals and self.file_sha256 != self.camt_source.manifest_sha256():
+            raise ValueError("the retained camt.053 checksum must agree with its original files")
+        return self
 
 
 class BankCashRef(Model):
