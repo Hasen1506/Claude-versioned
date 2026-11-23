@@ -16,7 +16,8 @@ permissions:
 
 concurrency:
   group: github-pages
-  cancel-in-progress: true
+  # Let an already submitted Pages deployment finish before starting the next.
+  cancel-in-progress: false
 
 jobs:
   deploy:
