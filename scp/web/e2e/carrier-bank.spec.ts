@@ -390,7 +390,7 @@ test("recover a grouped partial return with changed reference and an included fe
   await expect(page.getByText(`Matched SVCR-${paymentDate} to 2 carrier cash vouchers.`)).toBeVisible();
 
   const returned = original("return").replaceAll("159.75", "100.00").replaceAll("200.00", "148.75")
-    .replaceAll("40.25", "48.75").replace("WIRE-GROUP", "REISSUED-1").replace("<NtryDtls>",
+    .replaceAll("40.25", "48.75").replaceAll("WIRE-GROUP", "REISSUED-1").replace("<NtryDtls>",
       '<Chrgs><TtlChrgsAndTaxAmt Ccy="INR">1.25</TtlChrgsAndTaxAmt><Rcrd><Amt Ccy="INR">1.25</Amt><CdtDbtInd>DBIT</CdtDbtInd><ChrgInclInd>true</ChrgInclInd></Rcrd></Chrgs><NtryDtls>');
   await picker.setInputFiles(file("returned", returned));
   await page.getByRole("button", { name: "Import original statement" }).click();
