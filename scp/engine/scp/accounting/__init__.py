@@ -35,7 +35,7 @@ from xml.sax.saxutils import escape, quoteattr
 from pydantic import Field
 
 from ..actuals.transfer_price import destination, entity_of, party
-from ..actuals.valuation import EPS, run_books
+from ..actuals.valuation import EPS, material_receipt_accruals, run_books
 from ..freight import bank_return_fees, bills_for_order, carrier_bills, freight_company
 from ..model import Dataset, FreightOrder, GoodsMovement, MovementType, SupplierInvoice
 from ..model.transport import CarrierBankMatch, CarrierBillAdjustment
@@ -762,19 +762,10 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
             grir[entity_of(ds, info.location)] -= open_ * at
     if units.digits != 2:
         # Reconcile to the independently dated receipt and reversal records.
-        reversed_qty: dict[str, float] = defaultdict(float)
-        for move in ds.movements:
-            if move.date <= day and move.reversal_of:
-                reversed_qty[move.reversal_of] += abs(move.qty)
-        grir.clear()
-        for move in ds.movements:
-            if (move.date > day or move.reversal_of or move.type is not MovementType.RECEIPT
-                    or move.reference not in b.purchase_lines):
-                continue
-            price = b.purchase_lines[move.reference].base
-            booked = units.minor(units.product(move.qty, price))
-            left = max(0.0, move.qty - reversed_qty[move.id])
-            grir[entity_of(ds, move.location)] -= units.major(units.prorated_minor(booked, left, move.qty))
+        accruals: dict[str, int] = defaultdict(int)
+        for (_, location), amount in material_receipt_accruals(ds, units, lines, through=day).items():
+            accruals[entity_of(ds, location)] -= amount
+        grir = {company: units.major(amount) for company, amount in accruals.items()}
     ic_rec: dict[str, float] = defaultdict(float)
     ic_pay: dict[str, float] = defaultdict(float)
     for inv in ds.intercompany_invoices:

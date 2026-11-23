@@ -25,11 +25,11 @@ from datetime import date, timedelta
 from ..freight import landed_postings
 from ..model import Dataset, GoodsMovement, MovementType, PriceControl
 from ..model.common import Out
-from ..model.currency import material_units
+from ..model.currency import CurrencyUnits, material_units
 from ..network import Node, build_graph
 from ..plan.costing import freight_per_unit, fx, handling, roll_up
 from ..plan.leadtime import supplier_lane
-from ..purchasing.payables import lines_index
+from ..purchasing.payables import LineInfo, lines_index
 from ..model.purchasing import PurchaseValuationBasis, SupplierInvoice
 from .stock import before
 from .transfer_price import crossing, entity_of, price, shipment_prices, source_of
@@ -510,6 +510,32 @@ def _landed(ds: Dataset, lid: str, ln) -> _Line:
     basis = ds.purchase_valuation_by_id.get(lid) or purchase_basis(ds, lid, ln)
     return _Line(price=basis.base * (1.0 + basis.duty) + basis.freight + basis.handling,
                  base=basis.base, duty=basis.duty)
+
+
+def material_receipt_accruals(ds: Dataset, units: CurrencyUnits, lines: dict[str, LineInfo],
+                              through: date | None = None) -> dict[tuple[str, str], int]:
+    """Outstanding GR/IR in minor units by purchase line and receipt location, from material documents."""
+    moves = ds.movements if through is None else [move for move in ds.movements if move.date <= through]
+    reversed_qty: dict[str, float] = defaultdict(float)
+    for move in moves:
+        if move.reversal_of:
+            reversed_qty[move.reversal_of] += abs(move.qty)
+    prices: dict[str, float] = {}
+    amounts: dict[tuple[str, str], int] = defaultdict(int)
+    for move in moves:
+        if move.reversal_of or move.type is not MovementType.RECEIPT or move.reference not in lines:
+            continue
+        lid = move.reference
+        line = lines[lid]
+        if line.price is None:
+            continue
+        if lid not in prices:
+            basis = ds.purchase_valuation_by_id.get(lid) or purchase_basis(ds, lid, line)
+            prices[lid] = basis.base
+        booked = units.minor(units.product(move.qty, prices[lid]))
+        left = max(0.0, move.qty - reversed_qty[move.id])
+        amounts[lid, move.location] += units.prorated_minor(booked, left, move.qty)
+    return amounts
 
 
 WORDS = {MovementType.OPENING: "opening balance", MovementType.RECEIPT: "receipt", MovementType.ISSUE: "issue to production",

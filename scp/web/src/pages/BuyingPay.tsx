@@ -84,7 +84,7 @@ const round2 = (v: number) => Math.round(v * 100) / 100;
 export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Dataset; sel?: string; po?: string }) {
   const pay = res.payables!;
   const nm = namesOf(ds);
-  const waiting = pay.to_invoice.filter((g) => g.qty > 1e-6);
+  const waiting = pay.to_invoice.filter((g) => g.qty > 0);
   const [pick, setPick] = useState<Set<string> | null>(null);
   const chosen = pick ?? new Set(waiting.filter((g) => !po || g.po === po || g.order === po).map((g) => g.order));
   const picked = waiting.filter((g) => chosen.has(g.order));
