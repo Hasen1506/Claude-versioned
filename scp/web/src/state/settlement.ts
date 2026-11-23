@@ -24,6 +24,7 @@ export type CarrierBankEvent = { kind: "import"; company: string; account: strin
   | { kind: "import_period"; account: string; number: string; starts_on: string; ends_on: string;
       opening_minor: number; closing_minor: number; line_count: number; csv: string }
   | { kind: "match"; line: string; version: number; targets: { order: string; voucher: string }[] }
+  | { kind: "reverse_cash"; line: string; original: { order: string; voucher: string } }
   | { kind: "release"; line: string; version: number };
 type SettlementEvent = CarrierEventInput | CarrierBankEvent;
 
@@ -100,8 +101,9 @@ export function useSettlement(kind: SettlementKind, document?: string, order?: s
     if (!userId || store.get().session?.user.id !== userId) throw new Error(`Sign in again before posting the ${label}.`);
     remember(attempt);
     try {
+      const event = "event" in input ? input.event : undefined;
       const reply = await store.postCompanyCommand(companyId, { kind: kind === "transportCredit" || kind === "transportPayment" || billEvent ? "transport" : kind,
-        action: config.action, id: attempt.id, posting_date: date, parameters: input });
+        action: event?.kind === "reverse_cash" ? "reverse_cash" : config.action, id: attempt.id, posting_date: date, parameters: input });
       forget(attempt);
       return reply;
     } catch (error) {

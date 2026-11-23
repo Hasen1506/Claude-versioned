@@ -179,11 +179,13 @@ class CamtEntry:
     reference: str
     date: date
     amount_minor: int
+    reversal: bool
 
 
 def _entry(node: XML.Element, currency: str) -> CamtEntry:
-    if _text(node, "Sts/Cd") != "BOOK" or _text(node, "RvslInd", required=False) not in ("", "false", "0"):
-        raise ValueError("camt.053 requires booked entries without a reversal indicator")
+    indicator = _text(node, "RvslInd", required=False)
+    if _text(node, "Sts/Cd") != "BOOK" or indicator not in ("", "false", "0", "true", "1"):
+        raise ValueError("camt.053 requires booked entries and a valid reversal indicator")
     identifier = _text(node, "AcctSvcrRef", required=False) or _text(node, "NtryRef")
     if identifier.upper() in EMPTY_REFERENCE:
         raise ValueError("camt.053 requires a stable bank entry identifier")
@@ -200,7 +202,7 @@ def _entry(node: XML.Element, currency: str) -> CamtEntry:
     amount = _signed(node, currency)
     if not amount:
         raise ValueError("camt.053 booked entries require a nonzero amount")
-    return CamtEntry(identifier, reference, _day(node, "BookgDt"), amount)
+    return CamtEntry(identifier, reference, _day(node, "BookgDt"), amount, indicator in ("true", "1"))
 
 
 @dataclass(frozen=True)

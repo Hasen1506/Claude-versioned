@@ -149,8 +149,7 @@ def record_event(ds: Dataset, fid: str, voucher: str, request: BillEventInput, d
             raise TransportError("select an active allocation and a date on or after its posting")
         event = original.model_copy(update={"date": day, "reverses": request.reverses})
     else:
-        monetary = [e.date for e in bill.events if isinstance(e, (CarrierBillAdjustment, CarrierRefund))]
-        if day < max([bill.date, *monetary, *(p.date for p in bill.payments)]):
+        if day < bill.latest_monetary_date():
             raise TransportError("the credit or refund cannot precede an existing carrier cash or credit posting")
         if isinstance(request, AdjustBillInput):
             if any(active_landed(order)):

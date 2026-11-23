@@ -39,7 +39,7 @@ def native_file():
     ("<Amt Ccy=\"INR\">100.00</Amt>", "<Amt Ccy=\"USD\">100.00</Amt>", "currency"),
     ("<CdtDbtInd>DBIT</CdtDbtInd>", "<CdtDbtInd>HINT</CdtDbtInd>", "credit or debit"),
     ("<Cd>BOOK</Cd>", "<Cd>PDNG</Cd>", "booked entries"),
-    ("<Sts><Cd>BOOK", "<RvslInd>true</RvslInd><Sts><Cd>BOOK", "reversal"),
+    ("<Sts><Cd>BOOK", "<RvslInd>invalid</RvslInd><Sts><Cd>BOOK", "reversal"),
     ("<BookgDt><Dt>2026-03-03", "<BookgDt><Dt>2026-03-04", "within the statement dates"),
     ("<Amt Ccy=\"INR\">200.00</Amt>", "<Amt Ccy=\"INR\">200.001</Amt>", "two decimals"),
     ("encoding=\"UTF-8\"", "encoding=\"UTF-16\"", "declare UTF-8"),

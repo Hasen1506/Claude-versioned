@@ -22,6 +22,7 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
   const [lineId, setLineId] = useState("");
   const [date, setDate] = useState(today);
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const [originalKey, setOriginalKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean }>();
   const selected = bank.lines.find((line) => line.id === lineId);
@@ -29,11 +30,16 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
   const selectedPeriod = selected && periods.find(({ period }) => period.line_ids.includes(selected.id))?.period;
   const history = selected?.history ?? [];
   const active = history.at(-1)?.targets ?? [];
-  const candidates = selected ? bank.unmatched_cash.filter((cash) => cash.company === selected.company
+  const candidates = selected && !selected.reversal ? bank.unmatched_cash.filter((cash) => cash.company === selected.company
     && (cash.bank_account ?? null) === (selectedPeriod?.account ?? null)
     && (!selectedPeriod || (cash.date >= selectedPeriod.starts_on && cash.date <= selectedPeriod.ends_on))
     && Math.sign(cash.amount_minor) === Math.sign(selected.amount_minor)
     && cash.reference.toLowerCase() === selected.reference.toLowerCase()) : [];
+  const originals = selected?.reversal ? (bank.reversible_cash ?? []).filter((cash) => cash.company === selected.company
+    && cash.bank_account === selected.account && cash.eligible_from <= selected.date
+    && cash.amount_minor === -selected.amount_minor && cash.reference.toLowerCase() === selected.reference.toLowerCase()) : [];
+  const original = originals.find((cash) => cashKey(cash) === originalKey);
+  const locked = !!selected && (bank.locked_lines ?? []).includes(selected.id);
   const selectedCash = candidates.filter((cash) => picked.has(cashKey(cash)));
   const total = selectedCash.reduce((sum, cash) => sum + cash.amount_minor, 0);
   const earliest = selected ? [history.at(-1)?.date ?? selected.date, ...selectedCash.map((cash) => cash.date)].sort().at(-1) ?? "" : "";
@@ -42,6 +48,7 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
   const choose = (line: Line) => {
     setLineId(line.id);
     setPicked(new Set());
+    setOriginalKey("");
     const first = line.history?.at(-1)?.date ?? line.date;
     setDate(today() < first ? first : today());
   };
@@ -52,6 +59,7 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
       const result = reply.result as { report: { message: string } };
       setMessage({ text: result.report.message, error: false });
       setPicked(new Set());
+      setOriginalKey("");
       if (event?.kind === "import") setFile(undefined);
       await store.run("purchasing");
     } catch (error) {
@@ -105,12 +113,23 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
         <td><button className="btn sm ghost" onClick={() => choose(line)}>{line.statement_line}</button></td>
         <td>{companyName(line.company)}</td><td>{line.account}</td><td>{day(line.date)}</td><td>{line.reference}</td>
         <td className="num">{exactMoney(line.amount_minor / 100, currency)}</td>
-        <td>{line.history?.at(-1)?.targets.length ? `Matched (${line.history.at(-1)?.targets.length})` : "Unmatched"}</td>
+        <td>{line.reversal ? (line.history?.length ? "Reversal posted" : "Bank reversal to review") :
+          (line.history?.at(-1)?.targets.length ? `Matched (${line.history.at(-1)?.targets.length})` : "Unmatched")}</td>
       </tr>)}</tbody>
     </table></div> : <Empty title="No imported statement lines" />}
     {selected && <section className="stack">
       <h4>{selected.statement_line} · {selected.account}{selectedPeriod && ` · ${selectedPeriod.number}`}</h4>
-      {active.length ? <ul>{active.map((item) => <li key={JSON.stringify(item)}>{item.voucher}</li>)}</ul> : <>
+      {active.length ? <ul>{active.map((item) => <li key={JSON.stringify(item)}>{item.voucher}</li>)}</ul> :
+        selected.reversal ? <>
+          <p className="small">The reversal posts on {day(selected.date)} and reopens the carrier balance. Verify the original payment or refund against the bank statement.</p>
+          {originals.length ? <Edits><label>Original cash voucher <select className="input" value={originalKey} disabled={!editable}
+            onChange={(e) => setOriginalKey(e.target.value)}>
+            <option value="">Choose the original payment or refund</option>
+            {originals.map((cash) => <option key={cashKey(cash)} value={cashKey(cash)}>
+              {cash.voucher} · {cash.carrier} · {cash.original_line} · {exactMoney(cash.amount_minor / 100, currency)}
+            </option>)}
+          </select></label></Edits> : <p className="small">No individually matched carrier voucher has the same account, reference and opposite amount.</p>}
+        </> : <>
         {candidates.length ? <Edits>{candidates.map((cash) => <label className="row" key={cashKey(cash)}>
           <input type="checkbox" checked={picked.has(cashKey(cash))} aria-label={`Select cash voucher ${cash.voucher}`}
             onChange={(e) => setPicked((before) => {
@@ -122,13 +141,18 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
         </label>)}</Edits> : <p className="small">No unmatched carrier vouchers share this bank reference and direction.</p>}
         {!!selectedCash.length && <p className="small">Selected {exactMoney(total / 100, currency)} of {exactMoney(selected.amount_minor / 100, currency)}</p>}
       </>}
-      {settlement.live && <Edits><div className="row wrap" style={{ gap: 8 }}>
+      {locked && <p className="small">This allocation is retained with the posted bank reversal.</p>}
+      {settlement.live && !locked && <Edits><div className="row wrap" style={{ gap: 8 }}>
+        {selected.reversal ? <button className="btn sm accent" disabled={!editable || !original}
+          onClick={() => original && record({ kind: "reverse_cash", line: selected.id,
+            original: { order: original.order, voucher: original.voucher } }, selected.date)}>Record bank reversal</button> : <>
         <label>Reconciliation date <input className="input" type="date" min={earliest} value={date} onChange={(e) => setDate(e.target.value)} /></label>
         {active.length ? <button className="btn sm" disabled={!editable || !date || date < earliest}
           onClick={() => record({ kind: "release", line: selected.id, version: history.length })}>Release allocation</button>
           : <button className="btn sm accent" disabled={!editable || !date || date < earliest || !selectedCash.length || total !== selected.amount_minor}
             onClick={() => record({ kind: "match", line: selected.id, version: history.length,
               targets: selectedCash.map(({ order, voucher }) => ({ order, voucher })) })}>Match selected vouchers</button>}
+        </>}
       </div></Edits>}
       {!!history.length && <details><summary>Statement history</summary><ol>{history.map((entry, index) =>
         <li key={index}>{day(entry.date)} · {entry.targets.length ? entry.targets.map((item) => item.voucher).join(", ") : "Released"}</li>)}</ol></details>}

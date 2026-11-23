@@ -118,6 +118,7 @@ class CarrierBankLine(Model):
     reference: str = Field(min_length=1, max_length=64)
     amount_minor: BankMinor
     currency: str = Field(pattern=r"^[A-Z]{3}$")
+    reversal: bool = Field(False, strict=True, exclude_if=lambda value: not value)
     history: list[BankMatchEvent] = Field(default_factory=list)
 
     def source_key(self) -> tuple[str, str, str]:

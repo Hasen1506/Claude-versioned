@@ -68,16 +68,16 @@ def authorize(before: dict, after: dict, email: str, *, count_projection: bool =
             appended = events[-1] if recorded and isinstance(events, list) and events and isinstance(events[-1], dict) else {}
             kind = appended.get("kind")
             if recorded:
-                required.add("payments" if kind in ("match_bank", "refund_bill") else "billing")
+                required.add("payments" if kind in ("match_bank", "refund_bill", "reverse_bank_cash") else "billing")
             if booked:
                 if str(b.get("bill_entered_by") or actor).strip().lower() != actor:
                     raise ValueError("a carrier bill entrant is recorded from the signed-in identity")
                 newly_billed.add(b.get("id"))
             if booked or credited:
                 required.add("billing")
-            if paid or kind == "refund_bill":
+            if paid or kind in ("refund_bill", "reverse_bank_cash"):
                 required.add("payments")
-                if finance.get("separate_payments") and (b.get("bill_payments") or kind == "refund_bill"):
+                if finance.get("separate_payments") and (b.get("bill_payments") or kind in ("refund_bill", "reverse_bank_cash")):
                     entrant = str(a.get("bill_entered_by") or "").lower()
                     if not entrant:
                         raise ValueError("legacy carrier bill has no recorded entrant; reconcile it before payment")

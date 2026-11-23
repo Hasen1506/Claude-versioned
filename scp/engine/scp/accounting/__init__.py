@@ -504,11 +504,15 @@ class _Journal:
                     if isinstance(event, CarrierBillAdjustment) and event.date <= day:
                         self._freight(fo, event.date, f"{bill.voucher}/C-{index}", -event.amount_minor / 100,
                                       event.reference, reversal_of=bill.voucher)
+                reversals = dict(bill.reversals())
                 for voucher, cash_date, reference, minor, account in bill.cash():
                     if cash_date <= day:
                         verb = "refund" if minor > 0 else "payment"
+                        reversal = reversals.get(voucher)
+                        narration = (f"carrier bank reversal {reference} of {reversal.reverses}" if reversal else
+                                     f"carrier {verb} {reference} against {bill.voucher}")
                         self._post(cash_date, voucher, "Receipt" if minor > 0 else "Payment", fo.id,
-                                   f"carrier {verb} {reference} against {bill.voucher}",
+                                   narration,
                                    [("PAYABLES", bill.company, bill.carrier, -minor / 100, "", ""),
                                     ("BANK", bill.company, "", minor / 100, "", "")], "SUSPENSE", bank_account=account)
 
