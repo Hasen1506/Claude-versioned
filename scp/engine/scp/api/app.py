@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Field, ValidationError
 
-from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 
@@ -1551,6 +1551,9 @@ class PromoteRequest(Out):
     note: str = ""
 
 
+ScenarioIfMatch = Annotated[str | None, Header(pattern=r'^"[a-f0-9]{64}"$')]
+
+
 class CompareRequest(Out):
     a: Dataset
     b: Dataset
@@ -1574,8 +1577,8 @@ def get_version(vid: str, sc: StoredScope) -> VersionDoc:
 
 
 @app.put("/api/versions/{vid}", response_model=VersionMeta)
-def update_version(vid: str, ds: Dataset, sc: StoredEditScope) -> VersionMeta:
-    return get_store().update(vid, ds, sc)
+def update_version(vid: str, ds: Dataset, sc: StoredEditScope, if_match: ScenarioIfMatch = None) -> VersionMeta:
+    return get_store().update(vid, ds, sc, expected_sha256=if_match[1:-1] if if_match else None)
 
 
 @app.post("/api/versions/{vid}/branch", response_model=VersionMeta)
@@ -1656,13 +1659,13 @@ def work_item_history(iid: str, sc: StoredScope) -> list[WorkItemEntry]:
 
 
 @app.post("/api/versions/{vid}/discard", response_model=VersionMeta)
-def discard_version(vid: str, sc: StoredEditScope) -> VersionMeta:
-    return get_store().discard(vid, sc)
+def discard_version(vid: str, sc: StoredEditScope, if_match: ScenarioIfMatch = None) -> VersionMeta:
+    return get_store().discard(vid, sc, expected_sha256=if_match[1:-1] if if_match else None)
 
 
 @app.post("/api/versions/{vid}/promote", response_model=VersionMeta)
-def promote_version(vid: str, req: PromoteRequest, sc: StoredEditScope) -> VersionMeta:
-    return get_store().promote(vid, req.name, req.note, sc)
+def promote_version(vid: str, req: PromoteRequest, sc: StoredEditScope, if_match: ScenarioIfMatch = None) -> VersionMeta:
+    return get_store().promote(vid, req.name, req.note, sc, expected_sha256=if_match[1:-1] if if_match else None)
 
 
 @app.get("/api/versions/{a}/compare/{b}", response_model=Comparison)

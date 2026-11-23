@@ -227,3 +227,33 @@ test('a delayed branch document cannot replace or detach a different live server
   await expect(page.locator('.save-chip .save-long')).toHaveText(/^Saved/);
   await page.screenshot({path:test.info().outputPath('live-company-b-after-delayed-branch.png'),fullPage:true});
 });
+
+test("a collaborator's edit cannot be promoted from an older working copy", async ({ page }) => {
+  await open(page);
+  const base = await saveBase(page);
+  const variant = await scenario(page, base);
+  let changed = false;
+  await page.route(`**/api/versions/${variant}/promote`, async (route) => {
+    if (changed) return route.continue();
+    changed = true;
+    const request = route.request();
+    const key = (await request.allHeaders())["x-browser-key"];
+    const url = request.url().replace(/\/promote$/, "");
+    const headers = { "X-Browser-Key": key };
+    const earlier = await (await page.request.get(url, { headers })).json();
+    expect((await request.allHeaders())["if-match"]).toBe(JSON.stringify(earlier.meta.sha256));
+    earlier.dataset.location_products[0].on_hand = 67;
+    const updated = await page.request.put(url, { headers: { ...headers, "If-Match": JSON.stringify(earlier.meta.sha256) },
+      data: earlier.dataset });
+    expect(updated.ok()).toBeTruthy();
+    await route.fulfill({ response: await route.fetch() });
+  });
+  await page.getByRole("button", { name: `Promote ${variant}`, exact: true }).click();
+  await expect(page.getByText(/the scenario changed; open the saved scenario and review it again/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: `Promote ${variant}`, exact: true })).toBeVisible();
+  await page.getByRole("button", { name: `Open ${variant}`, exact: true }).click();
+  await page.getByRole("button", { name: `Promote ${variant}`, exact: true }).click();
+  await expect(page.getByRole("button", { name: `Promote ${variant}`, exact: true })).toHaveCount(0);
+  await page.goto("/#/data/location_products/P%7CA");
+  await expect(page.locator("#on_hand")).toHaveValue("67");
+});

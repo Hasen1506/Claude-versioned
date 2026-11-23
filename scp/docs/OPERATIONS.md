@@ -38,7 +38,13 @@ The response's `revision` identifies the original completed command. Its `compan
 
 `GET /api/companies/{company}/commands?id=bank-event-7297` reconciles completion without issuing another mutation. The receipt retains the original parameters, business date, result, actor, request hash, revision and build commit. Company membership and any required second sign-in step protect this read. The account-data export includes the account's own commands; database backups and migrations include receipts.
 
-The typed browser API client exposes `companyCommand` and `companyCommandRecord`. Existing planning/scenario action APIs and the browser's preview/edit/save workflow remain compatible. Their company saves continue to enforce transaction rules. The new endpoint provides an authoritative operation contract for live integrations; its existence does not imply that every legacy screen has been migrated to command execution.
+The typed browser API client exposes `companyCommand` and `companyCommandRecord`. Planning previews and workstation edits still use the preview/edit/save workflow. Their company saves continue to enforce transaction rules. The new endpoint provides an authoritative operation contract for live integrations; its existence does not imply that every legacy screen has been migrated to command execution.
+
+### Shared scenario revisions
+
+Read the scenario's `meta.sha256` from `GET /api/versions/{id}`. Updating, discarding or promoting an active scenario requires that SHA-256 as a quoted `If-Match` value. A missing value returns 428. A stale value returns 412. Reopen the scenario to review a collaborator's changes. To retain an older browser working copy with unsaved edits, use **Save as new scenario** before reopening.
+
+A promotion creates an immutable base from the reviewed contents. Only the first promotion from an active base succeeds. A sibling from a superseded base can still be reviewed, but its promotion returns 409. Start from the successor base and review the desired assumptions again. Stored version promotion and applying changes to the live operational company are independent actions.
 
 Live settlements use `sales/pay` for customer receipts and refunds and `purchasing/pay_invoice` for supplier payments and refunds. The UI confirms after the server commits. If confirmation is lost, reopen the invoice or credit note in the same tab and select **Retry payment**. This reuses the original command ID, posting date, amount and reference, even if the invoice already shows as settled. If the tab is gone, reconcile the document and command receipt before entering another payment. Bank integrations should derive the command ID from the source transaction and allocation identity. The displayed bank reference is descriptive, and the app records the accounting event.
 

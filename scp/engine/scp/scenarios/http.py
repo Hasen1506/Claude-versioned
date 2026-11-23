@@ -132,17 +132,20 @@ class HttpClient:
     def branch(self, vid: str, name: str, note: str = "") -> VersionMeta:
         return self._post(f"/api/versions/{vid}/branch", {"name": name, "note": note}, VersionMeta)
 
-    def update_version(self, vid: str, ds: Dataset) -> VersionMeta:
-        return VersionMeta.model_validate(self._json(self.s.put(f"/api/versions/{vid}", json=_ds(ds))))
+    def update_version(self, vid: str, ds: Dataset, sha256: str) -> VersionMeta:
+        return VersionMeta.model_validate(self._json(self.s.put(
+            f"/api/versions/{vid}", json=_ds(ds), headers={"If-Match": f'"{sha256}"'})))
 
     def get_version(self, vid: str) -> VersionDoc:
         return VersionDoc.model_validate(self._json(self.s.get(f"/api/versions/{vid}")))
 
-    def discard(self, vid: str) -> VersionMeta:
-        return self._post(f"/api/versions/{vid}/discard", None, VersionMeta)
+    def discard(self, vid: str, sha256: str) -> VersionMeta:
+        return VersionMeta.model_validate(self._json(self.s.post(
+            f"/api/versions/{vid}/discard", headers={"If-Match": f'"{sha256}"'})))
 
-    def promote(self, vid: str, name: str | None = None) -> VersionMeta:
-        return self._post(f"/api/versions/{vid}/promote", {"name": name}, VersionMeta)
+    def promote(self, vid: str, sha256: str, name: str | None = None) -> VersionMeta:
+        return VersionMeta.model_validate(self._json(self.s.post(
+            f"/api/versions/{vid}/promote", json={"name": name}, headers={"If-Match": f'"{sha256}"'})))
 
     def compare_versions(self, a: str, b: str) -> Comparison:
         return Comparison.model_validate(self._json(self.s.get(f"/api/versions/{a}/compare/{b}")))

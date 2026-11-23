@@ -559,13 +559,19 @@ export const api = {
   version: (id: string) => call<VersionDoc>(`/api/versions/${encodeURIComponent(id)}`),
   saveBase: (dataset: Dataset, name: string, note = "") =>
     call<VersionMeta>("/api/versions", { method: "POST", body: JSON.stringify({ dataset, name, note }) }),
-  saveVersion: (id: string, dataset: Dataset) =>
-    call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(dataset) }),
+  saveVersion: (id: string, dataset: Dataset, sha256: string) =>
+    call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}`, {
+      method: "PUT", headers: { "If-Match": JSON.stringify(sha256) }, body: JSON.stringify(dataset),
+    }),
   branch: (id: string, name: string, note = "") =>
     call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/branch`, { method: "POST", body: JSON.stringify({ name, note }) }),
-  discard: (id: string) => call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/discard`, { method: "POST" }),
-  promote: (id: string, name?: string) =>
-    call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, { method: "POST", body: JSON.stringify({ name: name ?? null }) }),
+  discard: (id: string, sha256: string) => call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/discard`, {
+    method: "POST", headers: { "If-Match": JSON.stringify(sha256) },
+  }),
+  promote: (id: string, sha256: string) =>
+    call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, {
+      method: "POST", headers: { "If-Match": JSON.stringify(sha256) }, body: "{}",
+    }),
   compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`).then(done("whatif")),
   /** The monthly S&OP cycle (enterprise 4.1): its steps are signed in order, each freezing the company. */
   cycles: () => call<CycleSummary[]>("/api/sop/cycles"),

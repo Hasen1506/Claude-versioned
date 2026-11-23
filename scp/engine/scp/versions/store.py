@@ -18,6 +18,7 @@ from pathlib import Path
 from ..dblock import StoreLock
 from ..model import Dataset
 from ..model.common import Out
+from ..transactions import atomic
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS versions (
@@ -93,6 +94,13 @@ def canonical(ds: Dataset) -> str:
 
 def sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _require_reviewed_content(row: sqlite3.Row, expected_sha256: str | None) -> None:
+    if expected_sha256 is None:
+        raise VersionError("send the scenario's reviewed SHA-256 in If-Match", 428)
+    if row["sha256"] != expected_sha256:
+        raise VersionError("the scenario changed; open the saved scenario and review it again", 412)
 
 
 def _now() -> str:
@@ -187,28 +195,29 @@ class Store:
 
     # ---- actions ------------------------------------------------------------------------------------
     def save_base(self, ds: Dataset, name: str, note: str = "", scope: str = "") -> VersionMeta:
-        with self.lock:
+        with self.lock, atomic(self.db):
             vid = self._insert(ds, name, "base", None, note, scope)
             self._log(vid, "created", "base version")
             return self._meta(self._row(vid))
 
     def branch(self, parent: str, name: str, note: str = "", scope: str | None = None) -> VersionMeta:
-        with self.lock:
+        with self.lock, atomic(self.db):
             p = self._row(parent, scope)
             if p["status"] == "discarded":
                 raise VersionError(f"{parent} is discarded")
             vid = self._insert(Dataset.model_validate_json(p["dataset"]), name, "scenario", parent, note, p["scope"])
-            self._log(vid, "branched", f"from {parent}")
+            self._log(vid, "branched", f"from {parent} at {p['sha256']}")
             self._log(parent, "branched", f"to {vid}")
             return self._meta(self._row(vid))
 
-    def update(self, vid: str, ds: Dataset, scope: str | None = None) -> VersionMeta:
-        with self.lock:
+    def update(self, vid: str, ds: Dataset, scope: str | None = None, *, expected_sha256: str | None = None) -> VersionMeta:
+        with self.lock, atomic(self.db):
             r = self._row(vid, scope)
             if r["kind"] != "scenario":
                 raise VersionError(f"{vid} is a base version: base versions are immutable — branch a scenario to change it")
             if r["status"] != "active":
                 raise VersionError(f"{vid} is {r['status']}")
+            _require_reviewed_content(r, expected_sha256)
             text = canonical(ds)
             if text == r["dataset"]:
                 return self._meta(r)
@@ -218,40 +227,37 @@ class Store:
             self._log(vid, "saved", sha(text)[:12])
             return self._meta(self._row(vid))
 
-    def discard(self, vid: str, scope: str | None = None) -> VersionMeta:
-        with self.lock:
+    def discard(self, vid: str, scope: str | None = None, *, expected_sha256: str | None = None) -> VersionMeta:
+        with self.lock, atomic(self.db):
             r = self._row(vid, scope)
             if r["kind"] != "scenario":
                 raise VersionError(f"{vid} is a base version and cannot be discarded")
             if r["status"] != "active":
                 raise VersionError(f"{vid} is already {r['status']}")
+            _require_reviewed_content(r, expected_sha256)
             self.db.execute("UPDATE versions SET status = 'discarded', updated_at = ? WHERE id = ?", (_now(), vid))
             self._log(vid, "discarded")
             return self._meta(self._row(vid))
 
-    def promote(self, vid: str, name: str | None = None, note: str = "", scope: str | None = None) -> VersionMeta:
+    def promote(self, vid: str, name: str | None = None, note: str = "", scope: str | None = None, *,
+                expected_sha256: str | None = None) -> VersionMeta:
         """A scenario becomes the new base: a new immutable base version with the scenario's content. The
         base it descends from is marked superseded (its content is untouched)."""
-        with self.lock:
+        with self.lock, atomic(self.db):
             r = self._row(vid, scope)
             if r["kind"] != "scenario" or r["status"] != "active":
                 raise VersionError(f"only an active scenario can be promoted ({vid} is a {r['status']} {r['kind']})")
-            self.db.execute("BEGIN")
-            try:
-                new = self._insert(Dataset.model_validate_json(r["dataset"]), name or r["name"], "base", vid,
-                                   note or f"promoted from scenario {vid}", r["scope"])
-                self.db.execute("UPDATE versions SET status = 'promoted', updated_at = ? WHERE id = ?", (_now(), vid))
-                root = self._base_of(vid)
-                if root:
-                    self.db.execute("UPDATE versions SET status = 'superseded', updated_at = ? WHERE id = ? AND "
-                                    "status = 'active'", (_now(), root))
-                    self._log(root, "superseded", f"by {new}")
-                self._log(vid, "promoted", f"to {new}")
-                self._log(new, "created", f"promoted from {vid}")
-                self.db.execute("COMMIT")
-            except Exception:
-                self.db.execute("ROLLBACK")
-                raise
+            _require_reviewed_content(r, expected_sha256)
+            root = self._base_of(vid)
+            if root is None or self._row(root, scope)["status"] != "active":
+                raise VersionError("the scenario's base was superseded; review the scenario against the current base")
+            new = self._insert(Dataset.model_validate_json(r["dataset"]), name or r["name"], "base", vid,
+                               note or f"promoted from scenario {vid}", r["scope"])
+            self.db.execute("UPDATE versions SET status = 'promoted', updated_at = ? WHERE id = ?", (_now(), vid))
+            self.db.execute("UPDATE versions SET status = 'superseded', updated_at = ? WHERE id = ?", (_now(), root))
+            self._log(root, "superseded", f"by {new}")
+            self._log(vid, "promoted", f"to {new} at {r['sha256']}")
+            self._log(new, "created", f"promoted from {vid} at {r['sha256']}")
             return self._meta(self._row(new))
 
     def _base_of(self, vid: str) -> str | None:

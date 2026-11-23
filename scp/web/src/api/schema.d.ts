@@ -24743,7 +24743,9 @@ export interface operations {
     update_version_api_versions__vid__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "if-match"?: string | null;
+            };
             path: {
                 vid: string;
             };
@@ -24978,7 +24980,9 @@ export interface operations {
     discard_version_api_versions__vid__discard_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "if-match"?: string | null;
+            };
             path: {
                 vid: string;
             };
@@ -25009,7 +25013,9 @@ export interface operations {
     promote_version_api_versions__vid__promote_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "if-match"?: string | null;
+            };
             path: {
                 vid: string;
             };

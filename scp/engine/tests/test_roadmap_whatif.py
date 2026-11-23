@@ -273,7 +273,7 @@ def test_a_winning_scenario_is_kept_as_a_stored_scenario_of_the_base():
                                              "chips": [{"kind": "demand", "pct": 20}]}).json()
     assert again["base"] is None and again["version"]["parent_id"] == base["id"]
     # the scenario is a version like any other: it can be promoted
-    p = c.post(f"/api/versions/{scen['id']}/promote", json={"name": None})
+    p = c.post(f"/api/versions/{scen['id']}/promote", json={"name": None}, headers={"If-Match": f'"{scen["sha256"]}"'})
     assert p.status_code == 200, p.text
     none = c.post("/api/whatif/keep", json={"base": d, "label": "Nothing", "chips": []})
     assert none.status_code == 422
