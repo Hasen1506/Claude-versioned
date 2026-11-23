@@ -954,7 +954,7 @@ def purchasing_view(ds: Dataset, plan: PlanResult) -> PurchasingView:
         confirmations_overdue=sum(any(a.startswith("confirmation overdue") for a in p.attention) for p in orders),
         late_lines=sum(1 for p in live for x in p.lines if not x.closed and x.open > EPS and x.days_late > 0),
         blocked_invoices=pay.blocked, payables_overdue=pay.overdue_value,
-        to_invoice=sum(1 for x in pay.to_invoice if x.qty > EPS))
+        to_invoice=sum(1 for x in pay.to_invoice if x.qty > 0))
     vendors = vendor_rows(ds, orders)
     from .spend import spend_view
     return PurchasingView(ok=plan.ok, as_of=as_of, currency=ds.settings.currency,

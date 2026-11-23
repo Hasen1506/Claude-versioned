@@ -30,7 +30,9 @@ from ..model import (
     SupplierInvoiceLine, SupplierReturn,
 )
 from ..plan.costing import contract_for, fx
-from ..model.currency import CurrencyPrecisionError, require_posting_currency
+from ..model.currency import (
+    MATERIAL_CURRENCIES, CurrencyPrecisionError, CurrencyUnits, require_material_ledger, require_posting_currency,
+)
 from .result import (
     ActionReport, ContractLineView, ContractView, InvoiceLineView, PayableRow, PayablesView, SupplierInvoiceView,
     SupplierReturnView, ToInvoice,
@@ -231,19 +233,37 @@ def still_blocked(ds: Dataset, inv: SupplierInvoice) -> list[str]:
     return price + _quantity_blocks(inv.lines, got, billed)
 
 
-def to_invoice(ds: Dataset) -> list[ToInvoice]:
+def _accrual_units(ds: Dataset) -> CurrencyUnits:
+    if ds.settings.currency in MATERIAL_CURRENCIES:
+        try:
+            return require_material_ledger(ds)
+        except CurrencyPrecisionError:
+            # Purchasing still provides its estimates for draft and planning-only datasets.
+            pass
+    return CurrencyUnits()
+
+
+def to_invoice(ds: Dataset, *, units: CurrencyUnits | None = None) -> list[ToInvoice]:
+    units = _accrual_units(ds) if units is None else units
     got, billed, last = received(ds), invoiced(ds), _last_receipt(ds)
-    refs = {lid for lid in set(got) | set(billed) if abs(got.get(lid, 0.0) - billed.get(lid, 0.0)) > EPS}
+    minimum = EPS if units.digits == 2 else EPS / 2  # retain the smallest recorded material quantity
+    refs = {lid for lid in set(got) | set(billed) if abs(got.get(lid, 0.0) - billed.get(lid, 0.0)) > minimum}
     index = lines_index(ds, refs)
+    accruals: dict[str, int] = defaultdict(int)
+    if units.digits != 2:
+        from ..actuals.valuation import material_receipt_accruals
+        for (lid, _), amount in material_receipt_accruals(ds, units, index).items():
+            accruals[lid] += amount
     out = []
     for lid in sorted(refs):
         q = got.get(lid, 0.0) - billed.get(lid, 0.0)
         li = index.get(lid)
         if li is None:
             continue            # a production order or transfer
+        value = round(q * (li.price or 0.0), 2) if units.digits == 2 else units.major(accruals[lid])
         out.append(ToInvoice(order=lid, po=li.po, supplier=li.supplier, product=li.product, location=li.location,
                              received=got.get(lid, 0.0), invoiced=billed.get(lid, 0.0), qty=q, price=li.price,
-                             value=round(q * (li.price or 0.0), 2), currency=li.currency, last_receipt=last.get(lid)))
+                             value=value, currency=li.currency, last_receipt=last.get(lid)))
     return out
 
 
@@ -710,7 +730,8 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
     order = {"blocked": 0, "to pay": 1, "released": 1, "credit open": 2, "paid": 3, "credited": 4, "cancelled": 5}
     invs.sort(key=lambda x: (order[x.status], x.due_date, x.id))
     freight = sorted(carrier_bills(ds), key=lambda b: (not b.open, b.due_on, b.order, b.voucher))
-    gr = to_invoice(ds)
+    units = _accrual_units(ds)
+    gr = to_invoice(ds, units=units)
     rows: dict[str, PayableRow] = {}
 
     def row(sup: str) -> PayableRow:
@@ -738,8 +759,9 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
             if x.status != "blocked" and (r.next_due is None or x.due_date < r.next_due):
                 r.next_due = x.due_date
     for g in gr:
-        if g.qty > EPS:
-            row(g.supplier).not_invoiced += g.value * fx(ds, g.currency if g.currency != ds.settings.currency else None)
+        if g.qty > 0:
+            r = row(g.supplier)
+            r.not_invoiced = units.add(r.not_invoiced, g.value * fx(ds, g.currency))
     carriers: dict[tuple[str, str], PayableRow] = {}
     for bill in freight:
         if not bill.open:
@@ -761,8 +783,9 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
             r.next_due = bill.due_on
     payables = [*rows.values(), *carriers.values()]
     for r in payables:
-        for f in ("open", "overdue", "due_soon", "blocked", "not_invoiced"):
+        for f in ("open", "overdue", "due_soon", "blocked"):
             setattr(r, f, round(getattr(r, f), 2))
+        r.not_invoiced = units.amount(r.not_invoiced)
     payables.sort(key=lambda r: (-r.overdue, -r.open, r.supplier, r.company))
     rets = []
     cms = {i.id: i for i in ds.supplier_invoices if not i.cancelled}
@@ -776,12 +799,14 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
                                        location=r.location, qty=r.qty, date=r.date, reason=r.reason, replace=r.replace,
                                        stock_type=r.stock_type.value, batch=r.batch, status=status,
                                        credit_memo=r.credit_memo))
+    not_invoiced = (round(sum(r.not_invoiced for r in payables), 2) if units.digits == 2 else
+                    units.major(sum(units.minor(r.not_invoiced) for r in payables)))
     return PayablesView(
         invoices=invs, carrier_bills=freight, carrier_bank=bank_view(ds, freight), to_invoice=gr, payables=payables,
         contracts=contract_views(ds, as_of), returns=rets,
         blocked=sum(x.status == "blocked" for x in invs),
         open_value=round(sum(r.open for r in payables), 2), overdue_value=round(sum(r.overdue for r in payables), 2),
-        not_invoiced_value=round(sum(r.not_invoiced for r in payables), 2))
+        not_invoiced_value=not_invoiced)
 
 
 __all__ = [

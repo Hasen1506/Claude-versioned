@@ -213,7 +213,7 @@ test("the accounts downloads retain two registered bank destinations", async ({ 
   expect(csv).toMatch(/FO-2\/P-1.*E1,BANK-B/);
 });
 
-test("the dinar material trial balance and CSV keep three decimal places", async ({ page }) => {
+test("the dinar purchasing accrual, material trial balance and CSV keep three decimal places", async ({ page }) => {
   const data = {
     settings: { company_name: "Dinar inventory", currency: "KWD", planning_start: "2026-01-05", horizon_days: 28,
       default_calendar: "CAL" },
@@ -232,6 +232,9 @@ test("the dinar material trial balance and CSV keep three decimal places", async
   await page.getByRole("button", { name: "Import a file", exact: true }).click();
   await (await chooser).setFiles({ name: "dinar-stock.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(data)) });
   await expect(page).toHaveURL(/#\/home$/);
+  await page.goto("/#/buying/owed");
+  const accrued = page.locator(".tile").filter({ hasText: "Received, not invoiced" });
+  await expect(accrued.getByText("KWD 2.469", { exact: true })).toBeVisible();
   await page.goto("/#/accounts");
   const balances = page.getByRole("table", { name: "Trial balance" });
   await expect(balances.getByRole("row", { name: /^Stock/ })).toContainText("KWD 2.469");

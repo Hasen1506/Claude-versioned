@@ -47,7 +47,22 @@ def test_material_currency_receipt_and_partial_reversals_reconcile_to_the_receip
         assert rows.get("GRIR", 0) == -Decimal(expected)
         assert set(rows) <= {"STOCK", "GRIR"}
 
+    def assert_accrual(data, expected):
+        result = client.post("/api/purchasing", json=data.model_dump(mode="json"))
+        assert result.status_code == 200, result.text
+        payables = result.json()["payables"]
+        assert Decimal(str(payables["not_invoiced_value"])) == Decimal(expected)
+        if Decimal(expected):
+            [order] = payables["to_invoice"]
+            [supplier] = payables["payables"]
+            assert order["order"] == "PO-1-10" and supplier["supplier"] == "S"
+            assert Decimal(str(order["value"])) == Decimal(expected)
+            assert Decimal(str(supplier["not_invoiced"])) == Decimal(expected)
+        else:
+            assert payables["to_invoice"] == []
+
     assert_books(current, date(2026, 1, 6), booked)
+    assert_accrual(current, booked)
     for revision, day in enumerate((date(2026, 1, 7), date(2026, 1, 8)), start=2):
         reversal = original.model_copy(update={"id": f"REV-{revision}", "qty": 1, "date": day, "final": False,
                                                "doc": f"MD-REV-{revision}", "reversal_of": original.id})
@@ -56,6 +71,7 @@ def test_material_currency_receipt_and_partial_reversals_reconcile_to_the_receip
         assert result.status_code == 200, result.text
         current = Dataset.model_validate(client.get(f"/api/companies/{company}", headers=h(owner)).json()["dataset"])
         assert_books(current, day, left if revision == 2 else "0")
+        assert_accrual(current, left if revision == 2 else "0")
         assert_books(current, date(2026, 1, 6), booked)
 
     export = client.post("/api/accounting/export?format=csv", json=current.model_dump(mode="json"))
@@ -92,6 +108,27 @@ def test_standard_cost_posts_the_exact_difference_between_rounded_stock_and_rece
     }
     assert all(check.ok for check in result.checks)
     assert result.vouchers[0].debit == result.vouchers[0].credit == 1.235
+
+
+def test_accrual_counts_the_smallest_material_quantity_and_rounds_each_receipt():
+    raw = base()
+    raw["settings"]["currency"] = "JPY"
+    raw["execution"] = {"price_control": "moving_average"}
+    lp(raw, "P", "A")["on_hand"] = lp(raw, "P", "B")["on_hand"] = 0
+    raw["receipts"] = [{"id": "FINE", "kind": "purchase", "product": "B", "location": "P", "qty": 0.000002,
+                        "price": 1_250_000, "due_date": "2026-01-06", "source": "PIR-B"}]
+    raw["movements"] = []
+    for count in (1, 2):
+        raw["movements"].append({"id": f"R-{count}", "date": "2026-01-06", "type": "receipt", "reference": "FINE",
+                                 "location": "P", "product": "B", "qty": 0.000001})
+        data = Dataset.model_validate(raw)
+        journal = view(data)
+        assert next(row.balance for row in journal.balances if row.account == "GRIR") == -count
+        assert all(check.ok for check in journal.checks)
+        purchasing = client.post("/api/purchasing", json=data.model_dump(mode="json"))
+        assert purchasing.status_code == 200, purchasing.text
+        assert purchasing.json()["totals"]["to_invoice"] == 1
+        assert purchasing.json()["payables"]["not_invoiced_value"] == count
 
 
 def test_large_material_post_is_refused_when_a_minor_unit_would_be_lost():
