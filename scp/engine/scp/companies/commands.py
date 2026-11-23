@@ -68,7 +68,8 @@ class CommandRequest(Model):
     id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:/-]+$")
     base_revision: int = Field(ge=1)
     posting_date: date = Field(description="Explicit business date; never inferred from a planning scenario's start")
-    kind: Literal["purchasing", "sales", "stock", "transport", "intercompany", "outside", "production_cost", "carrier_bank"]
+    kind: Literal["purchasing", "sales", "stock", "transport", "intercompany", "outside", "production_cost", "carrier_bank",
+                  "scenario_publication"]
     action: str = Field(min_length=1, max_length=64)
     parameters: dict[str, Any] = Field(default_factory=dict, max_length=40)
 

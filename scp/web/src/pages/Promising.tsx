@@ -637,7 +637,7 @@ function Bop({ ds, busy, onCommit }: { ds: Dataset; busy: boolean; onCommit: () 
       <SolverIO answers="Who keeps, gains or loses confirmation when supply no longer covers every promise."
         from="Committed confirmations, the current supply picture, and the segment sequence with a strategy each."
         feeds="New confirmations (on commit) and the list of customers to call." />
-      <Panel title="Segment cascade — processed top to bottom, earlier segments claim supply first" actions={
+      <Panel title="Segment cascade — strategies set supply priority; segment order breaks ties" actions={
         <div className="row"><a className="btn sm ghost" href={href("promise", "settings")}>Edit segments</a>
           <button className="btn sm accent" onClick={simulate} disabled={running}>{running ? "Working…" : "Re-decide who gets scarce stock"}</button></div>}>
         <div className="row wrap">
@@ -651,6 +651,8 @@ function Bop({ ds, busy, onCommit }: { ds: Dataset; busy: boolean; onCommit: () 
       </Panel>
       {err && <div className="banner error"><Badge sev="error">BOP failed</Badge>{err}</div>}
       {!cur ? <Panel><Empty title="Nothing re-decided yet"><i>Re-decide who gets scarce stock</i> shows each order's promise before and after; nothing is saved until you press <i>Save these new promised dates</i>.</Empty></Panel> : <>
+        {cur.issues.filter((issue) => issue.code === "BOP_GROUP_STOPPED").map((issue) =>
+          <div className="banner warning" key={issue.object_id}><Badge sev="warning">{issue.object_id}</Badge>{issue.message}</div>)}
         <div className="grid-auto">
           <StatTile label="Gained" value={qty(cur.bop.filter((b) => b.outcome === "gained").length)} sub="orders" />
           <StatTile label="Lost" value={qty(cur.bop.filter((b) => b.outcome === "lost").length)} sub="orders to call" />
@@ -676,8 +678,8 @@ function Bop({ ds, busy, onCommit }: { ds: Dataset; busy: boolean; onCommit: () 
           </div>
         </Panel>
       </>}
-      <Reading formula="Win and Gain may not lose (a re-check that comes out worse is rolled back to the old lines); Fill keeps its lines and tops up; Redistribute re-plans from scratch; Lose may keep at most what it had."
-        soWhat="Design the cascade as commercial policy: who is protected, who is topped up, who is re-planned, who gives supply back. Re-decide, read the log, then save the new promised dates." />
+      <Reading formula="Win requires full on-time delivery. Gain must preserve confirmed amounts and dates. A failed group keeps its previous confirmations. Redistribute replans; Fill can preserve or worsen an existing promise; Lose releases it."
+        soWhat="Design the cascade as commercial policy: which orders require full on-time delivery, keep their promises, can move, or release supply. Re-decide, read the log, then save the new promised dates." />
     </div>
   );
 }

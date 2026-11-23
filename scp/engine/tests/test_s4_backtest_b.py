@@ -942,11 +942,8 @@ def _bop_case(segments: list[dict]) -> dict:
     return d
 
 
-def test_bop_cascade_as_in_figure_7_2():
-    """Fig. 7.2: segments claim supply in sequence. 100 in stock. Key account (WIN) wants 50 and held 0; contracted
-    (FILL) held 30 of 40; standard (REDISTRIBUTE) held 40 of 40; internal (LOSE) held 30 of 30.
-    WIN takes 50 from what is free and what LOSE/REDISTRIBUTE give back; FILL keeps its 30 and tops up from leftovers;
-    REDISTRIBUTE gets what is left; LOSE gets nothing new."""
+def test_bop_cascade_respects_confirmation_strategy_order():
+    """Win and Redistribute receive 50 and 40 units. Fill takes the last ten and Lose releases all."""
     d = _bop_case([{"name": "Key", "priorities": [1], "strategy": "win"},
                    {"name": "Contracted", "priorities": [2], "strategy": "fill"},
                    {"name": "Standard", "priorities": [5], "strategy": "redistribute"},
@@ -959,15 +956,12 @@ def test_bop_cascade_as_in_figure_7_2():
                           {"order": "STD", "ship_from": "P", "ship_date": "2026-01-10", "date": "2026-01-10", "qty": 40},
                           {"order": "INT", "ship_from": "P", "ship_date": "2026-01-10", "date": "2026-01-10", "qty": 30}]
     o = by_order(run_bop(Dataset.model_validate(d)))
-    # supply 100: CON's 30 is held; KEY takes 50 of the other 70; CON tops up 10; STD gets the last 10; INT nothing
-    assert (o["KEY"].confirmed, o["CON"].confirmed, o["STD"].confirmed, o["INT"].confirmed) == (50, 40, 10, 0)
+    assert (o["KEY"].confirmed, o["CON"].confirmed, o["STD"].confirmed, o["INT"].confirmed) == (50, 10, 40, 0)
 
 
-@pytest.mark.parametrize("strategy", ["win", "gain", "fill"])
+@pytest.mark.parametrize("strategy", ["win", "gain"])
 def test_bop_no_lose_strategy_keeps_its_confirmation_after_a_redistribute_segment_regression(strategy):
-    """Regression (S4-B4). §7.3: Win, Gain and Fill 'may lose? No'. The guide places Gain 'later in the sequence', so a
-    no-lose segment may come after a Redistribute one. Before the fix the earlier Redistribute order took the supply the
-    protected order held, and the protected order lost all of it."""
+    """Win and Gain have precedence over Redistribute even if its segment is listed first."""
     d = _bop_case([{"name": "Standard", "priorities": [5], "strategy": "redistribute"},
                    {"name": "Protected", "priorities": [2], "strategy": strategy}])
     dem(d, "2026-01-10", 100, priority=5, id="STD")
@@ -980,12 +974,12 @@ def test_bop_no_lose_strategy_keeps_its_confirmation_after_a_redistribute_segmen
     assert {b.order: b.outcome for b in res.bop}["VIP"] != "lost"
 
 
-def test_bop_lose_strategy_never_gains():
+def test_bop_lose_strategy_releases_even_with_stock():
     d = _bop_case([{"name": "Internal", "priorities": [9], "strategy": "lose"}])
     dem(d, "2026-01-10", 80, priority=9, id="INT")
     d["confirmations"] = [{"order": "INT", "ship_from": "P", "ship_date": "2026-01-10", "date": "2026-01-10", "qty": 20}]
     [o] = run_bop(Dataset.model_validate(d)).orders
-    assert o.confirmed == 20
+    assert o.confirmed == 0
 
 
 # ================================================================================================ §6.2 scheduling

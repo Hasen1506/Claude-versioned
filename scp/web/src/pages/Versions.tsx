@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { Comparison, Dataset, PlanSummary, VersionMeta } from "../api/types";
+import type { Comparison, Dataset, PlanSummary, PublicationPreview, VersionMeta } from "../api/types";
 import { Badge, Edits, Empty, Panel, Reading, SectionBand, StageHeader, StatTile } from "../components/ui";
 import { day, money, pct, qty } from "../lib/format";
 import { go, href } from "../lib/router";
@@ -34,6 +34,7 @@ const WORKING = "__working__";
 export function Versions() {
   const ds = useStore((s) => s.dataset)!;
   const current = useStore((s) => s.version);
+  const company = useStore((s) => s.company);
   const modified = useStore(isModified);
   const [list, setList] = useState<VersionMeta[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -44,6 +45,8 @@ export function Versions() {
   const [pick, setPick] = useState<[string | null, string | null]>([null, null]);
   const [cmp, setCmp] = useState<Comparison | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [review, setReview] = useState<{ company: string; scenario: VersionMeta; preview: PublicationPreview } | null>(null);
+  const [published, setPublished] = useState<number | null>(null);
 
   const refresh = useCallback(() => api.versions().then(setList).catch((e) => setErr(String(e))), []);
   useEffect(() => { refresh(); }, [refresh]);
@@ -112,6 +115,20 @@ export function Versions() {
       store.loadVersion(doc.dataset, doc.meta, before);
     }
   });
+  const previewPublication = (v: VersionMeta) => act(async (before) => {
+    if (!before.company || before.version?.id !== v.id || !before.version.sha256 || modified) return;
+    const preview = await api.previewPublication(before.company, v.id, before.version.sha256);
+    store.assertWorking(before, true);
+    setReview({ company: before.company, scenario: { ...v, sha256: before.version.sha256 }, preview });
+  });
+  const publishReviewed = () => act(async (before) => {
+    if (!review || before.company !== review.company || before.version?.id !== review.scenario.id
+      || before.version.sha256 !== review.scenario.sha256 || modified) return;
+    const result = await api.publishScenario(review.company, review.scenario.id, review.scenario.sha256, review.preview);
+    setReview(null);
+    setPublished(result.revision);
+    if (store.currentContext(before, true)) store.openCompany(result.company, before);
+  });
   const runCompare = () => act(async (before) => {
     const [a, b] = pick;
     if (!a || !b) return;
@@ -144,7 +161,25 @@ export function Versions() {
         howLabel="How versions work" how={<>Base versions retain their contents. Scenario saves, discards and promotions apply to the fingerprint shown.
           A promotion creates the next base in that lineage. Reopen a scenario to review changes saved by someone else.</>} />
       <div className="content">
-        {err && <div className="banner error"><Badge sev="error">Version store</Badge>{err}</div>}
+        {err && <div className="banner error" role="alert"><Badge sev="error">Version store</Badge>{err}</div>}
+        {published !== null && <div className="banner info"><Badge sev="ok">Published</Badge>Live company revision {published}</div>}
+        {review && current?.id === review.scenario.id && current.sha256 === review.scenario.sha256
+          && company?.id === review.company && !modified && <Panel title={`Publish ${review.scenario.id} to the live plan`}>
+          <p>Review the changes from live revision {review.preview.base_revision}.</p>
+          <ul>{review.preview.receipts.map((r) => <li key={r.id}>{r.id} · {qty(r.before_quantity)} on {day(r.before)}
+            {r.previous_schedule.length > 0 && ` (${r.previous_schedule.map((part) => `${qty(part.qty)} on ${day(part.date)}`).join(", ")})`}
+            {" → "}{qty(r.quantity)} on {day(r.after)}
+            {r.schedule.length > 0 && ` (${r.schedule.map((part) => `${qty(part.qty)} on ${day(part.date)}`).join(", ")})`}</li>)}</ul>
+          <table className="t">
+            <thead><tr><th>Order</th><th>Previous deliveries</th><th>New deliveries</th></tr></thead>
+            <tbody>{review.preview.orders.map((o) => <tr key={o.order}><td>{o.order}</td>
+              <td>{o.previous.map((l) => `${qty(l.qty)} on ${day(l.date)}`).join(", ") || "—"}</td>
+              <td>{o.lines.map((l) => `${qty(l.qty)} on ${day(l.date)}`).join(", ") || "—"}</td></tr>)}</tbody>
+          </table>
+          {review.preview.exceptions.map((message) => <p key={message} className="banner warning">{message}</p>)}
+          <div className="row"><button className="btn accent" disabled={busy} onClick={publishReviewed}>Approve and publish</button>
+            <button className="btn ghost" disabled={busy} onClick={() => setReview(null)}>Cancel</button></div>
+        </Panel>}
         <Panel title="Working copy">
           <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
             <span>{current ? <>Opened from <b>{current.id}</b> · {current.kind} “{current.name}”</> : <>Not saved as a version yet</>}</span>
@@ -184,6 +219,8 @@ export function Versions() {
                         <button className="btn sm" disabled={busy} onClick={() => open(v)} aria-label={`Open ${v.id}`}>Open</button>
                         {v.status !== "discarded" && <button className="btn sm" disabled={busy} onClick={() => branch(v)} aria-label={`Branch ${v.id}`}>Branch</button>}
                         {v.kind === "scenario" && v.status === "active" && <>
+                          {company?.role === "owner" && current?.id === v.id && <button className="btn sm accent"
+                            disabled={busy || modified} onClick={() => previewPublication(v)}>Review live publication</button>}
                           <button className="btn sm" disabled={busy} onClick={() => promote(v)} aria-label={`Promote ${v.id}`}>Promote</button>
                           <button className="btn sm ghost" disabled={busy} onClick={() => discard(v)} aria-label={`Discard ${v.id}`}>Discard</button></>}
                       </div></td>

@@ -161,6 +161,7 @@ export type DataQualityRow = S["DataQualityRow"];
 
 export type VersionMeta = S["VersionMeta"];
 export type VersionDoc = S["VersionDoc"];
+export type PublicationPreview = S["PublicationPreview"];
 export type Comparison = S["Comparison"];
 export type WhatIfResult = S["WhatIfResult"];
 export type CaseInfo = S["CaseInfo"];

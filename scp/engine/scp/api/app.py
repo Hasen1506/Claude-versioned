@@ -88,6 +88,7 @@ from ..whatif import (
     keep_scenario, sweep_chip,
 )
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, canonical, compare, get_store, sha
+from ..versions import publication
 from ..companies import CompanyError, get_companies
 from ..companies.commands import CommandRecord, CommandRequest, CommandResult, execute as execute_command, record as command_record
 from .connect import router as connect_router
@@ -1438,6 +1439,8 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
     Reuse the same id and parameters after a transport failure. A replay reports
     the original result and current company state, even after intervening saves.
     """
+    if req.kind == "scenario_publication":
+        raise HTTPException(422, "publish a reviewed scenario through its publication endpoint")
     if req.kind == "carrier_bank":
         from ..carrier_bank import AllocateBankReturn, CamtFile, CamtFiles, ReverseBankCash, parse_operation, record_bank
         if set(req.parameters) != {"event"}:
@@ -1696,6 +1699,17 @@ def discard_version(vid: str, sc: StoredEditScope, if_match: ScenarioIfMatch = N
 @app.post("/api/versions/{vid}/promote", response_model=VersionMeta)
 def promote_version(vid: str, req: PromoteRequest, sc: StoredEditScope, if_match: ScenarioIfMatch = None) -> VersionMeta:
     return get_store().promote(vid, req.name, req.note, sc, expected_sha256=if_match[1:-1] if if_match else None)
+
+
+@app.post("/api/companies/{cid}/scenarios/{vid}/publication-preview", response_model=publication.PublicationPreview)
+def preview_publication(cid: str, vid: str, user: Signed, if_match: ScenarioIfMatch = None):
+    return publication.preview(get_companies(), user, cid, vid, if_match[1:-1] if if_match else None)
+
+
+@app.post("/api/companies/{cid}/scenarios/{vid}/publish", response_model=CommandResult)
+def publish_scenario(cid: str, vid: str, req: publication.PublicationRequest, user: Signed,
+                     if_match: ScenarioIfMatch = None):
+    return publication.publish(get_companies(), user, cid, vid, if_match[1:-1] if if_match else None, req)
 
 
 @app.get("/api/versions/{a}/compare/{b}", response_model=Comparison)

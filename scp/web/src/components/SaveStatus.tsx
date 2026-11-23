@@ -102,18 +102,8 @@ export function SaveBanner() {
         Changes here are saved in <a href={href("versions")}>Versions</a>, not to the company.</span>
       <span className="spacer" />
       <button className="btn sm" disabled={busy} onClick={() => reopen()}>Back to the live data</button>
-      {company.role !== "viewer" && <button className="btn sm" disabled={busy} onClick={async () => {
-        if (!window.confirm(`Make ${version ? version.id : "this version"} ${company.name}'s live data? Everyone then works on it. The data it replaces stays in the company's history.`)) return;
-        const before = store.captureContext();
-        setBusy(true);
-        setActionError(null);
-        try {
-          const m = (await api.companies()).find((x) => x.id === company.id);
-          store.assertWorking(before, true);
-          if (m) store.useAsCompanyData(m.revision, version ? `from plan version ${version.id} “${version.name}”` : "from a plan version");
-        } catch (e) { if (store.currentContext(before)) setActionError(e instanceof Error ? e.message : String(e)); }
-        finally { setBusy(false); }
-      }}>Make this the live data</button>}
+      {company.role === "owner" && version?.kind === "scenario" && version.status === "active"
+        && <a className="btn sm" href={href("versions")}>Review live publication in Versions</a>}
     </div>;
   }
   if (save.status === "conflict" && save.conflict && clashes) {
