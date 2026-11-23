@@ -109,8 +109,13 @@ export function CarrierBankAccounts({ ds, currency, periods, live, editable, rec
         <th className="num">Ledger opening</th><th className="num">Statement closing</th><th className="num">Ledger closing</th><th>Reconciliation</th></tr></thead>
       <tbody>{periods.map((row) => <tr key={row.period.id}>
         <td>{row.period.number}{row.period.camt_source && <details className="small">
-          <summary>Original camt.053</summary><div>{row.period.camt_source.message_id}</div>
-          <code>{row.period.file_sha256}</code>
+          <summary>Original camt.053</summary>
+          {row.period.camt_source.originals?.length
+            ? <ul>{row.period.camt_source.originals.map((file) => <li key={file.file_sha256}>
+              <div>{file.message_id} · {file.pages.length === 1 ? "Page" : "Pages"} {file.pages.join(", ")}</div>
+              <code>{file.file_sha256}</code>
+            </li>)}</ul>
+            : <><div>{row.period.camt_source.message_id}</div><code>{row.period.file_sha256}</code></>}
         </details>}</td><td>{row.period.account}</td><td>{day(row.period.starts_on)} – {day(row.period.ends_on)}</td>
         {[row.period.opening_minor, row.ledger_opening_minor, row.period.closing_minor, row.ledger_closing_minor]
           .map((value, i) => <td className="num" key={i}>{exactMoney(value / 100, currency)}</td>)}

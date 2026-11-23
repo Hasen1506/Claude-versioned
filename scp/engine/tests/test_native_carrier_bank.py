@@ -29,8 +29,8 @@ def native_file():
 
 @pytest.mark.parametrize(("old", "new", "error"), [
     ("camt.053.001.08", "camt.053.001.02", "format"),
-    ("<LastPgInd>true</LastPgInd>", "<LastPgInd>false</LastPgInd>", "complete single-page"),
-    ("<PgNb>1</PgNb>", "<PgNb>2</PgNb>", "complete single-page"),
+    ("<LastPgInd>true</LastPgInd>", "<LastPgInd>false</LastPgInd>", "pagination"),
+    ("<PgNb>1</PgNb>", "<PgNb>2</PgNb>", "pagination"),
     ("<NbOfNtries>1</NbOfNtries>", "<NbOfNtries>2</NbOfNtries>", "reported entry count"),
     ("<Sum>100.00</Sum>", "<Sum>99.99</Sum>", "reported gross"),
     ("<TtlNetNtry><Amt>100.00</Amt>", "<TtlNetNtry><Amt>99.99</Amt>", "reported net"),
@@ -57,7 +57,7 @@ def test_camt_refuses_dtd_multiple_statements_duplicates_and_excess_bytes():
     entry = xml[xml.index("      <Ntry>"):xml.index("      </Ntry>") + len("      </Ntry>")]
     cases = [
         (xml.replace("<Document", "<!DOCTYPE Document []><Document", 1), "entity declaration"),
-        (xml[:end] + xml[start:end] + xml[end:], "requires one Stmt"),
+        (xml[:end] + xml[start:end] + xml[end:], "consecutive page"),
         (xml.replace("</Ntry>", "</Ntry>" + entry, 1), "repeats a bank entry"),
         (xml + "ö" * 130_000, "256000 bytes"),
     ]

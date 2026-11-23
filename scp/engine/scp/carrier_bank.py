@@ -10,12 +10,12 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, TypeAdapter, ValidationError
 
-from .camt_statements import file_evidence, read_statement
+from .camt_statements import file_evidence, file_set_evidence, read_statement_files
 from .carrier_accounts import (BankAccounts, CarrierBankTieOut, check_window, last_period, next_start,
                                period_id, protect_accounts, statement_periods, tie_out)
 from .freight import BankPosting, CarrierBill, active_bank_matches, carrier_bills, freight_company
 from .model import Dataset
-from .model.carrier_bank import (BankAccountId, BankAccountOpening, BankCashRef, BankMatchEvent, BankStatementHeader,
+from .model.carrier_bank import (CAMT_MAX_BYTES, CAMT_MAX_PAGES, BankAccountId, BankAccountOpening, BankCashRef, BankMatchEvent, BankStatementHeader,
                                  CamtAccountBinding, CamtSourceEvidence, CarrierBankAccount, CarrierBankLine, CarrierBankPeriod)
 from .model.common import Model, Out
 from .model.transport import CarrierBankMatch
@@ -37,14 +37,30 @@ class ImportBankPeriod(BankStatementHeader):
     csv: Annotated[str, StringConstraints(min_length=1, max_length=256_000, strip_whitespace=False)]
 
 
+CamtXml = Annotated[str, StringConstraints(min_length=1, max_length=CAMT_MAX_BYTES, strip_whitespace=False)]
+
+
 class CamtFile(Model):
     kind: Literal["link_camt_source", "import_camt"]
     account: BankAccountId
-    xml: Annotated[str, StringConstraints(min_length=1, max_length=256_000, strip_whitespace=False)]
+    xml: CamtXml
 
     def receipt_event(self) -> dict:
         data, digest = file_evidence(self.xml)
         return {"kind": self.kind, "account": self.account, "file_sha256": digest, "byte_count": len(data)}
+
+
+class CamtFiles(Model):
+    kind: Literal["link_camt_pages", "import_camt_pages"]
+    account: BankAccountId
+    files: list[CamtXml] = Field(min_length=2, max_length=CAMT_MAX_PAGES)
+
+    def canonical_events(self) -> tuple[dict, dict]:
+        originals = sorted(zip(self.files, file_set_evidence(self.files), strict=True), key=lambda item: item[1][1])
+        identity = {"kind": self.kind, "account": self.account}
+        files = [xml for xml, _ in originals]
+        evidence = [{"file_sha256": digest, "byte_count": len(data)} for _, (data, digest) in originals]
+        return {**identity, "files": files}, {**identity, "files": evidence}
 
 
 class MatchStatement(Model):
@@ -60,7 +76,7 @@ class ReleaseStatement(Model):
     version: int = Field(gt=0, strict=True)
 
 
-BankOperation = Annotated[ImportStatement | MatchStatement | ReleaseStatement | RegisterBankAccount | ImportBankPeriod | CamtFile,
+BankOperation = Annotated[ImportStatement | MatchStatement | ReleaseStatement | RegisterBankAccount | ImportBankPeriod | CamtFile | CamtFiles,
                           Field(discriminator="kind")]
 parse_operation = TypeAdapter(BankOperation)
 HEADER = ["line", "date", "reference", "amount", "currency"]
@@ -217,13 +233,14 @@ def _import_period(ds: Dataset, request: ImportBankPeriod) -> tuple[Dataset, str
     return _append_period(ds, account, header, list(rows.values()), hashlib.sha256(request.csv.encode()).hexdigest())
 
 
-def _camt(ds: Dataset, request: CamtFile, day: date) -> tuple[Dataset, str]:
+def _camt(ds: Dataset, request: CamtFile | CamtFiles, day: date) -> tuple[Dataset, str]:
     account = _account(ds, request.account)
-    statement = read_statement(request.xml, account.id, account.currency)
+    files = request.files if isinstance(request, CamtFiles) else [request.xml]
+    statement = read_statement_files(files, account.id, account.currency)
     if statement.header.ends_on > day:
         raise ValueError("the bank evidence date cannot precede the statement close")
     bound = account.camt_source
-    if request.kind == "link_camt_source":
+    if request.kind in ("link_camt_source", "link_camt_pages"):
         if bound:
             if bound.account_sha256 != statement.account_hash:
                 raise ValueError("the registered account's camt.053 source is retained")
@@ -269,7 +286,7 @@ def record_bank(ds: Dataset, request: BankOperation, day: date) -> tuple[Dataset
         return _register(ds, request)
     if isinstance(request, ImportBankPeriod):
         return _import_period(ds, request)
-    if isinstance(request, CamtFile):
+    if isinstance(request, (CamtFile, CamtFiles)):
         return _camt(ds, request, day)
     line = next((row for row in ds.carrier_bank_lines if row.id == request.line), None)
     if line is None:

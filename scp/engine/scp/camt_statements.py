@@ -1,4 +1,4 @@
-"""Read the booked, single-statement profile of ISO 20022 camt.053.001.08."""
+"""Read one complete booked ISO 20022 camt.053 statement, including CGI pagination."""
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -6,11 +6,10 @@ from decimal import Decimal
 from hashlib import sha256
 from xml.etree import ElementTree as XML
 
-from .model.carrier_bank import BankStatementHeader, CamtSourceEvidence
+from .model.carrier_bank import CAMT_MAX_BYTES, CAMT_MAX_PAGES, BankStatementHeader, CamtOriginal, CamtSourceEvidence
 
 NS = "urn:iso:std:iso:20022:tech:xsd:camt.053.001.08"
 XML_NS = {"": NS}
-MAX_BYTES = 256_000
 MONEY = re.compile(r"[0-9]{1,18}(?:\.[0-9]{1,5})?")
 ISO_DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 ISO_CLOCK = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})?")
@@ -23,9 +22,23 @@ def file_evidence(xml: str) -> tuple[bytes, str]:
         encoded = xml.encode("utf-8")
     except UnicodeError as error:
         raise ValueError("the original bank XML must use UTF-8") from error
-    if len(encoded) > MAX_BYTES:
+    if len(encoded) > CAMT_MAX_BYTES:
         raise ValueError("the original bank XML can contain at most 256000 bytes")
     return encoded, sha256(encoded).hexdigest()
+
+
+def file_set_evidence(files: list[str]) -> list[tuple[bytes, str]]:
+    if not 1 <= len(files) <= CAMT_MAX_PAGES:
+        raise ValueError(f"choose between one and {CAMT_MAX_PAGES} originals for one statement")
+    originals = []
+    total = 0
+    for xml in files:
+        data, digest = file_evidence(xml)
+        total += len(data)
+        if total > CAMT_MAX_BYTES:
+            raise ValueError("the original bank XML set can contain at most 256000 bytes")
+        originals.append((data, digest))
+    return originals
 
 
 def _one(node: XML.Element, path: str, *, required: bool = True) -> XML.Element | None:
@@ -108,26 +121,35 @@ def _account_hash(account: XML.Element) -> str:
     return sha256(identity.encode()).hexdigest()
 
 
-def _single_page(node: XML.Element, path: str) -> None:
+def _pagination(node: XML.Element, path: str) -> tuple[int, bool] | None:
     page = _one(node, path, required=False)
-    if page is not None and (_text(page, "PgNb").lstrip("0") != "1" or _text(page, "LastPgInd") not in ("true", "1")):
-        raise ValueError("camt.053 requires a complete single-page statement")
+    if page is None:
+        return None
+    number = _text(page, "PgNb")
+    last = _text(page, "LastPgInd")
+    if (not re.fullmatch(r"[0-9]{1,5}", number) or not 1 <= int(number) <= CAMT_MAX_PAGES
+            or last not in ("true", "false", "1", "0")):
+        raise ValueError("camt.053 has invalid page numbering or a last-page indicator")
+    return int(number), last in ("true", "1")
 
 
-def _balances(statement: XML.Element, currency: str, start: date, end: date) -> tuple[int, int]:
+def _balances(statement: XML.Element, currency: str, start: date, end: date) -> dict[str, tuple[int, date]]:
     values = {}
     for balance in statement.findall("Bal", XML_NS):
         code = _text(balance, "Tp/CdOrPrtry/Cd", required=False)
         if code not in ("OPBD", "CLBD"):
             continue
+        subtype = _one(balance, "Tp/SubTp", required=False)
+        if subtype is not None and (len(subtype) != 1 or _text(subtype, "Cd", required=False) != "INTM"):
+            raise ValueError("camt.053 booked balances require the INTM subtype for interim amounts")
         day = _day(balance, "Dt")
-        allowed = day == end if code == "CLBD" else start.toordinal() - day.toordinal() in (0, 1)
-        if code in values or not allowed:
+        key = f"{code}-INTM" if subtype is not None else code
+        allowed = {"OPBD": start.toordinal() - day.toordinal() in (0, 1),
+                   "CLBD": day == end}.get(key, start <= day <= end)
+        if key in values or not allowed:
             raise ValueError("camt.053 requires one opening and one closing booked balance on the statement boundaries")
-        values[code] = _signed(balance, currency)
-    if set(values) != {"OPBD", "CLBD"}:
-        raise ValueError("camt.053 requires both opening (OPBD) and closing (CLBD) booked balances")
-    return values["OPBD"], values["CLBD"]
+        values[key] = (_signed(balance, currency), day)
+    return values
 
 
 def _summary(statement: XML.Element, amounts: list[int]) -> None:
@@ -190,8 +212,7 @@ class CamtStatement:
     source: CamtSourceEvidence
 
 
-def read_statement(xml: str, account: str, currency: str) -> CamtStatement:
-    data, digest = file_evidence(xml)
+def _read_document(xml: str, data: bytes) -> XML.Element:
     encoding = ENCODING.match(xml)
     if encoding and encoding[2].upper() != "UTF-8":
         raise ValueError("the original bank XML must declare UTF-8 when it specifies an encoding")
@@ -201,14 +222,33 @@ def read_statement(xml: str, account: str, currency: str) -> CamtStatement:
         document = XML.fromstring(data)
     except XML.ParseError as error:
         raise ValueError("the original bank XML is malformed") from error
-    if document.tag != f"{{{NS}}}Document":
+    if document.tag != f"{{{NS}}}Document" or len(document) != 1:
         raise ValueError("use the camt.053.001.08 BankToCustomerStatement XML format")
     message = _one(document, "BkToCstmrStmt")
     assert message is not None
-    _single_page(message, "GrpHdr/MsgPgntn")
-    statement = _one(message, "Stmt")
-    assert statement is not None
-    _single_page(statement, "StmtPgntn")
+    return message
+
+
+@dataclass(frozen=True)
+class _Page:
+    node: XML.Element
+    account_hash: str
+    statement: str
+    sequence: str
+    first: datetime
+    last: datetime
+    pagination: tuple[int, bool]
+    balances: dict[str, tuple[int, date]]
+    entries: list[CamtEntry]
+
+    def identity(self) -> tuple[str, ...]:
+        return self.account_hash, self.statement, self.sequence, self.first.isoformat(), self.last.isoformat()
+
+
+def _read_page(statement: XML.Element, currency: str, message_page: tuple[int, bool] | None) -> _Page:
+    pagination = _pagination(statement, "StmtPgntn") or message_page or (1, True)
+    if message_page not in (None, (1, True), pagination):
+        raise ValueError("camt.053 message and statement pagination disagree")
     bank = _one(statement, "Acct")
     assert bank is not None
     if _text(bank, "Ccy", required=False) not in ("", currency):
@@ -217,19 +257,77 @@ def read_statement(xml: str, account: str, currency: str) -> CamtStatement:
     last = _clock(_text(statement, "FrToDt/ToDtTm"))
     if (first.tzinfo is None) != (last.tzinfo is None) or last < first or last.date() < first.date():
         raise ValueError("camt.053 statement dates must be in chronological order")
-    opening, closing = _balances(statement, currency, first.date(), last.date())
+    balances = _balances(statement, currency, first.date(), last.date())
     rows = statement.findall("Ntry", XML_NS)
     if len(rows) > 500:
         raise ValueError("one statement import can contain at most 500 booked entries")
     entries = [_entry(node, currency) for node in rows]
-    if len({entry.identifier.casefold() for entry in entries}) != len(entries):
-        raise ValueError("camt.053 repeats a bank entry identifier")
     if any(not first.date() <= entry.date <= last.date() for entry in entries):
         raise ValueError("camt.053 booked entries must fall within the statement dates")
-    _summary(statement, [entry.amount_minor for entry in entries])
-    if opening + sum(entry.amount_minor for entry in entries) != closing:
-        raise ValueError("camt.053 opening balance plus signed activity must equal closing balance")
-    header = BankStatementHeader(account=account, number=_text(statement, "Id"), starts_on=first.date(), ends_on=last.date(),
+    sequence = _text(statement, "ElctrncSeqNb", required=False)
+    return _Page(statement, _account_hash(bank), _text(statement, "Id"), sequence, first, last, pagination, balances, entries)
+
+
+def _page_balances(pages: list[_Page]) -> tuple[int, int]:
+    previous = None
+    for index, page in enumerate(pages):
+        start = "OPBD" if index == 0 else "OPBD-INTM"
+        end = "CLBD" if index == len(pages) - 1 else "CLBD-INTM"
+        if set(page.balances) != {start, end}:
+            raise ValueError(f"camt.053 page {index + 1} requires both opening ({start}) and closing ({end}) booked balances")
+        opening, closing = page.balances[start], page.balances[end]
+        if previous is not None and previous != opening:
+            raise ValueError("camt.053 interim booked balances do not carry forward between pages")
+        if opening[0] + sum(entry.amount_minor for entry in page.entries) != closing[0]:
+            raise ValueError("camt.053 opening balance plus signed activity must equal closing balance on every page")
+        previous = closing
+    return pages[0].balances["OPBD"][0], pages[-1].balances["CLBD"][0]
+
+
+def read_statement_files(files: list[str], account: str, currency: str) -> CamtStatement:
+    sources = file_set_evidence(files)
+    originals = []
+    pages = []
+    for xml, (data, digest) in zip(files, sources, strict=True):
+        message = _read_document(xml, data)
+        message_page = _pagination(message, "GrpHdr/MsgPgntn")
+        statements = message.findall("Stmt", XML_NS)
+        if not statements or (len(files) > 1 and len(statements) != 1):
+            raise ValueError("camt.053 requires one Stmt in each split original or every page in one original")
+        if len(statements) + len(pages) > CAMT_MAX_PAGES:
+            raise ValueError(f"one statement can contain at most {CAMT_MAX_PAGES} pages")
+        if len(statements) > 1 and message_page not in (None, (1, True)):
+            raise ValueError("one original containing all statement pages must be a complete message")
+        group = [_read_page(statement, currency, message_page) for statement in statements]
+        pages.extend(group)
+        originals.append(CamtOriginal(message_id=_text(message, "GrpHdr/MsgId"), file_sha256=digest, byte_count=len(data),
+                                      pages=sorted(page.pagination[0] for page in group)))
+    pages.sort(key=lambda page: page.pagination[0])
+    if len(pages) == 1 and pages[0].pagination != (1, True):
+        raise ValueError("camt.053 requires a complete single-page statement or all pages of one split statement")
+    if [page.pagination for page in pages] != [(i, i == len(pages)) for i in range(1, len(pages) + 1)]:
+        raise ValueError("camt.053 requires every consecutive page once and one final-page indicator on the last page")
+    first = pages[0]
+    if len(pages) > 1 and (not re.fullmatch(r"[0-9]{1,18}", first.sequence)
+                           or any(page.identity() != first.identity() for page in pages[1:])):
+        raise ValueError("camt.053 pages must share the bank account, statement ID, electronic sequence and statement window")
+    if any(_one(page.node, "TxsSummry", required=False) is not None for page in pages[1:]):
+        raise ValueError("camt.053 whole-statement totals belong on the first page")
+    entries = [entry for page in pages for entry in page.entries]
+    if len(entries) > 500:
+        raise ValueError("one statement import can contain at most 500 booked entries")
+    if len({entry.identifier.casefold() for entry in entries}) != len(entries):
+        raise ValueError("camt.053 repeats a bank entry identifier")
+    _summary(first.node, [entry.amount_minor for entry in entries])
+    opening, closing = _page_balances(pages)
+    header = BankStatementHeader(account=account, number=first.statement, starts_on=first.first.date(), ends_on=first.last.date(),
                                  opening_minor=opening, closing_minor=closing, line_count=len(entries))
-    provenance = CamtSourceEvidence(message_id=_text(message, "GrpHdr/MsgId"), byte_count=len(data))
-    return CamtStatement(_account_hash(bank), header, entries, digest, provenance)
+    originals.sort(key=lambda original: original.pages[0])
+    source = CamtSourceEvidence(message_id=originals[0].message_id, byte_count=sum(file.byte_count for file in originals),
+                                originals=originals if len(pages) > 1 else [])
+    digest = source.manifest_sha256() if len(originals) > 1 else originals[0].file_sha256
+    return CamtStatement(first.account_hash, header, entries, digest, source)
+
+
+def read_statement(xml: str, account: str, currency: str) -> CamtStatement:
+    return read_statement_files([xml], account, currency)

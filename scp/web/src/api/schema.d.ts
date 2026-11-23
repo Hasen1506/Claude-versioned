@@ -4170,6 +4170,17 @@ export interface components {
              */
             starts_on: string;
         };
+        /** CamtOriginal */
+        CamtOriginal: {
+            /** Message Id */
+            message_id: string;
+            /** File Sha256 */
+            file_sha256: string;
+            /** Byte Count */
+            byte_count: number;
+            /** Pages */
+            pages: number[];
+        };
         /** CamtSourceEvidence */
         CamtSourceEvidence: {
             /**
@@ -4182,6 +4193,8 @@ export interface components {
             message_id: string;
             /** Byte Count */
             byte_count: number;
+            /** Originals */
+            originals?: components["schemas"]["CamtOriginal"][];
         };
         /** CapacityAppraisal */
         CapacityAppraisal: {
