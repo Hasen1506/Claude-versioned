@@ -25,6 +25,7 @@ from datetime import date, timedelta
 from ..freight import landed_postings
 from ..model import Dataset, GoodsMovement, MovementType, PriceControl
 from ..model.common import Out
+from ..model.currency import material_units
 from ..network import Node, build_graph
 from ..plan.costing import freight_per_unit, fx, handling, roll_up
 from ..plan.leadtime import supplier_lane
@@ -230,6 +231,8 @@ def standards(ds: Dataset) -> dict[Node, float]:
 class _Books:
     def __init__(self, ds: Dataset, std: dict[Node, float]):
         self.ds = ds
+        self.units = material_units(ds.settings.currency)
+        self.receipt_amounts: dict[str, tuple[int, int, float]] = {}  # original GR/IR, landed minor units, open quantity
         self.std = std
         self.nodes: dict[Node, _Node] = {}
         self.entries: list[ValuationEntry] = []
@@ -259,10 +262,37 @@ class _Books:
             n = self.nodes[(loc, prod)] = _Node(control_of(self.ds, prod), float(st))
         return n
 
+    def book_purchase(self, movement: GoodsMovement, basis: _Line, clearing: float, landed: float) -> tuple[float, float]:
+        """The amount recorded on this receipt is the source for every reversal."""
+        if self.units.digits == 2:
+            return clearing, landed
+        booked = self.units.minor(self.units.product(movement.qty, basis.base))
+        cost = self.units.minor(self.units.product(movement.qty, basis.price))
+        self.receipt_amounts[movement.id] = (booked, cost, movement.qty)
+        return self.units.major(booked), self.units.major(cost)
+
+    def reverse_purchase(self, original: GoodsMovement, qty: float, clearing: float,
+                         landed: float) -> tuple[float, float]:
+        if self.units.digits == 2 or original.id not in self.receipt_amounts:
+            return clearing, landed
+        booked, cost, open_qty = self.receipt_amounts[original.id]
+        left = max(0.0, open_qty - qty)
+        self.receipt_amounts[original.id] = (booked, cost, left)
+
+        def release(amount: int) -> float:
+            before = self.units.prorated_minor(amount, open_qty, original.qty)
+            after = self.units.prorated_minor(amount, left, original.qty)
+            return self.units.major(before - after)
+
+        return release(booked), release(cost)
+
+    def significant(self, amount: float) -> bool:
+        return abs(amount) > 0.005 if self.units.digits == 2 else self.units.minor(amount) != 0
+
     def diff(self, day: date, loc: str, prod: str, ref: str | None, amount: float, why: str) -> None:
-        if abs(amount) > 0.005:
+        if self.significant(amount):
             self.diffs.append(PriceDifference(date=day, location=loc, product=prod, reference=ref,
-                                              amount=round(amount, 2), why=why))
+                                              amount=self.units.amount(amount), why=why))
 
     def book(self, day: date, loc: str, prod: str, what: str, ref: str | None, qty: float, amount: float,
              before: float | None, moves: bool = True) -> None:
@@ -272,7 +302,7 @@ class _Books:
         if n.control is PriceControl.MOVING_AVERAGE and moves and before is not None and abs(after - before) > 1e-6:
             n.changes += 1
         self.entries.append(ValuationEntry(date=day, location=loc, product=prod, what=what, reference=ref,
-                                           qty=round(qty, 6), amount=round(amount, 2),
+                                           qty=round(qty, 6), amount=self.units.amount(amount),
                                            price_before=round(before, 4) if before is not None else None,
                                            price_after=round(after, 4)))
 
@@ -283,10 +313,12 @@ class _Books:
         n = self.node(loc, prod)
         before = n.price
         if n.control is PriceControl.STANDARD:
-            self.diff(day, loc, prod, ref, (unit - n.standard) * q, why or f"{what} at {unit:.2f} against the standard")
-            amount = round(q * n.standard, 2)
+            amount = self.units.product(q, n.standard)
+            difference = ((unit - n.standard) * q if self.units.digits == 2
+                          else self.units.add(self.units.product(q, unit), -amount))
+            self.diff(day, loc, prod, ref, difference, why or f"{what} at {unit:.2f} against the standard")
             n.qty += q
-            n.value += amount
+            n.value = self.units.add(n.value, amount)
             self.book(day, loc, prod, what, ref, q, amount, before)
             return n.standard
         # moving average: what settles negative stock comes in at the price it went out at
@@ -294,11 +326,11 @@ class _Books:
         if settle > EPS:
             self.diff(day, loc, prod, ref, (unit - before) * settle,
                       f"{what}: {settle:g} settled stock that had gone below zero at {before:.2f}")
-        amount = round(settle * before + (q - settle) * unit, 2)
+        amount = self.units.amount(settle * before + (q - settle) * unit)
         if n.qty + q <= EPS:                   # still none (or below zero): valued at the price it had
-            amount = round((n.qty + q) * before, 2) - n.value
+            amount = self.units.product(n.qty + q, before) - n.value
         n.qty += q
-        n.value += amount
+        n.value = self.units.add(n.value, amount)
         n.last = n.price
         self.book(day, loc, prod, what, ref, q, amount, before)
         return amount / q if q > EPS else unit
@@ -313,20 +345,20 @@ class _Books:
         if n.control is PriceControl.STANDARD:
             if unit is not None:
                 self.diff(day, loc, prod, ref, (n.standard - unit) * q, f"{what} at {unit:.2f} against the standard")
-            amount = round(q * n.standard, 2) if abs(n.qty - q) > EPS else n.value   # the last unit takes what is left
+            amount = self.units.product(q, n.standard) if abs(n.qty - q) > EPS else n.value   # the last unit takes what is left
             n.qty -= q
-            n.value -= amount
+            n.value = self.units.add(n.value, -amount)
             self.book(day, loc, prod, what, ref, -q, -amount, before)
             return amount
-        amount = round(q * (unit if unit is not None else before), 2)
+        amount = self.units.product(q, unit if unit is not None else before)
         if unit is not None and n.qty - q > EPS and n.value - amount < 0:
             # the order's price is more than the stock is worth: what it cannot take is a price difference
             self.diff(day, loc, prod, ref, n.value - amount, f"{what} at {unit:.2f}: more than the stock was worth")
             amount = n.value
         if n.qty - q <= EPS:                   # nothing left (or below zero): valued at the price it had
-            amount = n.value - round((n.qty - q) * before, 2)
+            amount = n.value - self.units.product(n.qty - q, before)
         n.qty -= q
-        n.value -= amount
+        n.value = self.units.add(n.value, -amount)
         if abs(n.qty) <= EPS:
             n.qty = 0.0
         n.last = before if n.qty <= EPS else n.price
@@ -339,23 +371,23 @@ class _Books:
         """``amount`` more (or less) for ``qty`` units received earlier: to the stock while it is there (moving
         average), the rest aside."""
         n = self.node(loc, prod)
-        if abs(amount) <= 0.005:
+        if not self.significant(amount):
             return
         if n.control is PriceControl.STANDARD or qty <= EPS:
             self.diff(day, loc, prod, ref, amount, f"{what}: valued at the standard" if n.control is
                       PriceControl.STANDARD else what)
             return
         share = max(0.0, min(1.0, n.qty / qty)) if n.qty > EPS else 0.0
-        to_stock = round(amount * share, 2)
-        if floor_stock and to_stock < -round(max(n.value, 0), 2):
-            to_stock = -round(max(n.value, 0), 2)
-        if abs(amount - to_stock) > 0.005:
+        to_stock = self.units.product(amount, share)
+        if floor_stock and to_stock < -self.units.amount(max(n.value, 0)):
+            to_stock = -self.units.amount(max(n.value, 0))
+        if self.significant(amount - to_stock):
             self.diff(day, loc, prod, ref, amount - to_stock,
                       f"{what}: {max(0.0, qty - max(n.qty, 0.0)):g} of {qty:g} had already gone" if share < 1.0 else
                       f"{what}: stock value cannot be reduced below zero")
-        if abs(to_stock) > 0.005:
+        if self.significant(to_stock):
             before = n.price
-            n.value += to_stock
+            n.value = self.units.add(n.value, to_stock)
             n.last = n.price
             self.book(day, loc, prod, what, ref, 0.0, to_stock, before)
 
@@ -434,11 +466,12 @@ def value_stock(ds: Dataset, as_of: date | None = None, limit: int = 500, books:
                         *(i.cancelled_on for i in ds.supplier_invoices if i.cancelled_on is not None)])
     books_, std = run_books(ds, day, books)
     rows = []
+    money = books_.units.amount
     for (loc, prod), n in sorted(books_.nodes.items()):
         if abs(n.qty) <= EPS and abs(n.value) <= 0.005 and not n.changes:
             continue
         rows.append(ValuationRow(location=loc, entity=entity_of(ds, loc), product=prod, control=n.control,
-                                 qty=round(n.qty, 6), value=round(n.value, 2), price=round(n.price, 4), standard=round(n.standard, 4),
+                                 qty=round(n.qty, 6), value=money(n.value), price=round(n.price, 4), standard=round(n.standard, 4),
                                  changes=n.changes))
     notes = []
     if not std:
@@ -447,11 +480,11 @@ def value_stock(ds: Dataset, as_of: date | None = None, limit: int = 500, books:
     return ValuationView(
         as_of=day, currency=ds.settings.currency, control=ds.execution.price_control, rows=rows,
         entries=ents[:limit], differences=sorted(books_.diffs, key=lambda x: x.date, reverse=True)[:limit],
-        total_value=round(sum(r.value for r in rows), 2), total_differences=round(sum(x.amount for x in books_.diffs), 2),
-        cost_of_sales=round(books_.cogs, 2), count_differences=round(books_.counts, 2), scrapped=round(books_.scrapped, 2),
-        books="group" if books == "group" else "entity", intercompany_sales=round(books_.ic_sales, 2),
-        intercompany_cost=round(books_.ic_cost, 2),
-        in_transit=round(sum(v for q, v in books_.shipped.values() if q > EPS), 2), notes=notes)
+        total_value=money(sum(r.value for r in rows)), total_differences=money(sum(x.amount for x in books_.diffs)),
+        cost_of_sales=money(books_.cogs), count_differences=money(books_.counts), scrapped=money(books_.scrapped),
+        books="group" if books == "group" else "entity", intercompany_sales=money(books_.ic_sales),
+        intercompany_cost=money(books_.ic_cost),
+        in_transit=money(sum(v for q, v in books_.shipped.values() if q > EPS)), notes=notes)
 
 
 def purchase_basis(ds: Dataset, lid: str, ln) -> PurchaseValuationBasis:
@@ -498,7 +531,8 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
         what = f"reversal of {m.reversal_of}"
         if ins:                                        # a receipt taken back leaves at what it came in at
             if orig.type is MovementType.RECEIPT and orig.reference in po:
-                b.receipt_clearing, landed = po[orig.reference].reverse_receipt(orig.id, q)
+                clearing, landed = po[orig.reference].reverse_receipt(orig.id, q)
+                b.receipt_clearing, landed = b.reverse_purchase(orig, q, clearing, landed)
                 b.reversed_receipt_cost = landed
                 unit = landed / q
             b.out(day, loc, prod, q, what, m.reversal_of, unit if b.node(loc, prod).control is not PriceControl.STANDARD
@@ -531,7 +565,8 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
         kind = kinds.get(ref)
         if ref in po:
             ln = po[ref]
-            b.receipt_clearing, unit_total = ln.receipt(m.id, q)
+            clearing, landed = ln.receipt(m.id, q)
+            b.receipt_clearing, unit_total = b.book_purchase(m, ln, clearing, landed)
             b.at_move[m.id] = b.into(day, loc, prod, q, unit_total / q, "purchase receipt", ref,
                                      "purchase receipt at the order's price, against the standard")
         elif kind == "transfer" and b.shipped.get(ref):

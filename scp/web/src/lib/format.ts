@@ -1,6 +1,7 @@
 const nf0 = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 1 });
 const nf2 = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
+const nf3 = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 3 });
 
 /** Quantities: integers stay integers, small fractional values keep precision. */
 export function qty(v: number | null | undefined): string {
@@ -23,16 +24,18 @@ export function money(v: number | null | undefined, currency = "INR"): string {
     if (a >= 1e6) return `${sign}${sym}${nf1.format(a / 1e6)}M`;
   }
   if (a >= 1e3) return `${sign}${sym}${nf1.format(a / 1e3)}K`;
-  return `${sign}${sym}${nf2.format(a)}`;
+  return `${sign}${sym}${(currency === "JPY" ? nf0 : currency === "KWD" ? nf3 : nf2).format(a)}`;
 }
 
 const nfMoney = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const nfKwd = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 
 /** An exact amount, as on an invoice: ₹2,257.20, never compacted. */
 export function exactMoney(v: number | null | undefined, currency = "INR"): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
   const sym = currency === "INR" ? "₹" : currency === "USD" ? "$" : currency === "EUR" ? "€" : `${currency} `;
-  return `${v < 0 ? "−" : ""}${sym}${nfMoney.format(Math.abs(v))}`;
+  const format = currency === "JPY" ? nf0 : currency === "KWD" ? nfKwd : nfMoney;
+  return `${v < 0 ? "−" : ""}${sym}${format.format(Math.abs(v))}`;
 }
 
 /** A per-unit amount: full precision with the currency symbol (₹1,023.4), never compacted. */

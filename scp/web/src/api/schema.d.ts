@@ -19535,6 +19535,11 @@ export interface components {
             narration: string;
             /** Lines */
             lines: components["schemas"]["JournalLine"][];
+            /**
+             * Currency Digits
+             * @default 2
+             */
+            currency_digits: number;
         };
         /** WarehouseActionRequest */
         WarehouseActionRequest: {

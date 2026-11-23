@@ -40,6 +40,7 @@ from ..freight import bank_return_fees, bills_for_order, carrier_bills, freight_
 from ..model import Dataset, FreightOrder, GoodsMovement, MovementType, SupplierInvoice
 from ..model.transport import CarrierBankMatch, CarrierBillAdjustment
 from ..model.common import Out
+from ..model.currency import CurrencyUnits, material_units, require_material_ledger, require_posting_currency
 from ..plan.costing import fx
 from .production import ProductionWip, production_wip
 
@@ -102,14 +103,15 @@ class Voucher(Out):
     document: str                          # what it was made from: a movement, an invoice, a payment
     narration: str
     lines: list[JournalLine]
+    currency_digits: int = Field(2, exclude_if=lambda value: value == 2)
 
     @property
     def debit(self) -> float:
-        return round(sum(ln.debit for ln in self.lines), 2)
+        return CurrencyUnits(self.currency_digits).amount(sum(ln.debit for ln in self.lines))
 
     @property
     def credit(self) -> float:
-        return round(sum(ln.credit for ln in self.lines), 2)
+        return CurrencyUnits(self.currency_digits).amount(sum(ln.credit for ln in self.lines))
 
 
 class AccountRow(Out):
@@ -193,6 +195,7 @@ class _Journal:
 
     def __init__(self, ds: Dataset):
         self.ds = ds
+        self.units = material_units(ds.settings.currency)
         self.vouchers: list[Voucher] = []
         self.contra: dict[str, list[tuple[str, str, str, float]]] = {}   # movement → its other side, for a reversal
         self.returns = {r.id for r in ds.returns}
@@ -357,26 +360,27 @@ class _Journal:
               loc: str = "", prod: str = "", *, wip_order: str = "", wip_orders: dict[int, str] | None = None,
               bank_account: str | None = None) -> None:
         by_co: dict[str, list[JournalLine]] = defaultdict(list)
-        sums: dict[str, float] = defaultdict(float)
+        sums: dict[str, int] = defaultdict(int)
         for index, (acc, c, pa, amt, lo, pr) in enumerate(lines):
-            a = _r(amt)
-            if abs(a) < 0.005:
+            minor = self.units.minor(self.units.amount(amt))
+            if not minor:
                 continue
+            a = self.units.major(minor)
             order = wip_order if wip_orders is None else wip_orders.get(index, wip_order)
             by_co[c].append(JournalLine(account=acc, party=pa, location=lo, product=pr,
                                         production_order=order if acc == "WIP" else "",
                                         bank_account=bank_account if acc == "BANK" else None, debit=max(a, 0.0),
                                         credit=max(-a, 0.0)))
-            sums[c] += a
+            sums[c] += minor
         for c, total in sums.items():
-            left = _r(-total)
-            if abs(left) >= 0.005:
+            if total:
+                left = self.units.major(-total)
                 by_co[c].append(JournalLine(account=rest, location=loc, product=prod, debit=max(left, 0.0),
                                             credit=max(-left, 0.0), production_order=wip_order if rest == "WIP" else ""))
         for c, ls in by_co.items():
             if ls:
                 self.vouchers.append(Voucher(number=number, date=day, company=c, type=vtype, document=doc,
-                                             narration=narration[:240], lines=ls))
+                                             narration=narration[:240], lines=ls, currency_digits=self.units.digits))
 
     def production_costs(self, day: date) -> None:
         for entry in self.ds.production_cost_postings:
@@ -571,6 +575,9 @@ def _n(q: float) -> str:
 
 def journal(ds: Dataset, day: date) -> tuple[list[Voucher], object]:
     """Every voucher up to ``day``, in date order, and the stock books they were made with."""
+    require_material_ledger(ds)
+    for invoice in ds.supplier_invoices:
+        require_posting_currency(invoice.currency or ds.settings.currency)
     j = _Journal(ds)
     b, _std = run_books(ds, day, "entity", watch=j)
     j.production_costs(day)
@@ -606,15 +613,12 @@ def view(ds: Dataset, period_start: date | None = None, period_end: date | None 
          limit: int = 500) -> AccountingView:
     """The journal and the balances of every company of the group on ``period_end`` (default: the latest document),
     the vouchers of the period (default: the financial year to that day), and the checks against the documents."""
-    from ..model.currency import require_posting_currency
-    require_posting_currency(ds.settings.currency)
-    for invoice in ds.supplier_invoices:
-        require_posting_currency(invoice.currency or ds.settings.currency)
     end = period_end or _day(ds)
     start = _period(ds, end, period_start)
     if start > end:
         start = end
     vs, b = journal(ds, end)
+    units, amount = b.units, b.units.amount
     ids = ["", *(e.id for e in ds.entities)]
     bal: dict[tuple[str, str, str], list[float]] = defaultdict(lambda: [0.0, 0.0, 0.0])   # debit, credit, balance
     count: dict[str, int] = defaultdict(int)
@@ -625,48 +629,48 @@ def view(ds: Dataset, period_start: date | None = None, period_end: date | None 
         for ln in v.lines:
             row = bal[(v.company, ln.account, ln.party if ln.account in PARTY_ACCOUNTS else "")]
             if inside:
-                row[0] += ln.debit
-                row[1] += ln.credit
-            row[2] += ln.debit - ln.credit
+                row[0] = units.add(row[0], ln.debit)
+                row[1] = units.add(row[1], ln.credit)
+            row[2] = units.add(row[2], ln.debit - ln.credit)
 
     def bal_row(co: str, acc: str, pa: str, x: list[float], named: bool = False) -> AccountBalance:
         name, group, nature = ACCOUNTS[acc]
         return AccountBalance(company=co, account=acc, name=name, group=group, nature=nature, party=pa,
                        party_name=_name(ds, pa) if named else "",
-                       debit=_r(x[0]), credit=_r(x[1]), balance=_r(x[2]))
+                       debit=amount(x[0]), credit=amount(x[1]), balance=amount(x[2]))
 
     parties = [bal_row(co, acc, pa, x, True) for (co, acc, pa), x in sorted(bal.items()) if acc in PARTY_ACCOUNTS]
     totals: dict[tuple[str, str], list[float]] = defaultdict(lambda: [0.0, 0.0, 0.0])
     for (co, acc, _pa), x in bal.items():
         t = totals[(co, acc)]
         for i in range(3):
-            t[i] += x[i]
+            t[i] = units.add(t[i], x[i])
     order = list(ACCOUNTS)
     balances = [bal_row(co, acc, "", x) for (co, acc), x in sorted(totals.items(), key=lambda kv: (
         ids.index(kv[0][0]) if kv[0][0] in ids else 99, order.index(kv[0][1])))
-        if abs(x[0]) + abs(x[1]) + abs(x[2]) >= 0.005]
+        if units.minor(abs(x[0]) + abs(x[1]) + abs(x[2]))]
     companies = []
     for co in ids:
         profit = -sum(x[2] for (c, acc), x in totals.items() if c == co and ACCOUNTS[acc][2] in ("income", "expense"))
         pa = party(ds, co)
         tally = (ds.finance.tally_company if co == "" else "") or pa.name
         companies.append(BooksCompany(id=co, name=pa.name, tally_name=tally, vouchers=count.get(co, 0),
-                                    profit=_r(profit)))
+                                    profit=amount(profit)))
     checks = _checks(ds, end, b, totals, vs)
     wip = production_wip(ds, end, vs)
     notes = []
-    if any(x.account == "SUSPENSE" and abs(x.balance) >= 0.005 for x in balances):
+    if any(x.account == "SUSPENSE" and units.minor(x.balance) for x in balances):
         notes.append("Something is on the suspense account: stock moved without an order the journal knows (a receipt "
                      "or a transfer with no order, a return with no purchase order, an invoice line for an order it "
                      "does not know). It stays there until it is put right.")
     for x in balances:
-        if x.account == "DELIVERY" and x.balance < -0.005:
-            notes.append(f"{ds.settings.currency} {-x.balance:,.2f} of freight, duty and handling was taken into the stock "
+        if x.account == "DELIVERY" and units.minor(x.balance) < 0:
+            notes.append(f"{ds.settings.currency} {-x.balance:,.{units.digits}f} of freight, duty and handling was taken into the stock "
                          f"of {party(ds, x.company).name} with its purchases and is not billed here yet: the customs "
                          "duty paid and the forwarders' and carriers' bills clear it.")
-        if x.account == "WIP" and x.balance < -0.005:
+        if x.account == "WIP" and units.minor(x.balance) < 0:
             notes.append(f"Work in progress of {party(ds, x.company).name} is below zero ({ds.settings.currency} "
-                         f"{x.balance:,.2f}): goods were made without their parts issued to the order (receipts with "
+                         f"{x.balance:,.{units.digits}f}): goods were made without their parts issued to the order (receipts with "
                          "no backflush, or made before go-live), so what they cost is not matched yet.")
     from ..sales import to_bill
     historical = ds.model_copy(update={"invoices": [i.model_copy(update={"cancelled": not i.active_at(end)})
@@ -674,7 +678,7 @@ def view(ds: Dataset, period_start: date | None = None, period_end: date | None 
     due = [b for b in to_bill(historical) if b.delivered_on <= end]
     if due:
         worth = sum(b.value or 0.0 for b in due)
-        notes.append(f"{len(due)} deliveries are not invoiced yet" + (f" ({ds.settings.currency} {worth:,.2f} at their "
+        notes.append(f"{len(due)} deliveries are not invoiced yet" + (f" ({ds.settings.currency} {worth:,.{units.digits}f} at their "
                      "prices)" if worth else "") + ": their cost of goods sold is in the books, their sales are not.")
     if not vs:
         notes.append("Nothing posted yet: the journal fills from stock movements, invoices and payments.")
@@ -691,18 +695,20 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
     """The journal against the documents it was made from, company by company."""
     ids = ["", *(e.id for e in ds.entities)]
     out: list[AccountCheck] = []
+    units = material_units(ds.settings.currency)
 
     def bal(co: str, acc: str) -> float:
         return totals.get((co, acc), [0.0, 0.0, 0.0])[2]
 
     def add(co: str, what: str, journal: float, expected: float, why: str) -> None:
-        ok = abs(journal - expected) < 0.05
-        out.append(AccountCheck(company=co, what=what, journal=_r(journal), expected=_r(expected), ok=ok,
+        ok = (abs(journal - expected) < 0.05 if units.digits == 2
+              else units.minor(journal) == units.minor(expected))
+        out.append(AccountCheck(company=co, what=what, journal=units.amount(journal), expected=units.amount(expected), ok=ok,
                          why="" if ok else why))
 
     stock: dict[str, float] = defaultdict(float)
     for (loc, _p), n in b.nodes.items():
-        stock[entity_of(ds, loc)] += round(n.value, 2)
+        stock[entity_of(ds, loc)] += units.amount(n.value)
     road: dict[str, float] = defaultdict(float)
     for ref, (q, v) in b.shipped.items():
         if q > EPS:
@@ -752,6 +758,21 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
         else:
             at = purchase.base if open_ >= 0 else billed_at.get(lid, purchase.base)
             grir[entity_of(ds, info.location)] -= open_ * at
+    if units.digits != 2:
+        # Reconcile to the independently dated receipt and reversal records.
+        reversed_qty: dict[str, float] = defaultdict(float)
+        for move in ds.movements:
+            if move.date <= day and move.reversal_of:
+                reversed_qty[move.reversal_of] += abs(move.qty)
+        grir.clear()
+        for move in ds.movements:
+            if (move.date > day or move.reversal_of or move.type is not MovementType.RECEIPT
+                    or move.reference not in b.purchase_lines):
+                continue
+            price = b.purchase_lines[move.reference].base
+            booked = units.minor(units.product(move.qty, price))
+            left = max(0.0, move.qty - reversed_qty[move.id])
+            grir[entity_of(ds, move.location)] -= units.major(units.prorated_minor(booked, left, move.qty))
     ic_rec: dict[str, float] = defaultdict(float)
     ic_pay: dict[str, float] = defaultdict(float)
     for inv in ds.intercompany_invoices:
@@ -759,7 +780,7 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
             left = inv.total - sum(p.amount + p.discount for p in inv.payments if p.date <= day)
             ic_rec[inv.seller] += inv.sign * left
             ic_pay[inv.buyer] += inv.sign * left
-    off = [v for v in vs if abs(v.debit - v.credit) >= 0.005]
+    off = [v for v in vs if units.minor(v.debit) != units.minor(v.credit)]
     for co in ids:
         add(co, "Debits equal credits", sum(v.debit for v in vs if v.company == co),
             sum(v.credit for v in vs if v.company == co),
@@ -846,6 +867,8 @@ def tally_xml(ds: Dataset, company: str = "", period_start: date | None = None,
 
 
 def tally_from_view(v: AccountingView, ds: Dataset, company: str, *, bank_detail: bool = False) -> str:
+    if material_units(v.currency).digits != 2:
+        raise TallyExportError("this currency's material ledger is available as CSV; Tally precision has not been validated")
     if company and company not in ds.entity_by_id:
         raise ValueError(f"there is no company {company}")
     row = next(c for c in v.companies if c.id == company)
@@ -896,13 +919,14 @@ def csv_rows(v: AccountingView, ds: Dataset, *, bank_detail: bool = False) -> li
     """The period's vouchers, one row per line, for a spreadsheet."""
     rows = [["company", "date", "voucher", "type", "document", "narration", "account", "ledger", "party", "location",
              "product", "debit", "credit"]]
+    digits = material_units(v.currency).digits
     if bank_detail:
         rows[0].extend(("company_id", "bank_account"))
     for x in reversed(v.vouchers):
         for ln in x.lines:
             row = [party(ds, x.company).name, x.date.isoformat(), x.number, x.type, x.document, x.narration,
                    ln.account, ledger(ds, ln.account), _name(ds, ln.party) if ln.party else "", ln.location,
-                   ln.product, _amt(ln.debit), _amt(ln.credit)]
+                   ln.product, f"{ln.debit:.{digits}f}", f"{ln.credit:.{digits}f}"]
             if bank_detail:
                 row.extend((x.company, ln.bank_account or ""))
             rows.append(row)
