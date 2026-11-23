@@ -688,6 +688,15 @@ def firming_digest(ds: Dataset, plan: PlanResult) -> str:
     return with_kept_plan(ds, plan, "firming-digest", fingerprint)
 
 
+def reviewed_plan(ds: Dataset, fingerprint: str | None, *, selection: bool) -> PlanResult:
+    if selection and fingerprint is None:
+        raise HTTPException(428, "supply the reviewed plan fingerprint for the selected orders")
+    plan = run_mrp(ds)
+    if fingerprint is not None and fingerprint != firming_digest(ds, plan):
+        raise HTTPException(412, "the supply plan changed; recalculate it and review the selection")
+    return plan
+
+
 class TraceRequest(Out):
     dataset: PlanData
     order: str | None = None          # an order: what it serves, up to the customer, and what it depends on
@@ -761,11 +770,7 @@ class FirmResponse(Out):
 
 @app.post("/api/orders/firm", response_model=FirmResponse)
 def post_firm(req: FirmRequest) -> FirmResponse:
-    if (req.ids is not None or req.starts) and req.plan_sha256 is None:
-        raise HTTPException(428, "supply the reviewed plan fingerprint for selected or rescheduled orders")
-    plan = run_mrp(req.dataset)
-    if req.plan_sha256 is not None and req.plan_sha256 != firming_digest(req.dataset, plan):
-        raise HTTPException(412, "the supply plan changed; recalculate it and review the orders before firming")
+    plan = reviewed_plan(req.dataset, req.plan_sha256, selection=req.ids is not None or bool(req.starts))
     new, rep = firm_orders(req.dataset, plan, req.ids, req.within_days, req.starts, req.send)
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before firming orders")
@@ -776,7 +781,12 @@ def post_firm(req: FirmRequest) -> FirmResponse:
 @app.post("/api/purchasing", response_model=PurchasingView)
 def post_purchasing(ds: PlanData) -> Response:
     """Requisitions from the supply plan, every purchase order with its lines' status, and the supplier scorecard."""
-    return respond("purchasing", ds, lambda: purchasing_view(ds, run_mrp(ds)))
+    def result() -> PurchasingView:
+        plan = run_mrp(ds)
+        view = purchasing_view(ds, plan)
+        return view.model_copy(update={"firming_sha256": firming_digest(ds, plan)}) if plan.ok else view
+
+    return respond("purchasing", ds, result)
 
 
 class RequisitionPick(Out):
@@ -789,6 +799,7 @@ class CreatePoRequest(Out):
     dataset: PlanData
     lines: list[RequisitionPick] | None = None      # None = every requisition due now, on its planned source
     order_date: dt.date | None = None
+    plan_sha256: str | None = Field(None, pattern=r"^[a-f0-9]{64}$")
 
 
 class CreatePoResponse(Out):
@@ -799,7 +810,7 @@ class CreatePoResponse(Out):
 
 @app.post("/api/purchasing/create", response_model=CreatePoResponse)
 def post_create_pos(req: CreatePoRequest) -> CreatePoResponse:
-    plan = run_mrp(req.dataset)
+    plan = reviewed_plan(req.dataset, req.plan_sha256, selection=req.lines is not None)
     lines = None if req.lines is None else [x.model_dump(exclude_none=True) for x in req.lines]
     new, rep = create_purchase_orders(req.dataset, plan, lines, req.order_date)
     if not rep.ok:

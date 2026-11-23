@@ -114,6 +114,15 @@ def test_selected_firming_compares_the_reviewed_plan_across_whole_and_reference_
     request["dataset"] = ref(rev, make_patch(doc, updated))
     stale = client.post("/api/orders/firm", json=request, headers=headers)
     assert stale.status_code == 412 and "supply plan changed" in stale.text
+    buying = client.post("/api/purchasing", json=ref(rev), headers=headers).json()
+    assert buying["firming_sha256"] == preview["firming_sha256"]
+    line = next(row for row in buying["requisitions"] if row["id"] == selected["id"])
+    order = {"dataset": request["dataset"], "lines": [{"id": line["id"]}]}
+    assert client.post("/api/purchasing/create", json=order, headers=headers).status_code == 428
+    order["plan_sha256"] = buying["firming_sha256"]
+    assert client.post("/api/purchasing/create", json=order, headers=headers).status_code == 412
+    order["dataset"] = ref(rev)
+    assert client.post("/api/purchasing/create", json=order, headers=headers).status_code == 200
 
 
 def test_changes_never_touch_the_kept_company_and_come_back_as_made():

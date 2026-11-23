@@ -427,9 +427,11 @@ export const api = {
   } = {}) => write<WarehouseActionResponse>("/api/warehouse/act", dataset, { action, ...extra }),
   /** Requisitions from the supply plan, every purchase order and the supplier scorecard. */
   purchasing: (ds: Dataset) => planPost<PurchasingView>("/api/purchasing", ds),
-  /** Turn requisitions into purchase orders (`lines` = which, on which source; none = everything due now). */
-  createPurchaseOrders: (dataset: Dataset, lines?: RequisitionPick[], orderDate?: string) =>
-    write<CreatePoResponse>("/api/purchasing/create", dataset, { lines: lines ?? null, order_date: orderDate ?? null }),
+  /** Turn the reviewed requisitions into purchase orders. */
+  createPurchaseOrders: (dataset: Dataset, lines: RequisitionPick[], planSha256: string, orderDate?: string) =>
+    write<CreatePoResponse>("/api/purchasing/create", dataset, {
+      lines, plan_sha256: planSha256, order_date: orderDate ?? null,
+    }),
   /** A purchase order no requisition asked for: one line on a purchasing source (null date = as soon as it can come). */
   oneOffPo: (dataset: Dataset, sourceId: string, qty: number, dueDate?: string | null) =>
     write<CreatePoResponse>("/api/purchasing/one-off", dataset, { source_id: sourceId, qty, due_date: dueDate || null }),

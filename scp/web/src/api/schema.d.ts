@@ -5680,6 +5680,8 @@ export interface components {
             lines?: components["schemas"]["RequisitionPick"][] | null;
             /** Order Date */
             order_date?: string | null;
+            /** Plan Sha256 */
+            plan_sha256?: string | null;
         };
         /** CreatePoResponse */
         CreatePoResponse: {
@@ -14184,6 +14186,8 @@ export interface components {
             vendors: components["schemas"]["VendorRow"][];
             payables: components["schemas"]["PayablesView"] | null;
             spend: components["schemas"]["SpendView"] | null;
+            /** Firming Sha256 */
+            firming_sha256?: string | null;
         };
         /**
          * Putaway

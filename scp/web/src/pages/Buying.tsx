@@ -104,9 +104,15 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
   const rows = useMemo(() => res.requisitions.filter((r) => (all || r.due_now) && (!q
     || `${r.id} ${r.product} ${nmq.prod(r.product)} ${r.location} ${nmq.loc(r.location)} ${r.supplier} ${nmq.loc(r.supplier)}`.toLowerCase().includes(q.toLowerCase()))),
   [res.requisitions, all, q, nmq]);
-  const [pick, setPick] = useState<Set<string> | null>(null);
-  const chosen = pick ?? new Set(rows.map((r) => r.id));
-  const [source, setSource] = useState<Record<string, string>>({});
+  const basis = res.firming_sha256;
+  const [selection, setSelection] = useState<{ basis: string; pick: Set<string> | null; source: Record<string, string> } | null>(null);
+  const current = selection?.basis === basis ? selection : null;
+  const chosen = selection && !current ? new Set<string>() : current?.pick ?? new Set(rows.map((r) => r.id));
+  const source = current?.source ?? {};
+  const setPick = (pick: Set<string> | null) => { if (basis) setSelection({ basis, pick, source }); };
+  const chooseSource = (id: string, sourceId: string) => {
+    if (basis) setSelection({ basis, pick: chosen, source: { ...source, [id]: sourceId } });
+  };
   const [orderDate, setOrderDate] = useState(ds.settings.planning_start);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<React.ReactNode>(null);
@@ -121,12 +127,13 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
     setPick(n);
   };
   const create = async () => {
+    if (!basis) return;
     setBusy(true); setErr(null); setMsg(null);
     try {
       const lines = picked.map((r) => ({ id: r.id, source_id: source[r.id] ?? null, qty: null }));
-      const out = await applyPurchasing((dataset) => api.createPurchaseOrders(dataset, lines, orderDate));
+      const out = await applyPurchasing((dataset) => api.createPurchaseOrders(dataset, lines, basis, orderDate));
       const rep = out.report;
-      setPick(null); setSource({});
+      setSelection(null);
       setMsg(<>
         {rep.created.length ? <>{plural(rep.created.length, "purchase order")} created: {rep.created.map((p, i) => (
           <span key={p.id}>{i > 0 && ", "}<a href={href("buying", "orders", p.id)}><b>{p.id}</b></a> to {namesOf(ds).loc(p.supplier)} ({plural(p.lines.length, "line")}, {money(p.value, p.currency)}{!p.approved && ", needs approval"})</span>))}.</> : "No purchase order created."}
@@ -156,7 +163,7 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
         <label className="row small"><input type="checkbox" checked={all} onChange={(e) => { setAll(e.target.checked); setPick(null); }} /> Show later ones too</label>
         <label className="row small" htmlFor="po-date">Order date <input id="po-date" type="date" className="input" style={{ width: 150 }} value={orderDate}
           min={ds.settings.planning_start} onChange={(e) => setOrderDate(e.target.value || ds.settings.planning_start)} /></label>
-        <Edits><button className="btn accent" disabled={busy || picked.length === 0} onClick={create}>
+        <Edits><button className="btn accent" disabled={busy || !basis || picked.length === 0} onClick={create}>
           {busy ? "Ordering…" : `Create purchase orders (${picked.length})`}</button></Edits>
       </>}>
         {rows.length === 0 ? <Empty title={res.requisitions.length ? "Nothing due this week" : "Nothing to buy"}>
@@ -180,7 +187,7 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
                       <td>
                         {r.choices.length > 1 ? (
                           <select className="input" aria-label={`Supplier for ${r.id}`} value={c?.source_id}
-                            onChange={(e) => setSource({ ...source, [r.id]: e.target.value })}>
+                            onChange={(e) => chooseSource(r.id, e.target.value)}>
                             {r.choices.map((x) => <option key={x.source_id} value={x.source_id} disabled={!!x.blocked}>
                               {namesOf(ds).loc(x.supplier)}{x.assigned ? " (planned)" : ""}{x.fixed ? " · fixed" : ""}{x.blocked ? " · blocked" : ""}</option>)}
                           </select>

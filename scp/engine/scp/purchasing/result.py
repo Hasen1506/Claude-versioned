@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 from typing import Literal
+from pydantic import Field
 
 from ..carrier_bank import CarrierBankView
 from ..freight import CarrierBill
@@ -173,6 +174,7 @@ class PurchasingView(Out):
     vendors: list[VendorRow]
     payables: PayablesView | None = None
     spend: SpendView | None = None     # where the money goes, and which bought products have one source
+    firming_sha256: str | None = Field(None, exclude_if=lambda value: value is None)
 
 
 class CreatedPo(Out):
