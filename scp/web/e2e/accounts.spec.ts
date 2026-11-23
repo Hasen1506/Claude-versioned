@@ -153,3 +153,62 @@ test("the books follow the invoices and payments, check themselves and go to Tal
   expect(csv).toMatch(/INV-00001.*Customers|Customers.*INV-00001/s);
   await page.screenshot({ path: "test-results/accounts.png", fullPage: true });
 });
+
+test("the accounts downloads retain two registered bank destinations", async ({ page }) => {
+  const company = {
+    settings: { company_name: "Bank export fixture", planning_start: "2026-03-06", horizon_days: 28, currency: "INR" },
+    entities: [{ id: "E1", name: "Paying company" }, { id: "E2", name: "Other company" }],
+    locations: [{ id: "W", type: "dc", entity: "E1" }, { id: "C", type: "customer" }],
+    lanes: [{ id: "L", origin: "W", destination: "C", modes: [{ mode: "truck_ftl", transit_days: 1 }] }],
+    carriers: [{ id: "CR", rates: [{ lane: "L", per_shipment: 90 }] }],
+    carrier_bank_accounts: [
+      { id: "BANK-A", company: "E1", starts_on: "2026-03-01", opening_minor: 20_000, currency: "INR" },
+      { id: "BANK-B", company: "E1", starts_on: "2026-03-01", opening_minor: 30_000, currency: "INR" },
+      { id: "BANK-C", company: "E2", starts_on: "2026-03-01", opening_minor: 10_000, currency: "INR" },
+    ],
+    freight_orders: [40.25, 59.75].map((amount, index) => ({
+      id: `FO-${index + 1}`, lane: "L", mode: "truck_ftl", carrier: "CR", ship_from: "W", ship_to: "C", status: "settled",
+      planned_on: "2026-03-02", shipped_on: "2026-03-02", settled_on: "2026-03-02", billed: amount, bill: `BILL-${index + 1}`,
+      deliveries: [`DL-${index + 1}`],
+      bill_payments: [{ date: "2026-03-03", amount, reference: `WIRE-${index + 1}`, bank_account: index === 0 ? "BANK-A" : "BANK-B" }],
+    })),
+  };
+  await page.goto("/");
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Import a file", exact: true }).click();
+  await (await chooser).setFiles({ name: "bank-export.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(company)) });
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  await page.goto("/#/account");
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill(`bank-export-${Date.now()}@example.invalid`);
+  await page.getByLabel("Your name").fill("Accountant");
+  await page.getByLabel(/^Password/).fill("fixture-only-spring-clover");
+  await page.getByRole("button", { name: "Make the account", exact: true }).click();
+  await page.getByRole("button", { name: "Keep it on the server", exact: true }).click();
+  await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+  await page.goto("/#/accounts/tally");
+  await page.getByLabel("Company", { exact: true }).selectOption("E1");
+  const tally = page.getByRole("button", { name: "Download bank-detail Tally file" });
+  await expect(page.getByLabel("Tally bank ledger for BANK-C", { exact: true })).toHaveCount(0);
+  await tally.click();
+  await expect(page.getByRole("alert")).toContainText("BANK-A, BANK-B");
+  await page.getByLabel("Tally bank ledger for BANK-A", { exact: true }).fill("Primary & Co");
+  await page.getByLabel("Tally bank ledger for BANK-B", { exact: true }).fill("Reserve Bank");
+  await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+  await page.reload();
+  await page.getByLabel("Company", { exact: true }).selectOption("E1");
+  await expect(page.getByLabel("Tally bank ledger for BANK-A", { exact: true })).toHaveValue("Primary & Co");
+  await expect(page.getByLabel("Tally bank ledger for BANK-B", { exact: true })).toHaveValue("Reserve Bank");
+  const xmlDownload = page.waitForEvent("download");
+  await tally.click();
+  const xml = readFileSync((await (await xmlDownload).path())!, "utf8");
+  expect(xml).toMatch(/<VOUCHERNUMBER>FO-1\/P-1<\/VOUCHERNUMBER>(?:(?!<\/VOUCHER>).)*<LEDGERNAME>Primary &amp; Co<\/LEDGERNAME>/);
+  expect(xml).toMatch(/<VOUCHERNUMBER>FO-2\/P-1<\/VOUCHERNUMBER>(?:(?!<\/VOUCHER>).)*<LEDGERNAME>Reserve Bank<\/LEDGERNAME>/);
+  expect(xml).not.toContain('<LEDGER NAME="Reserve Bank"');
+  const csvDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download bank-detail CSV" }).click();
+  const csv = readFileSync((await (await csvDownload).path())!, "utf8");
+  expect(csv.split(/\r?\n/)[0]).toMatch(/,company_id,bank_account$/);
+  expect(csv).toMatch(/FO-1\/P-1.*E1,BANK-A/);
+  expect(csv).toMatch(/FO-2\/P-1.*E1,BANK-B/);
+});

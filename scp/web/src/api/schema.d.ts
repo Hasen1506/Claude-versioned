@@ -7330,6 +7330,13 @@ export interface components {
                 [key: string]: string;
             };
             /**
+             * Tally Bank Ledgers
+             * @description Existing destination Tally ledger names by registered carrier bank account ID
+             */
+            tally_bank_ledgers?: {
+                [key: string]: string;
+            };
+            /**
              * Tally Company
              * @description The company's name in Tally, for the export; empty = its name here
              * @default
@@ -24525,6 +24532,7 @@ export interface operations {
                 company?: string;
                 period_start?: string | null;
                 period_end?: string | null;
+                bank_detail?: boolean;
             };
             header?: never;
             path?: never;

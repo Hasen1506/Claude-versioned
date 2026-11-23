@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date
+from unicodedata import normalize
 from xml.sax.saxutils import escape, quoteattr
 
 from pydantic import Field
@@ -791,25 +792,71 @@ def _td(d: date) -> str:
     return d.strftime("%Y%m%d")
 
 
+class TallyExportError(ValueError):
+    """The destination ledger mapping cannot safely represent this journal."""
+
+
+def _tally_ledger(ds: Dataset, line: JournalLine) -> str:
+    if line.account in PARTY_ACCOUNTS and (line.party or line.account.startswith("IC_")):
+        return _name(ds, line.party)
+    return ledger(ds, line.account)
+
+
+def _ledger_key(name: str) -> str:
+    return normalize("NFKC", name).strip().casefold()
+
+
+def _assigned_bank_ledgers(ds: Dataset, company: str, vouchers: list[Voucher]) -> dict[str, str]:
+    used = {line.bank_account for voucher in vouchers for line in voucher.lines
+            if line.account == "BANK" and line.bank_account is not None}
+    if not used:
+        return {}
+    accounts = {account.id for account in ds.carrier_bank_accounts if account.company == company}
+    if unknown := used - accounts:
+        raise TallyExportError("bank postings reference accounts outside the selected company: " + ", ".join(sorted(unknown)))
+    names = ds.finance.tally_bank_ledgers
+    if missing := used - names.keys():
+        raise TallyExportError("enter the existing Tally bank ledger for " + ", ".join(sorted(missing)))
+    reserved = {_ledger_key(ledger(ds, code)) for code in ACCOUNTS}
+    reserved.update(_ledger_key(_tally_ledger(ds, line)) for voucher in vouchers for line in voucher.lines
+                    if line.account in PARTY_ACCOUNTS)
+    assigned: dict[str, str] = {}
+    for account in sorted(accounts & names.keys()):
+        key = _ledger_key(names[account])
+        if key in reserved:
+            raise TallyExportError(f"{account} needs a distinct Tally bank ledger name for the selected company")
+        reserved.add(key)
+        if account in used:
+            assigned[account] = names[account]
+    return assigned
+
+
 def tally_xml(ds: Dataset, company: str = "", period_start: date | None = None,
-              period_end: date | None = None) -> str:
+              period_end: date | None = None, *, bank_detail: bool = False) -> str:
     """One company's ledgers and vouchers of the period as Tally's import file (Gateway of Tally → Import →
     Vouchers). A debit is a negative amount marked deemed positive, a credit a positive one, as Tally keeps them."""
-    v = view(ds, period_start, period_end, limit=10**9)
+    return tally_from_view(view(ds, period_start, period_end, limit=10**9), ds, company, bank_detail=bank_detail)
+
+
+def tally_from_view(v: AccountingView, ds: Dataset, company: str, *, bank_detail: bool = False) -> str:
     if company and company not in ds.entity_by_id:
         raise ValueError(f"there is no company {company}")
     row = next(c for c in v.companies if c.id == company)
     vs = [x for x in reversed(v.vouchers) if x.company == company]
+    assigned = _assigned_bank_ledgers(ds, company, vs) if bank_detail else {}
 
     def lname(ln: JournalLine) -> str:
-        if ln.account in PARTY_ACCOUNTS and (ln.party or ln.account.startswith("IC_")):
-            return _name(ds, ln.party)
-        return ledger(ds, ln.account)
+        if ln.account == "BANK" and ln.bank_account in assigned:
+            return assigned[ln.bank_account]
+        return _tally_ledger(ds, ln)
 
     masters: dict[str, str] = {}
     for x in vs:
         for ln in x.lines:
-            masters.setdefault(lname(ln), ACCOUNTS[ln.account][1])
+            # Dedicated bank ledgers are explicitly mapped to existing Tally masters.
+            # Creating one here could hide a misspelled destination account.
+            if ln.account != "BANK" or ln.bank_account not in assigned:
+                masters.setdefault(lname(ln), ACCOUNTS[ln.account][1])
     out = ["<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC>"
            "<REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES>"
            f"<SVCURRENTCOMPANY>{escape(row.tally_name)}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC>"
@@ -838,15 +885,20 @@ def tally_xml(ds: Dataset, company: str = "", period_start: date | None = None,
     return "".join(out)
 
 
-def csv_rows(v: AccountingView, ds: Dataset) -> list[list[str]]:
+def csv_rows(v: AccountingView, ds: Dataset, *, bank_detail: bool = False) -> list[list[str]]:
     """The period's vouchers, one row per line, for a spreadsheet."""
     rows = [["company", "date", "voucher", "type", "document", "narration", "account", "ledger", "party", "location",
              "product", "debit", "credit"]]
+    if bank_detail:
+        rows[0].extend(("company_id", "bank_account"))
     for x in reversed(v.vouchers):
         for ln in x.lines:
-            rows.append([party(ds, x.company).name, x.date.isoformat(), x.number, x.type, x.document, x.narration,
-                         ln.account, ledger(ds, ln.account), _name(ds, ln.party) if ln.party else "", ln.location,
-                         ln.product, _amt(ln.debit), _amt(ln.credit)])
+            row = [party(ds, x.company).name, x.date.isoformat(), x.number, x.type, x.document, x.narration,
+                   ln.account, ledger(ds, ln.account), _name(ds, ln.party) if ln.party else "", ln.location,
+                   ln.product, _amt(ln.debit), _amt(ln.credit)]
+            if bank_detail:
+                row.extend((x.company, ln.bank_account or ""))
+            rows.append(row)
     return rows
 
 
