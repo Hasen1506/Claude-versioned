@@ -3,12 +3,15 @@ scenarios branched from them; scenarios can be edited, discarded, compared and p
 from __future__ import annotations
 
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
 from scp.versions import Store, VersionError, canonical, compare, diff, sha
 
 from .factory import ds, lp, load_example
+from .test_backup_postgres import pg_databases as pg_databases
 
 
 @pytest.fixture
@@ -38,9 +41,9 @@ def test_base_is_byte_identical_after_branch_edit_and_discard(store):
     d = store.dataset(sc.id).model_dump(mode="json")
     lp(d, "PLT-PUNE", "RM-HEATER")["on_hand"] = 1
     d["demand"] = d["demand"][:-3]
-    edited = store.update(sc.id, ds(d))
+    edited = store.update(sc.id, ds(d), expected_sha256=sc.sha256)
     assert edited.sha256 != base.sha256
-    store.discard(sc.id)
+    store.discard(sc.id, expected_sha256=edited.sha256)
     assert raw(store, base.id) == before
     assert store.meta(sc.id).status == "discarded"
     with pytest.raises(VersionError):
@@ -63,8 +66,8 @@ def test_promote_writes_a_new_base_and_supersedes_the_old_one(store):
     before = raw(store, base.id)
     sc = store.branch(base.id, "More stock")
     sub = store.branch(sc.id, "More stock, variant")                   # a scenario of a scenario
-    store.update(sub.id, ds(_small(on_hand=77)))
-    new = store.promote(sub.id, "Jan (revised)")
+    edited = store.update(sub.id, ds(_small(on_hand=77)), expected_sha256=sub.sha256)
+    new = store.promote(sub.id, "Jan (revised)", expected_sha256=edited.sha256)
     assert new.kind == "base" and new.parent_id == sub.id and store.text(new.id) == store.text(sub.id)
     assert store.meta(sub.id).status == "promoted" and store.meta(base.id).status == "superseded"
     assert raw(store, base.id) == before
@@ -87,6 +90,58 @@ def test_versions_persist_across_connections(tmp_path):
     a.db.close()
     b = Store(p)
     assert [v.id for v in b.list()] == [m.id] and b.text(m.id) == canonical(ds(_small()))
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "postgresql"])
+def test_only_one_sibling_can_supersede_the_reviewed_base(backend, tmp_path, request, monkeypatch):
+    path = tmp_path / "race.sqlite" if backend == "sqlite" else request.getfixturevalue("pg_databases")()
+    first, second = Store(path), Store(path)
+    try:
+        data = ds(_small())
+        base = first.save_base(data, "Base")
+        left, right = [first.branch(base.id, name) for name in ("Left", "Right")]
+        changed = first.update(left.id, ds(_small(on_hand=60)), expected_sha256=left.sha256)
+        with pytest.raises(VersionError) as no_header:
+            second.update(left.id, data)
+        assert no_header.value.status == 428
+        for operation in (lambda: second.update(left.id, data, expected_sha256=left.sha256),
+                          lambda: second.discard(left.id, expected_sha256=left.sha256),
+                          lambda: second.promote(left.id, expected_sha256=left.sha256)):
+            with pytest.raises(VersionError) as stale:
+                operation()
+            assert stale.value.status == 412
+        assert first.get(left.id).meta.sha256 == changed.sha256
+
+        def fail_log(*args):
+            raise OSError("audit storage unavailable")
+
+        with monkeypatch.context() as altered:
+            altered.setattr(first, "_log", fail_log)
+            with pytest.raises(OSError, match="audit storage unavailable"):
+                first.promote(left.id, expected_sha256=changed.sha256)
+        assert [row.status for row in first.list()] == ["active", "active", "active"]
+
+        gate = Barrier(2, timeout=10)
+
+        def promote(item):
+            store, scenario = item
+            gate.wait()
+            try:
+                return store.promote(scenario.id, expected_sha256=scenario.sha256)
+            except VersionError as error:
+                assert error.status == 409 and "base was superseded" in str(error)
+                return None
+
+        with ThreadPoolExecutor(2) as workers:
+            outcomes = list(workers.map(promote, [(first, changed), (second, right)]))
+        winner, = [version for version in outcomes if version is not None]
+        assert [version.id for version in first.list() if version.kind == "base" and version.status == "active"] == [winner.id]
+        assert first.text(base.id) == canonical(data)
+        assert [x.detail for x in first.get(base.id).log if x.action == "superseded"] == [f"by {winner.id}"]
+        assert sum(row.status == "active" for row in first.list() if row.kind == "scenario") == 1
+    finally:
+        first.db.close()
+        second.db.close()
 
 
 # ---- diff & compare ------------------------------------------------------------------------------

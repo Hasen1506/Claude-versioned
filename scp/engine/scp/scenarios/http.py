@@ -109,8 +109,9 @@ class HttpClient:
         return self._pair("/api/promise/commit", {"dataset": _ds(ds), "mode": mode}, "result", PromiseResult)
 
     def firm(self, ds: Dataset, ids: list[str] | None = None, within_days: int | None = None) -> tuple[Dataset, FirmReport]:
-        return self._pair("/api/orders/firm", {"dataset": _ds(ds), "ids": ids, "within_days": within_days}, "report",
-                          FirmReport)
+        fingerprint = self.plan(ds).firming_sha256 if ids is not None else None
+        return self._pair("/api/orders/firm", {"dataset": _ds(ds), "ids": ids, "within_days": within_days,
+                                             "plan_sha256": fingerprint}, "report", FirmReport)
 
     def actuals(self, ds: Dataset, as_of: dt.date | None = None) -> ActualsView:
         return self._post("/api/actuals", {"dataset": _ds(ds), "as_of": as_of.isoformat() if as_of else None},
@@ -132,17 +133,20 @@ class HttpClient:
     def branch(self, vid: str, name: str, note: str = "") -> VersionMeta:
         return self._post(f"/api/versions/{vid}/branch", {"name": name, "note": note}, VersionMeta)
 
-    def update_version(self, vid: str, ds: Dataset) -> VersionMeta:
-        return VersionMeta.model_validate(self._json(self.s.put(f"/api/versions/{vid}", json=_ds(ds))))
+    def update_version(self, vid: str, ds: Dataset, sha256: str) -> VersionMeta:
+        return VersionMeta.model_validate(self._json(self.s.put(
+            f"/api/versions/{vid}", json=_ds(ds), headers={"If-Match": f'"{sha256}"'})))
 
     def get_version(self, vid: str) -> VersionDoc:
         return VersionDoc.model_validate(self._json(self.s.get(f"/api/versions/{vid}")))
 
-    def discard(self, vid: str) -> VersionMeta:
-        return self._post(f"/api/versions/{vid}/discard", None, VersionMeta)
+    def discard(self, vid: str, sha256: str) -> VersionMeta:
+        return VersionMeta.model_validate(self._json(self.s.post(
+            f"/api/versions/{vid}/discard", headers={"If-Match": f'"{sha256}"'})))
 
-    def promote(self, vid: str, name: str | None = None) -> VersionMeta:
-        return self._post(f"/api/versions/{vid}/promote", {"name": name}, VersionMeta)
+    def promote(self, vid: str, sha256: str, name: str | None = None) -> VersionMeta:
+        return VersionMeta.model_validate(self._json(self.s.post(
+            f"/api/versions/{vid}/promote", json={"name": name}, headers={"If-Match": f'"{sha256}"'})))
 
     def compare_versions(self, a: str, b: str) -> Comparison:
         return Comparison.model_validate(self._json(self.s.get(f"/api/versions/{a}/compare/{b}")))

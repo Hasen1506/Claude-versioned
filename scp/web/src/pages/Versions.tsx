@@ -68,14 +68,15 @@ export function Versions() {
   });
   const saveScenario = () => act(async (before) => {
     if (!before.version) return;
-    const m = await api.saveVersion(before.version.id, before.dataset);
+    if (!before.version.sha256) throw new Error("Reopen the saved scenario before saving, or keep your edits as a new scenario.");
+    const m = await api.saveVersion(before.version.id, before.dataset, before.version.sha256);
     store.saved(m, before);
   });
   const saveAsScenario = () => act(async (before) => {
     if (!before.version) return;
     const b = await api.branch(before.version.id, label);
     store.assertWorking(before);
-    const m = await api.saveVersion(b.id, before.dataset);
+    const m = await api.saveVersion(b.id, before.dataset, b.sha256);
     store.saved(m, before);
     setName("");
   });
@@ -95,13 +96,15 @@ export function Versions() {
   });
   const discard = (v: VersionMeta) => act(async (before) => {
     if (!window.confirm(`Discard scenario ${v.id} “${v.name}”? Its base is not affected.`)) return;
-    const m = await api.discard(v.id);
+    const m = await api.discard(v.id, v.sha256);
     if (before.version?.id === v.id) store.noteVersion(m, before);
   });
   const promote = (v: VersionMeta) => act(async (before) => {
     if (before.version?.id === v.id && modified
       && !window.confirm(`Promote the saved scenario ${v.id}? Opening the new base will replace the unsaved changes in your working copy.`)) return;
-    const m = await api.promote(v.id);
+    const sha256 = before.version?.id === v.id ? before.version.sha256 : v.sha256;
+    if (!sha256) throw new Error("Reopen the saved scenario before promoting it.");
+    const m = await api.promote(v.id, sha256);
     store.assertWorking(before);
     if (before.version?.id === v.id) {
       store.assertWorking(before, true);
@@ -138,8 +141,8 @@ export function Versions() {
     <div>
       <StageHeader title="Versions and what-ifs" kicker={<>Save today's data as a <b>base version</b>. To try a change, save it as a
         {" "}<b>scenario</b> of that base, then compare the two side by side, data and plan. Keep the scenario as the next base, or drop it.</>}
-        howLabel="How versions work" how={<>A saved version never changes: its content is stored with a fingerprint (SHA-256 of the data), which the table shows.
-          Promoting a scenario writes a new base and marks the old one superseded, byte for byte as it was.</>} />
+        howLabel="How versions work" how={<>Base versions retain their contents. Scenario saves, discards and promotions apply to the fingerprint shown.
+          A promotion creates the next base in that lineage. Reopen a scenario to review changes saved by someone else.</>} />
       <div className="content">
         {err && <div className="banner error"><Badge sev="error">Version store</Badge>{err}</div>}
         <Panel title="Working copy">

@@ -171,11 +171,17 @@ def test_versions_flow():
     edited = doc["dataset"]
     for x in edited["demand"]:
         x["qty"] *= 2
-    assert client.put(f"/api/versions/{sc['id']}", json=edited).json()["sha256"] != base["sha256"]
+    assert client.put(f"/api/versions/{sc['id']}", json=edited).status_code == 428
+    changed = client.put(f"/api/versions/{sc['id']}", json=edited, headers={"If-Match": f'"{sc["sha256"]}"'}).json()
+    assert changed["sha256"] != base["sha256"]
+    stale = {"If-Match": f'"{sc["sha256"]}"'}
+    assert client.post(f"/api/versions/{sc['id']}/promote", json={}, headers=stale).status_code == 412
+    assert client.post(f"/api/versions/{sc['id']}/discard", headers=stale).status_code == 412
+    assert client.put(f"/api/versions/{sc['id']}", json=d, headers=stale).status_code == 412
     assert client.put(f"/api/versions/{base['id']}", json=edited).status_code == 409
     c = client.get(f"/api/versions/{base['id']}/compare/{sc['id']}").json()
     assert c["diff"]["changes"] == len(edited["demand"]) and c["plan_b"]["orders"] >= c["plan_a"]["orders"]
-    new = client.post(f"/api/versions/{sc['id']}/promote", json={}).json()
+    new = client.post(f"/api/versions/{sc['id']}/promote", json={}, headers={"If-Match": f'"{changed["sha256"]}"'}).json()
     assert new["kind"] == "base" and new["parent_id"] == sc["id"]
     assert [v["status"] for v in client.get("/api/versions").json()] == ["superseded", "promoted", "active"]
     assert client.get("/api/versions/V9999").status_code == 404

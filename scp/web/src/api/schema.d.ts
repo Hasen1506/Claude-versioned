@@ -5680,6 +5680,8 @@ export interface components {
             lines?: components["schemas"]["RequisitionPick"][] | null;
             /** Order Date */
             order_date?: string | null;
+            /** Plan Sha256 */
+            plan_sha256?: string | null;
         };
         /** CreatePoResponse */
         CreatePoResponse: {
@@ -7482,6 +7484,8 @@ export interface components {
              * @default false
              */
             send: boolean;
+            /** Plan Sha256 */
+            plan_sha256?: string | null;
         };
         /** FirmResponse */
         FirmResponse: {
@@ -12353,6 +12357,8 @@ export interface components {
             issues: components["schemas"]["Issue"][];
             /** Planned Again */
             planned_again: number | null;
+            /** Firming Sha256 */
+            firming_sha256?: string | null;
         };
         /** PlanSummary */
         PlanSummary: {
@@ -14180,6 +14186,8 @@ export interface components {
             vendors: components["schemas"]["VendorRow"][];
             payables: components["schemas"]["PayablesView"] | null;
             spend: components["schemas"]["SpendView"] | null;
+            /** Firming Sha256 */
+            firming_sha256?: string | null;
         };
         /**
          * Putaway
@@ -24743,7 +24751,9 @@ export interface operations {
     update_version_api_versions__vid__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "if-match"?: string | null;
+            };
             path: {
                 vid: string;
             };
@@ -24978,7 +24988,9 @@ export interface operations {
     discard_version_api_versions__vid__discard_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "if-match"?: string | null;
+            };
             path: {
                 vid: string;
             };
@@ -25009,7 +25021,9 @@ export interface operations {
     promote_version_api_versions__vid__promote_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "if-match"?: string | null;
+            };
             path: {
                 vid: string;
             };

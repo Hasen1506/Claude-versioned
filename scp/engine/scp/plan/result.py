@@ -214,5 +214,7 @@ class PlanResult(Out):
     # planned again from the previous plan's work (S/4 net change planning): the nodes the changes since reached, which
     # were planned; the rest were kept as they were. None: planned from scratch
     planned_again: int | None = None
+    # The exact planning input used by a reviewed API plan. Internal result serialization retains its original form.
+    firming_sha256: str | None = Field(None, exclude_if=lambda value: value is None)
     # the demand projected late, kept with the plan on the server for questions about it (tower/ask.py), not sent
     _late: list[LateDemand] = PrivateAttr(default_factory=list)

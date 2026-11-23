@@ -427,9 +427,11 @@ export const api = {
   } = {}) => write<WarehouseActionResponse>("/api/warehouse/act", dataset, { action, ...extra }),
   /** Requisitions from the supply plan, every purchase order and the supplier scorecard. */
   purchasing: (ds: Dataset) => planPost<PurchasingView>("/api/purchasing", ds),
-  /** Turn requisitions into purchase orders (`lines` = which, on which source; none = everything due now). */
-  createPurchaseOrders: (dataset: Dataset, lines?: RequisitionPick[], orderDate?: string) =>
-    write<CreatePoResponse>("/api/purchasing/create", dataset, { lines: lines ?? null, order_date: orderDate ?? null }),
+  /** Turn the reviewed requisitions into purchase orders. */
+  createPurchaseOrders: (dataset: Dataset, lines: RequisitionPick[], planSha256: string, orderDate?: string) =>
+    write<CreatePoResponse>("/api/purchasing/create", dataset, {
+      lines, plan_sha256: planSha256, order_date: orderDate ?? null,
+    }),
   /** A purchase order no requisition asked for: one line on a purchasing source (null date = as soon as it can come). */
   oneOffPo: (dataset: Dataset, sourceId: string, qty: number, dueDate?: string | null) =>
     write<CreatePoResponse>("/api/purchasing/one-off", dataset, { source_id: sourceId, qty, due_date: dueDate || null }),
@@ -440,8 +442,8 @@ export const api = {
       date: extra.date ?? null, reference: extra.reference ?? "", note: extra.note ?? "" }),
   /** Firm planned orders into receipts: `ids`, or everything starting within the firm zone; `send` sends the
    * purchase orders it makes at once. */
-  firm: (dataset: Dataset, ids?: string[], withinDays?: number, starts?: Record<string, string>, send = false) =>
-    write<FirmResponse>("/api/orders/firm", dataset, { ids: ids ?? null, within_days: withinDays ?? null, starts: starts ?? null, send }),
+  firm: (dataset: Dataset, ids: string[], planSha256: string, starts?: Record<string, string>) =>
+    write<FirmResponse>("/api/orders/firm", dataset, { ids, plan_sha256: planSha256, starts: starts ?? null }),
   // ---- sign-in and companies kept on the server (Phase I)
   authConfig: () => call<AuthConfig>("/api/auth/config"),
   signUp: (email: string, name: string, password: string) =>
@@ -559,13 +561,19 @@ export const api = {
   version: (id: string) => call<VersionDoc>(`/api/versions/${encodeURIComponent(id)}`),
   saveBase: (dataset: Dataset, name: string, note = "") =>
     call<VersionMeta>("/api/versions", { method: "POST", body: JSON.stringify({ dataset, name, note }) }),
-  saveVersion: (id: string, dataset: Dataset) =>
-    call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(dataset) }),
+  saveVersion: (id: string, dataset: Dataset, sha256: string) =>
+    call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}`, {
+      method: "PUT", headers: { "If-Match": JSON.stringify(sha256) }, body: JSON.stringify(dataset),
+    }),
   branch: (id: string, name: string, note = "") =>
     call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/branch`, { method: "POST", body: JSON.stringify({ name, note }) }),
-  discard: (id: string) => call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/discard`, { method: "POST" }),
-  promote: (id: string, name?: string) =>
-    call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, { method: "POST", body: JSON.stringify({ name: name ?? null }) }),
+  discard: (id: string, sha256: string) => call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/discard`, {
+    method: "POST", headers: { "If-Match": JSON.stringify(sha256) },
+  }),
+  promote: (id: string, sha256: string) =>
+    call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, {
+      method: "POST", headers: { "If-Match": JSON.stringify(sha256) }, body: "{}",
+    }),
   compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`).then(done("whatif")),
   /** The monthly S&OP cycle (enterprise 4.1): its steps are signed in order, each freezing the company. */
   cycles: () => call<CycleSummary[]>("/api/sop/cycles"),

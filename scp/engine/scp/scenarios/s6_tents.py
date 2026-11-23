@@ -185,13 +185,13 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         expected_sha = hashlib.sha256(_canon(rolled).encode()).hexdigest()
         ctx.eq("base saved with the content hash", (base.kind, base.status, base.sha256),
                ("base", "active", expected_sha), "SHA-256 of the canonical JSON (sorted keys, compact).")
-        ctx.raises("a base cannot be edited", lambda: c.update_version(base.id, rolled), 409, "immutable")
+        ctx.raises("a base cannot be edited", lambda: c.update_version(base.id, rolled, base.sha256), 409, "immutable")
         sc = c.branch(base.id, "Safety stock 30")
         ctx.eq("the branch starts identical", (sc.kind, sc.parent_id, sc.sha256), ("scenario", base.id, base.sha256))
         edit = json.loads(rolled.model_dump_json())
         edit["location_products"][0]["safety_stock"] = {"method": "fixed", "qty": 30}
         edited = Dataset.model_validate(edit)
-        sc = c.update_version(sc.id, edited)
+        sc = c.update_version(sc.id, edited, sc.sha256)
         ctx.eq("the edit changes its hash", sc.sha256, hashlib.sha256(_canon(edited).encode()).hexdigest())
         cmp = c.compare_versions(base.id, sc.id)
         lp_diff = one(cmp.diff.collections, collection="location_products")
@@ -200,15 +200,15 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
                  actual=(round(cmp.plan_a.inventory_value_avg, 2), round(cmp.plan_b.inventory_value_avg, 2)),
                  expect="(A, B) with B > A")
         other = c.branch(base.id, "Forecast −20 %")
-        ctx.eq("discarded", c.discard(other.id).status, "discarded")
+        ctx.eq("discarded", c.discard(other.id, other.sha256).status, "discarded")
         ctx.raises("a discarded scenario cannot be branched", lambda: c.branch(other.id, "x"), 409, "discarded")
-        new = c.promote(sc.id)
+        new = c.promote(sc.id, sc.sha256)
         ctx.eq("promotion creates a new base from the scenario", (new.kind, new.parent_id, new.sha256),
                ("base", sc.id, sc.sha256))
         ctx.eq("lifecycle", (c.get_version(base.id).meta.status, c.get_version(sc.id).meta.status),
                ("superseded", "promoted"))
         ctx.eq("the old base's content is untouched", c.get_version(base.id).meta.sha256, expected_sha)
-        ctx.raises("a promoted scenario cannot be promoted twice", lambda: c.promote(sc.id), 409, "only an active scenario")
+        ctx.raises("a promoted scenario cannot be promoted twice", lambda: c.promote(sc.id, sc.sha256), 409, "only an active scenario")
 
 
 SCENARIO = Scenario(

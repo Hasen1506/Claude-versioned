@@ -119,10 +119,10 @@ class Client(Protocol):
     def tower(self, ds: Dataset) -> TowerResult: ...
     def save_base(self, ds: Dataset, name: str, note: str = "") -> VersionMeta: ...
     def branch(self, vid: str, name: str, note: str = "") -> VersionMeta: ...
-    def update_version(self, vid: str, ds: Dataset) -> VersionMeta: ...
+    def update_version(self, vid: str, ds: Dataset, sha256: str) -> VersionMeta: ...
     def get_version(self, vid: str) -> VersionDoc: ...
-    def discard(self, vid: str) -> VersionMeta: ...
-    def promote(self, vid: str, name: str | None = None) -> VersionMeta: ...
+    def discard(self, vid: str, sha256: str) -> VersionMeta: ...
+    def promote(self, vid: str, sha256: str, name: str | None = None) -> VersionMeta: ...
     def compare_versions(self, a: str, b: str) -> Comparison: ...
 
 
@@ -214,25 +214,25 @@ class EngineClient:
     def branch(self, vid: str, name: str, note: str = "") -> VersionMeta:
         return self._v(self.store.branch, vid, name, note)
 
-    def update_version(self, vid: str, ds: Dataset) -> VersionMeta:
-        return self._v(self.store.update, vid, ds)
+    def update_version(self, vid: str, ds: Dataset, sha256: str) -> VersionMeta:
+        return self._v(self.store.update, vid, ds, expected_sha256=sha256)
 
     def get_version(self, vid: str) -> VersionDoc:
         return self._v(self.store.get, vid)
 
-    def discard(self, vid: str) -> VersionMeta:
-        return self._v(self.store.discard, vid)
+    def discard(self, vid: str, sha256: str) -> VersionMeta:
+        return self._v(self.store.discard, vid, expected_sha256=sha256)
 
-    def promote(self, vid: str, name: str | None = None) -> VersionMeta:
-        return self._v(self.store.promote, vid, name, "")
+    def promote(self, vid: str, sha256: str, name: str | None = None) -> VersionMeta:
+        return self._v(self.store.promote, vid, name, expected_sha256=sha256)
 
     def compare_versions(self, a: str, b: str) -> Comparison:
         return compare(self._v(self.store.dataset, a), self._v(self.store.dataset, b), a, b)
 
     @staticmethod
-    def _v(fn: Callable[..., Any], *args: Any) -> Any:
+    def _v(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         try:
-            return fn(*args)
+            return fn(*args, **kwargs)
         except VersionError as e:
             raise ClientError(e.status, str(e)) from e
 

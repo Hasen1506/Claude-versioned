@@ -49,8 +49,8 @@ def main():
         raise AssertionError('Account isolation failed')
     base = store.save_base(Dataset.model_validate(doc), 'Fictional base', scope=company.id)
     scenario = store.branch(base.id, 'Fictional scenario', scope=company.id)
-    store.update(scenario.id, Dataset.model_validate(changed), scope=company.id)
-    promoted = store.promote(scenario.id, 'Fictional promoted', scope=company.id)
+    scenario = store.update(scenario.id, Dataset.model_validate(changed), scope=company.id, expected_sha256=scenario.sha256)
+    promoted = store.promote(scenario.id, 'Fictional promoted', scope=company.id, expected_sha256=scenario.sha256)
     assert promoted.kind == 'base'
     try:
         store.db.execute("UPDATE versions SET dataset='{}' WHERE id=?", (base.id,))

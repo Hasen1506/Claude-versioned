@@ -98,6 +98,33 @@ def test_a_change_to_the_kept_company_comes_back_as_what_changed():
     assert len(str(out["patch"])) < len(str(whole["dataset"])) / 4
 
 
+def test_selected_firming_compares_the_reviewed_plan_across_whole_and_reference_requests():
+    tok, cid, doc, rev = company("firm-review@ref.example")
+    preview = client.post("/api/plan", json=doc).json()
+    selected = next(order for order in preview["orders"] if order["kind"] == "buy")
+    request = {"dataset": ref(rev), "ids": [selected["id"]]}
+    headers = h(tok, cid)
+    assert client.post("/api/orders/firm", json=request, headers=headers).status_code == 428
+    request["plan_sha256"] = preview["firming_sha256"]
+    reviewed = client.post("/api/orders/firm", json=request, headers=headers)
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json()["report"]["firmed"][0]["qty"] == selected["qty"]
+    updated = {**doc, "location_products": [{**doc["location_products"][0], "on_hand": 100},
+                                            *doc["location_products"][1:]]}
+    request["dataset"] = ref(rev, make_patch(doc, updated))
+    stale = client.post("/api/orders/firm", json=request, headers=headers)
+    assert stale.status_code == 412 and "supply plan changed" in stale.text
+    buying = client.post("/api/purchasing", json=ref(rev), headers=headers).json()
+    assert buying["firming_sha256"] == preview["firming_sha256"]
+    line = next(row for row in buying["requisitions"] if row["id"] == selected["id"])
+    order = {"dataset": request["dataset"], "lines": [{"id": line["id"]}]}
+    assert client.post("/api/purchasing/create", json=order, headers=headers).status_code == 428
+    order["plan_sha256"] = buying["firming_sha256"]
+    assert client.post("/api/purchasing/create", json=order, headers=headers).status_code == 412
+    order["dataset"] = ref(rev)
+    assert client.post("/api/purchasing/create", json=order, headers=headers).status_code == 200
+
+
 def test_changes_never_touch_the_kept_company_and_come_back_as_made():
     """The company read for one call is handed to the next: a change must make a new one, never edit it."""
     tok, cid, doc, rev = company("lena@ref.example")

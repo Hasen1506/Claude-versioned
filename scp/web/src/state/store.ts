@@ -41,6 +41,7 @@ export interface WorkingVersion {
   name: string;
   kind: string;          // base | scenario
   status: string;
+  sha256?: string;       // older browser caches can predate the reviewed fingerprint
   savedRevision: number; // working-copy revision that equals the stored content
 }
 
@@ -856,7 +857,7 @@ export const store = {
   noteVersion(version: Omit<WorkingVersion, "savedRevision">, before: WorkingSnapshot) {
     store.assertWorking(before);
     if (state.version?.id !== version.id) return;
-    const v = { ...version, savedRevision: state.version.savedRevision };
+    const v = { ...version, sha256: state.version.sha256, savedRevision: state.version.savedRevision };
     persistVersion(v, v.savedRevision !== state.revision);
     set({ version: v });
   },
@@ -1043,7 +1044,8 @@ export const store = {
         const vr = localStorage.getItem(VERSION_KEY);
         const v = vr ? (JSON.parse(vr) as WorkingVersion & { modified?: boolean }) : null;
         // a reload keeps the link to the stored version; "modified" survives as a revision mismatch
-        const version = v ? { id: v.id, name: v.name, kind: v.kind, status: v.status, savedRevision: v.modified ? -1 : rev } : null;
+        const version = v ? { id: v.id, name: v.name, kind: v.kind, status: v.status, sha256: v.sha256,
+          savedRevision: v.modified ? -1 : rev } : null;
         restoringSteps = true;
         set({ dataset: ds, version, revision: rev });
         // the undo steps kept for exactly this working copy come back with it

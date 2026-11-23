@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Field, ValidationError
 
-from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 
@@ -87,7 +87,7 @@ from ..whatif import (
     KeepRequest, KeepResult, SweepRequest, SweepResult, WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios,
     keep_scenario, sweep_chip,
 )
-from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
+from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, canonical, compare, get_store, sha
 from ..companies import CompanyError, get_companies
 from ..companies.commands import CommandRecord, CommandRequest, CommandResult, execute as execute_command, record as command_record
 from .connect import router as connect_router
@@ -672,7 +672,29 @@ def post_sales_order(req: SalesOrderRequest) -> SalesOrderResponse:
 def post_plan(ds: PlanData, pegging: bool = True) -> Response:
     """The supply plan. ``pegging=false`` leaves out the requirements and the pegging (two thirds of a large plan):
     ``/api/plan/trace`` gives an order's or a product's part of them when it is looked at."""
-    return respond("plan", ds, lambda: run_mrp(ds), exclude=None if pegging else {"requirements", "pegs"})
+    def result() -> PlanResult:
+        plan = run_mrp(ds)
+        return plan.model_copy(update={"firming_sha256": firming_digest(ds, plan)}) if plan.ok else plan
+
+    return respond("plan", ds, result, exclude=None if pegging else {"requirements", "pegs"})
+
+
+def firming_digest(ds: Dataset, plan: PlanResult) -> str:
+    def fingerprint() -> str:
+        content = sha(canonical(ds))
+        proposals = sha(plan.model_dump_json(include={"orders", "requirements"}))
+        return sha(f"{content}:{proposals}")
+
+    return with_kept_plan(ds, plan, "firming-digest", fingerprint)
+
+
+def reviewed_plan(ds: Dataset, fingerprint: str | None, *, selection: bool) -> PlanResult:
+    if selection and fingerprint is None:
+        raise HTTPException(428, "supply the reviewed plan fingerprint for the selected orders")
+    plan = run_mrp(ds)
+    if fingerprint is not None and fingerprint != firming_digest(ds, plan):
+        raise HTTPException(412, "the supply plan changed; recalculate it and review the selection")
+    return plan
 
 
 class TraceRequest(Out):
@@ -737,6 +759,7 @@ class FirmRequest(Out):
     within_days: int | None = None        # overrides the dataset's firm zone
     starts: dict[str, dt.date] | None = None  # planned production runs moved by hand: firm, starting that day
     send: bool = False                    # send the purchase orders it makes at once (all but those to be released)
+    plan_sha256: str | None = Field(None, pattern=r"^[a-f0-9]{64}$")
 
 
 class FirmResponse(Out):
@@ -747,7 +770,8 @@ class FirmResponse(Out):
 
 @app.post("/api/orders/firm", response_model=FirmResponse)
 def post_firm(req: FirmRequest) -> FirmResponse:
-    new, rep = firm_orders(req.dataset, run_mrp(req.dataset), req.ids, req.within_days, req.starts, req.send)
+    plan = reviewed_plan(req.dataset, req.plan_sha256, selection=req.ids is not None or bool(req.starts))
+    new, rep = firm_orders(req.dataset, plan, req.ids, req.within_days, req.starts, req.send)
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before firming orders")
     return FirmResponse(**answer(req.dataset, new), report=rep)
@@ -757,7 +781,12 @@ def post_firm(req: FirmRequest) -> FirmResponse:
 @app.post("/api/purchasing", response_model=PurchasingView)
 def post_purchasing(ds: PlanData) -> Response:
     """Requisitions from the supply plan, every purchase order with its lines' status, and the supplier scorecard."""
-    return respond("purchasing", ds, lambda: purchasing_view(ds, run_mrp(ds)))
+    def result() -> PurchasingView:
+        plan = run_mrp(ds)
+        view = purchasing_view(ds, plan)
+        return view.model_copy(update={"firming_sha256": firming_digest(ds, plan)}) if plan.ok else view
+
+    return respond("purchasing", ds, result)
 
 
 class RequisitionPick(Out):
@@ -770,6 +799,7 @@ class CreatePoRequest(Out):
     dataset: PlanData
     lines: list[RequisitionPick] | None = None      # None = every requisition due now, on its planned source
     order_date: dt.date | None = None
+    plan_sha256: str | None = Field(None, pattern=r"^[a-f0-9]{64}$")
 
 
 class CreatePoResponse(Out):
@@ -780,7 +810,7 @@ class CreatePoResponse(Out):
 
 @app.post("/api/purchasing/create", response_model=CreatePoResponse)
 def post_create_pos(req: CreatePoRequest) -> CreatePoResponse:
-    plan = run_mrp(req.dataset)
+    plan = reviewed_plan(req.dataset, req.plan_sha256, selection=req.lines is not None)
     lines = None if req.lines is None else [x.model_dump(exclude_none=True) for x in req.lines]
     new, rep = create_purchase_orders(req.dataset, plan, lines, req.order_date)
     if not rep.ok:
@@ -1551,6 +1581,9 @@ class PromoteRequest(Out):
     note: str = ""
 
 
+ScenarioIfMatch = Annotated[str | None, Header(pattern=r'^"[a-f0-9]{64}"$')]
+
+
 class CompareRequest(Out):
     a: Dataset
     b: Dataset
@@ -1574,8 +1607,8 @@ def get_version(vid: str, sc: StoredScope) -> VersionDoc:
 
 
 @app.put("/api/versions/{vid}", response_model=VersionMeta)
-def update_version(vid: str, ds: Dataset, sc: StoredEditScope) -> VersionMeta:
-    return get_store().update(vid, ds, sc)
+def update_version(vid: str, ds: Dataset, sc: StoredEditScope, if_match: ScenarioIfMatch = None) -> VersionMeta:
+    return get_store().update(vid, ds, sc, expected_sha256=if_match[1:-1] if if_match else None)
 
 
 @app.post("/api/versions/{vid}/branch", response_model=VersionMeta)
@@ -1656,13 +1689,13 @@ def work_item_history(iid: str, sc: StoredScope) -> list[WorkItemEntry]:
 
 
 @app.post("/api/versions/{vid}/discard", response_model=VersionMeta)
-def discard_version(vid: str, sc: StoredEditScope) -> VersionMeta:
-    return get_store().discard(vid, sc)
+def discard_version(vid: str, sc: StoredEditScope, if_match: ScenarioIfMatch = None) -> VersionMeta:
+    return get_store().discard(vid, sc, expected_sha256=if_match[1:-1] if if_match else None)
 
 
 @app.post("/api/versions/{vid}/promote", response_model=VersionMeta)
-def promote_version(vid: str, req: PromoteRequest, sc: StoredEditScope) -> VersionMeta:
-    return get_store().promote(vid, req.name, req.note, sc)
+def promote_version(vid: str, req: PromoteRequest, sc: StoredEditScope, if_match: ScenarioIfMatch = None) -> VersionMeta:
+    return get_store().promote(vid, req.name, req.note, sc, expected_sha256=if_match[1:-1] if if_match else None)
 
 
 @app.get("/api/versions/{a}/compare/{b}", response_model=Comparison)

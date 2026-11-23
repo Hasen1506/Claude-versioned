@@ -666,4 +666,4 @@ def keep_scenario(req: KeepRequest, store: Store, scope: str = "") -> KeepResult
         parent = saved.id
     note = "what-if: " + " · ".join(chip_label(c) for c in req.chips)
     b = store.branch(parent, req.label, note[:500], scope or None)
-    return KeepResult(version=store.update(b.id, data, scope or None), base=saved, notes=notes)
+    return KeepResult(version=store.update(b.id, data, scope or None, expected_sha256=b.sha256), base=saved, notes=notes)
