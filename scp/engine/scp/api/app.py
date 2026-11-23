@@ -1504,10 +1504,11 @@ class AccountingExport(Out):
 
 
 @app.post("/api/accounting/export", response_model=AccountingExport)
-def post_accounting_export(ds: PlanData, format: Literal["tally", "csv"] = "tally", company: str = "",
-                           period_start: dt.date | None = None, period_end: dt.date | None = None,
-                           bank_detail: bool = False) -> Response:
+def post_accounting_export(ds: PlanData, format: Literal["tally", "csv", "tally_bank_detail", "csv_bank_detail"] = "tally",
+                           company: str = "", period_start: dt.date | None = None, period_end: dt.date | None = None) -> Response:
     """One company's vouchers of the period as Tally's import file, or the whole journal as a spreadsheet (CSV)."""
+    bank_detail = format in ("tally_bank_detail", "csv_bank_detail")
+
     def make() -> AccountingExport:
         from ..model.currency import CurrencyPrecisionError
         try:
@@ -1519,7 +1520,7 @@ def post_accounting_export(ds: PlanData, format: Literal["tally", "csv"] = "tall
             raise HTTPException(409, "the accounts do not reconcile: " + "; ".join(
                 f"{c.company or 'main'}: {c.what}" for c in failed))
         stem = f"journal-{v.period_start.isoformat()}-{v.period_end.isoformat()}" + ("-bank-detail" if bank_detail else "")
-        if format == "csv":
+        if format in ("csv", "csv_bank_detail"):
             buf = io.StringIO()
             csv.writer(buf).writerows(acct.csv_rows(v, ds, bank_detail=bank_detail))
             return AccountingExport(name=stem + ".csv", text=buf.getvalue())
@@ -1530,7 +1531,7 @@ def post_accounting_export(ds: PlanData, format: Literal["tally", "csv"] = "tall
         except acct.TallyExportError as exc:
             raise HTTPException(409, str(exc)) from None
         return AccountingExport(name=f"tally-{company or 'main'}-{stem}.xml", text=xml)
-    return respond("accounting-export", ds, make, format, company, period_start, period_end, bank_detail)
+    return respond("accounting-export", ds, make, format, company, period_start, period_end)
 
 
 # --- versions & scenarios (P8) -------------------------------------------------------------------

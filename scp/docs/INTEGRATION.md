@@ -356,7 +356,7 @@ file. A debit is written as a negative amount with `ISDEEMEDPOSITIVE` Yes, which
   the account's code), and the company's name in Tally (`finance.tally_company`).
 * The same journal comes as a spreadsheet: `POST /api/accounting/export?format=csv`. The Tally file is
   `format=tally&company=<id>`, where an empty id is the company itself. Both take `period_start` and `period_end`.
-* Add `bank_detail=true` for the bank-detail download. CSV adds `company_id` and `bank_account` after the existing
+* Use `format=csv_bank_detail` or `format=tally_bank_detail` for the bank-detail download. CSV adds `company_id` and `bank_account` after the existing
   columns. `bank_account` comes from the posted journal line. Blank values mean no registered account was assigned
   to that line. The CSV includes the whole journal, including the other legal entities.
 * In the selected company's Tally tab, enter the exact names of its existing Tally **Bank Accounts** ledgers under
@@ -365,6 +365,7 @@ file. A debit is written as a negative amount with `ISDEEMEDPOSITIVE` Yes, which
   uses those masters without creating them. It refuses missing mappings and names that collide with other bank,
   chart or party ledgers in the selected company. Unassigned bank activity keeps its existing generic Bank mapping.
   Both bank-detail files have `-bank-detail` in the name. The consolidated Tally and legacy CSV downloads remain available.
+  Releases that predate these format names refuse the request, so a rollout cannot return a consolidated file as bank detail.
 * For a reproducible company export, retain the saved company revision, export dates and option, the file and the
   Tally import result. Reconcile both the voucher amounts and the individual Tally bank ledgers before importing a
   live period. Reimport and Tally bank-allocation behavior depend on the destination and require a trial in that company.

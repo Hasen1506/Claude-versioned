@@ -50,9 +50,9 @@ def bank_fixture():
 
 
 def export(accounting_format, data, *, token=None, cid=None, co="E1", detail=True, start=D0, end=P2):
+    format = f"{accounting_format}_bank_detail" if detail else accounting_format
     return client.post("/api/accounting/export", json=data,
-                       params={"format": accounting_format, "company": co, "period_start": start.isoformat(),
-                               "period_end": end.isoformat(), "bank_detail": str(detail).lower()},
+                       params={"format": format, "company": co, "period_start": start.isoformat(), "period_end": end.isoformat()},
                        headers={**h(token), "X-Company": cid} if cid else {})
 
 

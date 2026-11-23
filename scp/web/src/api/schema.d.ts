@@ -24528,11 +24528,10 @@ export interface operations {
     post_accounting_export_api_accounting_export_post: {
         parameters: {
             query?: {
-                format?: "tally" | "csv";
+                format?: "tally" | "csv" | "tally_bank_detail" | "csv_bank_detail";
                 company?: string;
                 period_start?: string | null;
                 period_end?: string | null;
-                bank_detail?: boolean;
             };
             header?: never;
             path?: never;
