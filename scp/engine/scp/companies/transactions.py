@@ -78,8 +78,8 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         ds = lenient(after)[0]
         from .openings import retain_openings
         before, after, old_ds, ds = retain_openings(before, after, old_ds, ds)
-        from ..model.currency import require_posting_currency
-        require_posting_currency(ds.settings.currency)
+        from ..model.currency import require_material_ledger, require_posting_currency
+        monetary = require_material_ledger(ds)
         for invoice in ds.supplier_invoices:
             require_posting_currency(invoice.currency or ds.settings.currency)
         from ..model.sales import Invoice
@@ -152,7 +152,8 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
                 continue  # cancellation/roll may remove headers; related invoice/movement facts stay protected
             prior = PurchaseOrder.model_validate(raw)
             following = PurchaseOrder.model_validate(new_pos[pid])
-            rate = prior.fx_rate if prior.fx_rate is not None else posting_rate(old_ds, prior.currency)
+            rate = prior.fx_rate if prior.fx_rate is not None else (
+                posting_rate(old_ds, prior.currency) if monetary.digits == 2 else 1.0)
             if following.fx_rate is not None and abs(following.fx_rate - rate) > 1e-12:
                 raise TransactionRefused(f"{pid}: the posting exchange rate cannot be replaced")
             if following.fx_rate is None:
@@ -161,7 +162,7 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
 
         for pid in new_pos.keys() - old_pos.keys():
             order = PurchaseOrder.model_validate(new_pos[pid])
-            rate = posting_rate(ds, order.currency)
+            rate = posting_rate(ds, order.currency) if monetary.digits == 2 else 1.0
             if order.fx_rate is not None and abs(order.fx_rate - rate) > 1e-12:
                 raise TransactionRefused(f"{pid}: the order exchange rate is determined by the saved company")
             if order.fx_rate is None:
@@ -345,16 +346,23 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         protect_materials(old_ds, ds, open_period)
         from ..accounting.production import protect_orders
         protect_orders(old_ds, ds)
+        books = None
+        if monetary.digits != 2 and ds.movements != old_ds.movements:
+            from ..accounting import view
+            books = view(ds)
+            if any(not check.ok for check in books.checks):
+                raise TransactionRefused("the material posting does not reconcile at the company currency precision")
         if ds.finance.closed_through is not None and ds.finance.closed_through != closed:
             from ..accounting import view
             from ..accounting.production import unsettled
-            books = view(ds, period_end=ds.finance.closed_through)
+            if books is None or books.period_end != ds.finance.closed_through:
+                books = view(ds, period_end=ds.finance.closed_through)
             outstanding = unsettled(books.production_wip)
             if outstanding:
                 raise TransactionRefused("reconcile production WIP before closing the accounting period: "
                                          + ", ".join(outstanding[:10]))
             if any(not check.ok for check in books.checks) or any(
-                    row.account == "SUSPENSE" and abs(row.balance) >= .005 for row in books.balances):
+                    row.account == "SUSPENSE" and monetary.minor(row.balance) for row in books.balances):
                 raise TransactionRefused("reconcile the books and clear suspense before closing the accounting period")
         return result
     except (ValueError, ValidationError, KeyError, TypeError) as exc:
