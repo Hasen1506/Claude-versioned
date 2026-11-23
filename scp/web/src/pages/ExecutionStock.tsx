@@ -250,7 +250,7 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
           {groups.map((g) => <option key={g} value={g}>{g}</option>)}
         </select>}
         <label className="small muted">Count date <input type="date" className="input" style={{ width: 160 }} value={on} onChange={(e) => setOn(e.target.value)} /></label>
-        <label className="small muted">Book quantity <select className="input" value={bookBasis}
+        <label className="small muted">Book quantity <select className="input" aria-label="Book quantity" value={bookBasis}
           onChange={(e) => setBookBasis(e.target.value === "at_count" ? "at_count" : "frozen")}>
           <option value="frozen">Freeze when opened</option><option value="at_count">Record at count entry</option>
         </select></label>

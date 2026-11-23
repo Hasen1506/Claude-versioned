@@ -342,7 +342,8 @@ export const api = {
       ship_from: extra.ship_from ?? null, batch: extra.batch ?? null, expires_on: extra.expires_on ?? null,
       supplier_batch: extra.supplier_batch ?? null, serials: extra.serials ?? null, stock_type: extra.stock_type ?? null,
       to_type: extra.to_type ?? null, location: extra.location ?? null, product: extra.product ?? null, movement: extra.movement ?? null,
-      doc: extra.doc ?? null, nodes: extra.nodes ?? null, block: extra.block ?? true, uncounted_zero: extra.uncounted_zero ?? false }),
+      doc: extra.doc ?? null, nodes: extra.nodes ?? null, block: extra.block ?? true,
+      book_basis: extra.book_basis ?? "frozen", uncounted_zero: extra.uncounted_zero ?? false }),
   /** Take a checked customer order (with its promise), change one (promised again), cancel what is still open, or ship
    *  part of one as a substitute product. */
   salesOrder: (dataset: Dataset, action: "accept" | "change" | "cancel" | "substitute",
