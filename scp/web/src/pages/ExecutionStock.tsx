@@ -181,8 +181,7 @@ export function ShortOrders({ list, ds, onDone }: { list: ShortOrder[]; ds: Data
 // ---- physical inventory ---------------------------------------------------------------------------------
 const countPostingId = (doc: string) => `inventory-count:post:${doc}`;
 
-/** Physical inventory documents (≈ MI01/MI04/MI07): count a place's stock on a day against the book stock frozen when
- *  the document is made, with postings for it held until the differences are posted. */
+/** Physical inventory with independent book baseline and movement-block settings. */
 export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, string][] }) {
   const nm = useNames();
   const start = ds.settings.planning_start;
@@ -191,6 +190,7 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
   const [group, setGroup] = useState("");
   const [on, setOn] = useState(() => { const d = new Date(start + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); });
   const [block, setBlock] = useState(true);
+  const [bookBasis, setBookBasis] = useState<"frozen" | "at_count">("frozen");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -205,14 +205,15 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
     setBusy(true);
     setErr(null); setMsg(null);
     try {
-      if (companyId && (action === "count_enter" || action === "count_post")) {
+      if (companyId && (action === "count_book" || action === "count_enter" || action === "count_post")) {
         const target = docs.find((d) => d.id === extra.doc);
         if (!target || store.get().dataset !== ds) throw new Error("Review the current count before posting.");
         const counts = action === "count_post" ? (target.items ?? []).map((i) => ({ location: i.location, product: i.product,
           batch: i.batch ?? null, stock_type: i.stock_type ?? "unrestricted", qty: i.counted ?? null })) : extra.counts;
-        const id = action === "count_post" ? countPostingId(target.id) : crypto.randomUUID();
+        const id = action === "count_post" ? countPostingId(target.id) : action === "count_book"
+          ? `inventory-count:book:${target.id}` : crypto.randomUUID();
         const reply = await store.postCompanyCommand(companyId, { id, kind: "stock", action,
-          posting_date: target.date, parameters: { doc: target.id, counts } });
+          posting_date: extra.date ?? target.counted_on ?? target.date, parameters: { doc: target.id, counts } });
         await Promise.allSettled([store.run("actuals")]);
         setMsg(nm.text((reply.result as { report: ActionReport }).report.message));
       } else {
@@ -238,7 +239,7 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
     }
   };
   return (
-    <Panel title="Physical inventory" actions={<span className="faint small">Count a whole place on a day, against the stock the books froze</span>}>
+    <Panel title="Physical inventory">
       <Edits><div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
         <select className="input" style={{ width: 220 }} value={place} onChange={(e) => setPlace(e.target.value)} aria-label="Place to count">
           <option value="">Choose a place…</option>
@@ -249,10 +250,14 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
           {groups.map((g) => <option key={g} value={g}>{g}</option>)}
         </select>}
         <label className="small muted">Count date <input type="date" className="input" style={{ width: 160 }} value={on} onChange={(e) => setOn(e.target.value)} /></label>
+        <label className="small muted">Book quantity <select className="input" value={bookBasis}
+          onChange={(e) => setBookBasis(e.target.value === "at_count" ? "at_count" : "frozen")}>
+          <option value="frozen">Freeze when opened</option><option value="at_count">Record at count entry</option>
+        </select></label>
         <label className="small"><input type="checkbox" checked={block} onChange={(e) => setBlock(e.target.checked)} /> Hold postings for these until the count is posted</label>
         <span className="spacer" />
         <button className="btn sm accent" disabled={busy || !chosen.length} onClick={() => run("count_doc",
-          { nodes: chosen.map(([location, product]) => ({ location, product })), date: on, block })}>
+          { nodes: chosen.map(([location, product]) => ({ location, product })), date: on, block, book_basis: bookBasis })}>
           {chosen.length ? `Start counting ${plural(chosen.length, "product")}` : "Start counting"}</button>
       </div></Edits>
       {msg && <div className="banner info" role="status" style={{ marginTop: 10 }}><Badge sev="ok">Done</Badge><span>{msg}</span><span className="spacer" />
@@ -260,7 +265,7 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
       {err && <div className="banner error" role="alert" style={{ marginTop: 10 }}><span>{err}</span></div>}
       {open.map((d) => <CountSheet key={d.id} d={d} busy={busy} run={run} />)}
       {!open.length && <p className="small muted" style={{ marginTop: 10 }}>No count is under way.
-        {docs.length > 0 && <> Last: {docs.slice(-3).reverse().map((d) => `${d.id} (${d.status}, ${day(d.date)})`).join(", ")}.</>}</p>}
+        {docs.length > 0 && <> Last: {docs.slice(-3).reverse().map((d) => `${d.id} (${d.status}, ${day(d.counted_on ?? d.date)})`).join(", ")}.</>}</p>}
       {companyId && latestPosting && <button className="btn sm" disabled={busy}
         onClick={() => checkPosting(companyId, latestPosting.id)}>Check posting {latestPosting.id}</button>}
     </Panel>
@@ -270,6 +275,8 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
 function CountSheet({ d, busy, run }: { d: InventoryDoc; busy: boolean; run: (a: PostAction, e: PostExtra) => Promise<boolean> }) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [book, setBook] = useState(false);
+  const [countDate, setCountDate] = useState(d.date);
+  const needsBook = d.book_basis === "at_count" && !d.counted_on;
   const key = (i: CountItem) => `${i.location}|${i.product}|${i.batch ?? ""}|${i.stock_type ?? "unrestricted"}`;
   const items = d.items ?? [];
   const counted = items.filter((i) => i.counted !== null && i.counted !== undefined).length;
@@ -282,20 +289,23 @@ function CountSheet({ d, busy, run }: { d: InventoryDoc; busy: boolean; run: (a:
   return (
     <div className="stack" style={{ marginTop: 12, gap: 8 }}>
       <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-        <b>{d.id}</b><span className="muted small">count on {day(d.date)} · {counted} of {plural(items.length, "line")} counted
+        <b>{d.id}</b><span className="muted small">count on {day(d.counted_on ?? d.date)} · {counted} of {plural(items.length, "line")} counted
           {d.block && " · postings held"}</span>
         <span className="spacer" />
-        <label className="small"><input type="checkbox" checked={book} onChange={(e) => setBook(e.target.checked)} /> Show the book stock</label>
+        {!needsBook && <label className="small"><input type="checkbox" checked={book} onChange={(e) => setBook(e.target.checked)} /> Show the book stock</label>}
         <Edits><>
-          <button className="btn sm" disabled={busy || !changed.length || changed.length !== dirty} onClick={save}>Save {changed.length ? plural(changed.length, "count") : "counts"}</button>{" "}
+          {needsBook ? <><label className="small muted">Actual count date <input className="input" type="date" value={countDate}
+            onChange={(e) => setCountDate(e.target.value)} /></label>
+            <button className="btn sm" disabled={busy || !countDate} onClick={() => run("count_book", { doc: d.id, date: countDate })}>Record book stock</button></>
+            : <><button className="btn sm" disabled={busy || !changed.length || changed.length !== dirty} onClick={save}>Save {changed.length ? plural(changed.length, "count") : "counts"}</button>{" "}
           <button className="btn sm accent" disabled={busy || counted < items.length || dirty > 0} onClick={() => run("count_post", { doc: d.id })}
-            title={dirty ? "Save count edits first" : counted < items.length ? "Count every line first" : "Post the differences against the frozen book stock"}>Post differences</button>{" "}
+            title={dirty ? "Save count edits first" : counted < items.length ? "Count every line first" : "Post the differences against the recorded book stock"}>Post differences</button></>}{" "}
           <button className="btn sm ghost" disabled={busy} onClick={() => run("count_cancel", { doc: d.id })}>Cancel the count</button>
         </></Edits>
       </div>
-      <Edits><div className="table-wrap" style={{ maxHeight: 420 }}>
+      {!needsBook && <Edits><div className="table-wrap" style={{ maxHeight: 420 }}>
         <table className="t">
-          <thead><tr><th>Product</th><th>Batch</th><th>Stock</th>{book && <th className="num">Book (frozen)</th>}<th className="num">Counted</th>
+          <thead><tr><th>Product</th><th>Batch</th><th>Stock</th>{book && <th className="num">Book quantity</th>}<th className="num">Counted</th>
             {book && <th className="num">Difference</th>}</tr></thead>
           <tbody>
             {items.map((i) => {
@@ -314,8 +324,7 @@ function CountSheet({ d, busy, run }: { d: InventoryDoc; busy: boolean; run: (a:
             })}
           </tbody>
         </table>
-      </div></Edits>
-      <div className="faint small">The book stock was frozen when counting started: postings since then do not change the difference.</div>
+      </div></Edits>}
     </div>
   );
 }

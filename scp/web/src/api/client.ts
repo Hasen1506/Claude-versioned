@@ -261,7 +261,7 @@ export interface PostExtra {
   note?: string; ship_from?: string | null; batch?: string | null; expires_on?: string | null; supplier_batch?: string | null;
   serials?: string[] | null; stock_type?: StockType | null; to_type?: StockType | null; location?: string | null;
   product?: string | null; movement?: string | null; doc?: string | null; nodes?: { location: string; product: string }[] | null;
-  block?: boolean; uncounted_zero?: boolean; classes?: ("A" | "B" | "C")[] | null;
+  block?: boolean; book_basis?: "frozen" | "at_count"; uncounted_zero?: boolean; classes?: ("A" | "B" | "C")[] | null;
 }
 
 /** Sign-in calls ask for the session in the HttpOnly cookie (roadmap D), prove they come from this page with the

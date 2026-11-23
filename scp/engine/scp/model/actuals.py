@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 from enum import Enum
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -170,22 +171,40 @@ class CountItem(Model):
     product: str = Ref("product")
     batch: str | None = Field(None, max_length=40)
     stock_type: StockType = StockType.UNRESTRICTED
-    book_qty: float = Unit("qty", ge=None, description="The journal's stock when the document was made (frozen)")
+    book_qty: float = Unit("qty", ge=None, description="The journal quantity at the document's recorded baseline")
     counted: float | None = Unit("qty", default=None, description="What was found; empty until counted")
 
 
+CountBookBasis = Literal["frozen", "at_count"]
+
+
 class InventoryDoc(Model):
-    """A physical inventory document (≈ MI01/MI04/MI07): places and products to count on a day, their book stock
-    frozen when the document is made, the counts entered, and the differences posted against the frozen stock.
-    With ``block``, postings for its places and products are refused until it is posted or cancelled."""
+    """A physical inventory document with independent book quantity and movement-block policies."""
 
     id: str = Field(min_length=1, max_length=20)
-    date: dt.date = Field(description="Count date: the differences are posted at the end of this day")
+    date: dt.date = Field(description="Planned count date and posting date for a frozen-book document")
     status: str = Field("open", pattern=r"^(open|posted|cancelled)$")
     block: bool = Field(False, description="Refuse postings for these places and products while open")
     items: list[CountItem] = Field(default_factory=list)
     note: str = Field("", max_length=200)
     posted_doc: str | None = Field(None, max_length=20, description="The material document of the differences")
+    book_basis: CountBookBasis = Field("frozen", exclude_if=lambda value: value == "frozen",
+        description="Freeze the book at document creation or establish it when the physical count is recorded")
+    counted_on: dt.date | None = Field(None, exclude_if=lambda value: value is None,
+        description="Actual count and adjustment date for a count-date book baseline")
+
+    @property
+    def posting_date(self) -> dt.date:
+        return self.counted_on or self.date
+
+    @model_validator(mode="after")
+    def _count_baseline(self) -> InventoryDoc:
+        if self.book_basis == "frozen" and self.counted_on is not None:
+            raise ValueError("a frozen-book document posts on its planned count date")
+        if self.book_basis == "at_count" and self.counted_on is None and (
+                self.status == "posted" or any(item.counted is not None for item in self.items)):
+            raise ValueError("record a count-date book baseline before entering or posting quantities")
+        return self
 
 
 class CycleCounting(Model):
