@@ -346,10 +346,17 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         protect_materials(old_ds, ds, open_period)
         from ..accounting.production import protect_orders
         protect_orders(old_ds, ds)
+        books = None
+        if monetary.digits != 2 and ds.movements != old_ds.movements:
+            from ..accounting import view
+            books = view(ds)
+            if any(not check.ok for check in books.checks):
+                raise TransactionRefused("the material posting does not reconcile at the company currency precision")
         if ds.finance.closed_through is not None and ds.finance.closed_through != closed:
             from ..accounting import view
             from ..accounting.production import unsettled
-            books = view(ds, period_end=ds.finance.closed_through)
+            if books is None or books.period_end != ds.finance.closed_through:
+                books = view(ds, period_end=ds.finance.closed_through)
             outstanding = unsettled(books.production_wip)
             if outstanding:
                 raise TransactionRefused("reconcile production WIP before closing the accounting period: "

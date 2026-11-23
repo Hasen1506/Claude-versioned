@@ -92,3 +92,22 @@ def test_standard_cost_posts_the_exact_difference_between_rounded_stock_and_rece
     }
     assert all(check.ok for check in result.checks)
     assert result.vouchers[0].debit == result.vouchers[0].credit == 1.235
+
+
+def test_large_material_post_is_refused_when_a_minor_unit_would_be_lost():
+    raw = base()
+    raw["settings"]["currency"] = "KWD"
+    raw["execution"] = {"price_control": "moving_average"}
+    lp(raw, "P", "A")["on_hand"] = lp(raw, "P", "B")["on_hand"] = 0
+    raw["receipts"] = [
+        {"id": order, "kind": "purchase", "product": "B", "location": "P", "qty": 1,
+         "price": price, "due_date": "2026-01-06", "source": "PIR-B"}
+        for order, price in (("LARGE", 10_000_000_000_000), ("FILS", 0.001))
+    ]
+    owner, _, company = team(Dataset.model_validate(raw))
+    first = command(owner, company, "large", "stock", "receive", 1, date="2026-01-06", order="LARGE", qty=1)
+    assert first.status_code == 200, first.text
+    refused = command(owner, company, "fils", "stock", "receive", 2, date="2026-01-07", order="FILS", qty=1)
+    assert refused.status_code == 403 and "exact numeric range" in refused.text
+    saved = client.get(f"/api/companies/{company}", headers=h(owner)).json()
+    assert saved["meta"]["revision"] == 2 and len(saved["dataset"]["movements"]) == 1

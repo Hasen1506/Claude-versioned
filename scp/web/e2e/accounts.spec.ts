@@ -212,3 +212,32 @@ test("the accounts downloads retain two registered bank destinations", async ({ 
   expect(csv).toMatch(/FO-1\/P-1.*E1,BANK-A/);
   expect(csv).toMatch(/FO-2\/P-1.*E1,BANK-B/);
 });
+
+test("the dinar material trial balance and CSV keep three decimal places", async ({ page }) => {
+  const data = {
+    settings: { company_name: "Dinar inventory", currency: "KWD", planning_start: "2026-01-05", horizon_days: 28,
+      default_calendar: "CAL" },
+    calendars: [{ id: "CAL", workdays: [0, 1, 2, 3, 4, 5, 6] }],
+    locations: [{ id: "P", type: "plant" }, { id: "S", type: "supplier" }],
+    products: [{ id: "B", type: "RM" }],
+    location_products: [{ location: "P", product: "B", on_hand: 0 }],
+    execution: { price_control: "moving_average" },
+    purchasing_sources: [{ id: "BUY-B", supplier: "S", location: "P", product: "B", price: 1.2345, lead_time_days: 1 }],
+    receipts: [{ id: "PO-LINE", kind: "purchase", location: "P", product: "B", qty: 2, price: 1.2345,
+      due_date: "2026-01-06", source: "BUY-B" }],
+    movements: [{ id: "R-1", date: "2026-01-06", type: "receipt", reference: "PO-LINE", location: "P", product: "B", qty: 2 }],
+  };
+  await page.goto("/");
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Import a file", exact: true }).click();
+  await (await chooser).setFiles({ name: "dinar-stock.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(data)) });
+  await page.goto("/#/accounts");
+  const balances = page.getByRole("table", { name: "Trial balance" });
+  await expect(balances.getByRole("row", { name: /^Stock/ })).toContainText("KWD 2.469");
+  await page.getByRole("tab", { name: "Tally" }).click();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download the journal (CSV)", exact: true }).click();
+  const content = readFileSync((await (await download).path())!, "utf8");
+  expect(content).toContain(",2.469,0.000");
+  expect(content).toContain(",0.000,2.469");
+});

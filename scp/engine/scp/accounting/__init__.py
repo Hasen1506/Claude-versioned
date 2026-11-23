@@ -659,6 +659,8 @@ def view(ds: Dataset, period_start: date | None = None, period_end: date | None 
     checks = _checks(ds, end, b, totals, vs)
     wip = production_wip(ds, end, vs)
     notes = []
+    if units.digits != 2:
+        notes.append(f"{ds.settings.currency} material ledger covers domestic receipts, stock and CSV export.")
     if any(x.account == "SUSPENSE" and units.minor(x.balance) for x in balances):
         notes.append("Something is on the suspense account: stock moved without an order the journal knows (a receipt "
                      "or a transfer with no order, a return with no purchase order, an invoice line for an order it "
