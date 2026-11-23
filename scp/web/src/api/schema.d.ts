@@ -3736,6 +3736,7 @@ export interface components {
              * @description Empty releases the preceding match
              */
             targets: components["schemas"]["BankCashRef"][];
+            allocation?: components["schemas"]["BankReturnAllocation"] | null;
         };
         /** BankMatchInput */
         BankMatchInput: {
@@ -3756,6 +3757,27 @@ export interface components {
             amount_minor: number;
             /** Currency */
             currency: string;
+        };
+        /** BankReturnAllocation */
+        BankReturnAllocation: {
+            /** Legs */
+            legs: components["schemas"]["BankReturnLeg"][];
+            /**
+             * Advice
+             * @default
+             */
+            advice: string;
+            /**
+             * Late Reason
+             * @default
+             */
+            late_reason: string;
+        };
+        /** BankReturnLeg */
+        BankReturnLeg: {
+            original: components["schemas"]["BankCashRef"];
+            /** Amount Minor */
+            amount_minor: number;
         };
         /**
          * Batch
@@ -4402,6 +4424,20 @@ export interface components {
              * @default false
              */
             reversal: boolean;
+            /**
+             * Return Source Checked
+             * @default false
+             */
+            return_source_checked: boolean;
+            /** Trace Ids */
+            trace_ids?: string[];
+            /** Included Fee Minor */
+            included_fee_minor?: number | null;
+            /**
+             * Unresolved Charges
+             * @default false
+             */
+            unresolved_charges: boolean;
             /** History */
             history?: components["schemas"]["BankMatchEvent"][];
         };
@@ -4492,6 +4528,11 @@ export interface components {
              * @default
              */
             late_reason: string;
+            /**
+             * Allocated
+             * @default false
+             */
+            allocated: boolean;
         };
         /** CarrierBankTieOut */
         CarrierBankTieOut: {
@@ -4535,6 +4576,11 @@ export interface components {
             amount_minor: number;
             /** Reason */
             reason: string;
+            /**
+             * Additional Vouchers
+             * @default []
+             */
+            additional_vouchers: string[];
         };
         /** CarrierBankView */
         CarrierBankView: {
@@ -14914,6 +14960,12 @@ export interface components {
              * Format: date
              */
             eligible_from: string;
+            /** Remaining Minor */
+            remaining_minor: number;
+            /** Full Return Eligible */
+            full_return_eligible: boolean;
+            /** Source Trace Ids */
+            source_trace_ids: string[];
         };
         /** RollReport */
         RollReport: {

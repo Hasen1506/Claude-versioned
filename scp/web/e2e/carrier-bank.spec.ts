@@ -367,3 +367,71 @@ for (const late of [false, true]) test(`post a native ${late ? "closed-period" :
   expect(saved.dataset.freight_orders[0].bill_events).toMatchObject([{ kind: "reverse_bank_cash", date: postingDate,
     reverses: "FO-1/P-1", amount_minor: 4025, bank_account: "BANK-A", ...(late ? { late_reason: reason } : {}) }]);
 });
+
+test("recover a grouped partial return with changed reference and an included fee", async ({ page }) => {
+  test.setTimeout(90_000);
+  await saveCarrierCompany(page, "registered");
+  const returnDate = "2026-01-10";
+  const original = (name: string) => readFileSync(new URL(`../../engine/tests/fixtures/camt053-carrier-${name}.xml`, import.meta.url), "utf8");
+  const file = (name: string, xml: string) => ({ name: `${name}.xml`, mimeType: "application/xml", buffer: Buffer.from(xml) });
+  await page.goto("/#/buying/owed");
+  await page.getByText("Import original camt.053 statement", { exact: true }).click();
+  await page.getByLabel("Original statement account").selectOption("BANK-A");
+  const picker = page.getByLabel("Original camt.053 file");
+  const paid = original("payment").replaceAll("40.25", "100.00").replaceAll("159.75", "100.00");
+  await picker.setInputFiles(file("paid", paid));
+  await page.getByRole("button", { name: "Link bank source" }).click();
+  await expect(page.getByText("Linked camt.053 source for BANK-A.")).toBeVisible();
+  await page.getByRole("button", { name: "Import original statement" }).click();
+  await expect(page.getByText(`Imported statement STMT-${paymentDate}.`)).toBeVisible();
+  await page.getByRole("button", { name: `SVCR-${paymentDate}` }).click();
+  for (const order of ["FO-1", "FO-2"]) await page.getByLabel(`Select cash voucher ${order}/P-1`).check();
+  await page.getByRole("button", { name: "Match selected vouchers" }).click();
+  await expect(page.getByText(`Matched SVCR-${paymentDate} to 2 carrier cash vouchers.`)).toBeVisible();
+
+  const returned = original("return").replaceAll("159.75", "100.00").replaceAll("200.00", "148.75")
+    .replaceAll("40.25", "48.75").replaceAll("WIRE-GROUP", "REISSUED-1").replace("<NtryDtls>",
+      '<Chrgs><TtlChrgsAndTaxAmt Ccy="INR">1.25</TtlChrgsAndTaxAmt><Rcrd><Amt Ccy="INR">1.25</Amt><CdtDbtInd>DBIT</CdtDbtInd><ChrgInclInd>true</ChrgInclInd></Rcrd></Chrgs><NtryDtls>');
+  await picker.setInputFiles(file("returned", returned));
+  await page.getByRole("button", { name: "Import original statement" }).click();
+  await expect(page.getByText(`Imported statement STMT-${returnDate}.`)).toBeVisible();
+
+  const attempts: unknown[] = [];
+  let companyUrl = "";
+  await page.route("**/api/companies/*/commands", async (route) => {
+    const payload = route.request().postDataJSON();
+    if (payload.action !== "allocate_return") return route.continue();
+    attempts.push({ id: payload.id, posting_date: payload.posting_date, parameters: payload.parameters });
+    companyUrl = route.request().url().replace(/\/commands$/, "");
+    if (attempts.length === 1) {
+      expect((await route.fetch()).ok()).toBe(true);
+      return route.abort();
+    }
+    return route.continue();
+  });
+  await page.getByRole("button", { name: `SVCR-${returnDate}` }).click();
+  await page.getByText("Allocate partial, grouped or changed-reference return", { exact: true }).click();
+  const add = page.getByLabel("Add voucher to return");
+  await add.selectOption({ value: JSON.stringify(["FO-1", "FO-1/P-1"]) });
+  await add.selectOption({ value: JSON.stringify(["FO-2", "FO-2/P-1"]) });
+  await page.getByLabel("Principal for FO-1/P-1").fill("20");
+  await page.getByLabel("Principal for FO-2/P-1").fill("29");
+  const post = page.getByRole("button", { name: "Post return allocation" });
+  await expect(post).toBeDisabled();
+  await page.getByLabel("Reviewed bank advice identifier").fill("REVIEWED-ADVICE");
+  await expect(post).toBeDisabled();
+  await page.getByLabel("Principal for FO-2/P-1").fill("30");
+  await post.click();
+  await expect(page.getByText(/Bank statement operation confirmation is unavailable/)).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Retry bank statement operation" }).click();
+  await expect(page.getByText(`Allocated bank return SVCR-${returnDate} to 2 carrier cash vouchers.`)).toBeVisible();
+  expect(attempts).toHaveLength(2);
+  expect(attempts[1]).toEqual(attempts[0]);
+  await expect(page.getByRole("table", { name: "Carrier bank account reconciliation" })).not.toContainText("Review differences");
+  const saved = (await (await page.request.get(companyUrl)).json()).dataset;
+  expect(saved.freight_orders.map((order: { bill_events: { amount_minor: number }[] }) =>
+    order.bill_events.map((event) => event.amount_minor))).toEqual([[2000], [3000]]);
+  expect(saved.carrier_bank_lines[1]).toMatchObject({ amount_minor: 4875, included_fee_minor: 125,
+    history: [{ allocation: { advice: "REVIEWED-ADVICE" } }] });
+});

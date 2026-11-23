@@ -180,6 +180,38 @@ class CamtEntry:
     date: date
     amount_minor: int
     reversal: bool
+    trace_ids: tuple[str, ...]
+    included_fee_minor: int | None
+    unresolved_charges: bool
+
+
+def _return_charges(node: XML.Element, currency: str) -> tuple[int | None, bool]:
+    """Only entry-level, explicitly included bank debits can lower a return's booked net."""
+    charges = _one(node, "Chrgs", required=False)
+    if node.findall("NtryDtls/TxDtls/Chrgs", XML_NS):
+        return None, True
+    if charges is None:
+        return None, False
+    records = charges.findall("Rcrd", XML_NS)
+    if not records:
+        return None, True
+    included = total = 0
+    for record in records:
+        amount = _one(record, "Amt")
+        assert amount is not None
+        flag = _text(record, "ChrgInclInd", required=False)
+        if amount.get("Ccy") != currency or flag not in ("true", "1", "false", "0"):
+            return None, True
+        minor = _minor(_text(record, "Amt"))
+        total += minor
+        if flag in ("true", "1"):
+            if _text(record, "CdtDbtInd", required=False) != "DBIT" or _one(record, "Tax", required=False) is not None:
+                return None, True
+            included += minor
+    summary = _one(charges, "TtlChrgsAndTaxAmt", required=False)
+    if summary is not None and (summary.get("Ccy") != currency or _minor(_text(charges, "TtlChrgsAndTaxAmt")) != total):
+        return None, True
+    return included or None, False
 
 
 def _entry(node: XML.Element, currency: str) -> CamtEntry:
@@ -190,8 +222,11 @@ def _entry(node: XML.Element, currency: str) -> CamtEntry:
     if identifier.upper() in EMPTY_REFERENCE:
         raise ValueError("camt.053 requires a stable bank entry identifier")
     batches = {_text(detail, "Btch/PmtInfId", required=False) for detail in node.findall("NtryDtls", XML_NS)}
-    transactions = {_text(tx, "Refs/EndToEndId", required=False)
-                    for tx in node.findall("NtryDtls/TxDtls", XML_NS)}
+    details = node.findall("NtryDtls/TxDtls", XML_NS)
+    transactions = {_text(tx, "Refs/EndToEndId", required=False) for tx in details}
+    trace_ids = {_text(tx, "Refs/UETR", required=False, limit=36).lower() for tx in details}
+    trace_ids = {trace for trace in trace_ids if re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", trace)}
     reference = identifier
     for offered in (batches, transactions):
         if len(offered) == 1:
@@ -202,7 +237,9 @@ def _entry(node: XML.Element, currency: str) -> CamtEntry:
     amount = _signed(node, currency)
     if not amount:
         raise ValueError("camt.053 booked entries require a nonzero amount")
-    return CamtEntry(identifier, reference, _day(node, "BookgDt"), amount, indicator in ("true", "1"))
+    reversal = indicator in ("true", "1")
+    fee, unresolved = _return_charges(node, currency) if reversal else (None, False)
+    return CamtEntry(identifier, reference, _day(node, "BookgDt"), amount, reversal, tuple(sorted(trace_ids)), fee, unresolved)
 
 
 @dataclass(frozen=True)

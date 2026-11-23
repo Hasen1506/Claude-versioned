@@ -25,6 +25,8 @@ export type CarrierBankEvent = { kind: "import"; company: string; account: strin
       opening_minor: number; closing_minor: number; line_count: number; csv: string }
   | { kind: "match"; line: string; version: number; targets: { order: string; voucher: string }[] }
   | { kind: "reverse_cash"; line: string; original: { order: string; voucher: string }; late_reason?: string }
+  | { kind: "allocate_return"; line: string; legs: { original: { order: string; voucher: string }; amount_minor: number }[];
+      advice?: string; late_reason?: string }
   | { kind: "release"; line: string; version: number };
 type SettlementEvent = CarrierEventInput | CarrierBankEvent;
 
@@ -103,7 +105,8 @@ export function useSettlement(kind: SettlementKind, document?: string, order?: s
     try {
       const event = "event" in input ? input.event : undefined;
       const reply = await store.postCompanyCommand(companyId, { kind: kind === "transportCredit" || kind === "transportPayment" || billEvent ? "transport" : kind,
-        action: event?.kind === "reverse_cash" ? "reverse_cash" : config.action, id: attempt.id, posting_date: date, parameters: input });
+        action: event?.kind === "reverse_cash" || event?.kind === "allocate_return" ? event.kind : config.action,
+        id: attempt.id, posting_date: date, parameters: input });
       forget(attempt);
       return reply;
     } catch (error) {

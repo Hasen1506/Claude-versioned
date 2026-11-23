@@ -138,7 +138,7 @@ test("the books follow the invoices and payments, check themselves and go to Tal
 
   // Tally: the bank ledger under its name in Tally, in the file
   await page.getByRole("tab", { name: /Tally/ }).click();
-  await page.getByLabel("Tally ledger for Bank").fill("HDFC Bank 50200");
+  await page.getByLabel("Tally ledger for Bank", { exact: true }).fill("HDFC Bank 50200");
   await page.getByLabel("Company name in Tally").fill("Kaveri Kitchenware FY27");
   const dl = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download the Tally file" }).click();

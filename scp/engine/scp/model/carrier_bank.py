@@ -10,6 +10,7 @@ from .common import Id, Model
 
 BankAccountId = Annotated[str, Field(pattern=r"^[A-Z0-9][A-Z0-9_-]{0,31}$")]
 BankMinor = Annotated[int, Field(strict=True, ge=-999999999999999, le=999999999999999)]
+ReturnMinor = Annotated[BankMinor, Field(gt=0)]
 BankDigest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 CAMT_MAX_PAGES = 20
 CAMT_MAX_BYTES = 256_000
@@ -104,9 +105,21 @@ class BankCashRef(Model):
         return self.order, self.voucher
 
 
+class BankReturnLeg(Model):
+    original: BankCashRef
+    amount_minor: ReturnMinor
+
+
+class BankReturnAllocation(Model):
+    legs: list[BankReturnLeg] = Field(min_length=1, max_length=100)
+    advice: str = Field("", max_length=120, exclude_if=lambda value: not value)
+    late_reason: str = Field("", max_length=200, exclude_if=lambda value: not value)
+
+
 class BankMatchEvent(Model):
     date: date
     targets: list[BankCashRef] = Field(max_length=100, description="Empty releases the preceding match")
+    allocation: BankReturnAllocation | None = Field(None, exclude_if=lambda value: value is None)
 
 
 class CarrierBankLine(Model):
@@ -119,6 +132,10 @@ class CarrierBankLine(Model):
     amount_minor: BankMinor
     currency: str = Field(pattern=r"^[A-Z]{3}$")
     reversal: bool = Field(False, strict=True, exclude_if=lambda value: not value)
+    return_source_checked: bool = Field(False, strict=True, exclude_if=lambda value: not value)
+    trace_ids: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
+    included_fee_minor: ReturnMinor | None = Field(None, exclude_if=lambda value: value is None)
+    unresolved_charges: bool = Field(False, strict=True, exclude_if=lambda value: not value)
     history: list[BankMatchEvent] = Field(default_factory=list)
 
     def source_key(self) -> tuple[str, str, str]:
@@ -138,5 +155,7 @@ class CarrierBankLine(Model):
                 raise ValueError("a match and its release must follow the statement date in order")
             if len({r.key() for r in entry.targets}) != len(entry.targets):
                 raise ValueError("a cash voucher is listed twice in the match")
+            if entry.allocation and (not self.reversal or index or len(entry.targets) != len(entry.allocation.legs)):
+                raise ValueError("a return allocation must belong to its first native reversal match")
             date_ = entry.date
         return self

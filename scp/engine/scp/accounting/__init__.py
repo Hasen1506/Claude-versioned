@@ -36,7 +36,7 @@ from pydantic import Field
 
 from ..actuals.transfer_price import destination, entity_of, party
 from ..actuals.valuation import EPS, run_books
-from ..freight import bills_for_order, carrier_bills, freight_company
+from ..freight import bank_return_fees, bills_for_order, carrier_bills, freight_company
 from ..model import Dataset, FreightOrder, GoodsMovement, MovementType, SupplierInvoice
 from ..model.transport import CarrierBankMatch, CarrierBillAdjustment
 from ..model.common import Out
@@ -54,6 +54,7 @@ ACCOUNTS: dict[str, tuple[str, str, str]] = {
     "IC_RECEIVABLES": ("Group companies (owed to us)", "Sundry Debtors", "asset"),
     "INPUT_TAX": ("Input tax credit", "Duties & Taxes", "asset"),
     "BANK": ("Bank", "Bank Accounts", "asset"),
+    "BANK_FEES": ("Bank Fees", "Indirect Expenses", "expense"),
     "PAYABLES": ("Suppliers", "Sundry Creditors", "liability"),
     "IC_PAYABLES": ("Group companies (owed by us)", "Sundry Creditors", "liability"),
     "GRIR": ("Goods received, not invoiced", "Current Liabilities", "liability"),
@@ -516,6 +517,12 @@ class _Journal:
                                    narration,
                                    [("PAYABLES", bill.company, bill.carrier, -minor / 100, "", ""),
                                     ("BANK", bill.company, "", minor / 100, "", "")], "SUSPENSE", bank_account=account)
+        for company, line, posting in bank_return_fees(ds):
+            if posting.date <= day:
+                amount = posting.amount_minor / 100
+                self._post(posting.date, posting.voucher, "Payment", line, f"bank fee on carrier return {posting.reference}",
+                           [("BANK_FEES", company, "", -amount, "", ""), ("BANK", company, "", amount, "", "")],
+                           "SUSPENSE", bank_account=posting.bank_account)
 
     def _freight(self, fo: FreightOrder, on: date, number: str, amount: float, reference: str, reversal_of: str = "") -> None:
         co = freight_company(self.ds, fo)

@@ -4,14 +4,72 @@ import { Edits, Empty, Panel } from "../components/ui";
 import { day, exactMoney } from "../lib/format";
 import { useSettlement, type CarrierBankEvent } from "../state/settlement";
 import { store } from "../state/store";
-import { CarrierBankAccounts } from "./CarrierBankAccounts";
+import { CarrierBankAccounts, minorUnits } from "./CarrierBankAccounts";
 import { CamtStatementImport } from "./CamtStatementImport";
 
 type Worklist = PayablesView["carrier_bank"];
 type Line = Worklist["lines"][number];
 type Cash = Worklist["unmatched_cash"][number];
+type Original = Worklist["reversible_cash"][number];
 const cashKey = (item: Cash) => JSON.stringify([item.order, item.voucher]);
 const today = () => new Date().toISOString().slice(0, 10);
+
+function hasSourceReference(line: Line, cash: Original) {
+  return cash.reference.toLowerCase() === line.reference.toLowerCase()
+    || (line.trace_ids?.length === 1 && cash.source_trace_ids?.includes(line.trace_ids[0]));
+}
+
+function ReturnAllocation({ line, sources, currency, editable, submit }: {
+  line: Line; sources: Original[]; currency: string; editable: boolean;
+  submit: (event: Extract<CarrierBankEvent, { kind: "allocate_return" }>) => Promise<void>;
+}) {
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [advice, setAdvice] = useState("");
+  const chosen = sources.filter((cash) => cashKey(cash) in amounts);
+  const legs = chosen.map((cash) => ({ original: { order: cash.order, voucher: cash.voucher },
+    amount_minor: minorUnits(amounts[cashKey(cash)]) ?? 0 }));
+  const directions = new Set(chosen.map((cash) => Math.sign(cash.amount_minor)));
+  const fee = line.included_fee_minor ?? 0;
+  const principal = legs.reduce((sum, leg, index) => sum - Math.sign(chosen[index].amount_minor) * leg.amount_minor, 0);
+  const net = principal - fee;
+  const needsAdvice = chosen.some((cash) => !hasSourceReference(line, cash));
+  const valid = legs.length > 0 && legs.every((leg, index) => leg.amount_minor > 0 && leg.amount_minor <= chosen[index].remaining_minor)
+    && directions.size === 1 && Number.isSafeInteger(net) && net === line.amount_minor && (!needsAdvice || advice.trim());
+
+  if (!sources.length || line.unresolved_charges || !line.return_source_checked) return null;
+  return <details>
+    <summary>Allocate partial, grouped or changed-reference return</summary>
+    <div className="stack">
+      <label>Add voucher to return <select className="input" value="" disabled={!editable || chosen.length >= 100}
+        onChange={(event) => {
+          const key = event.target.value;
+          if (key) setAmounts((before) => ({ ...before, [key]: "" }));
+        }}>
+        <option value="">Choose a payment or refund</option>
+        {sources.filter((cash) => !(cashKey(cash) in amounts)).map((cash) => <option key={cashKey(cash)} value={cashKey(cash)}>
+          {cash.voucher} · {cash.carrier} · {cash.reference} · {exactMoney(cash.remaining_minor / 100, currency)} remaining
+        </option>)}
+      </select></label>
+      {chosen.map((cash) => <div className="row wrap" key={cashKey(cash)} style={{ gap: 8 }}>
+        <label>Principal for {cash.voucher} <input className="input" inputMode="decimal" value={amounts[cashKey(cash)]}
+          disabled={!editable} onChange={(event) => setAmounts((before) => ({ ...before, [cashKey(cash)]: event.target.value }))} /></label>
+        <span className="small">{exactMoney(cash.remaining_minor / 100, currency)} remaining</span>
+        <button className="btn sm ghost" disabled={!editable} aria-label={`Remove ${cash.voucher}`} onClick={() => setAmounts((before) => {
+          const next = { ...before };
+          delete next[cashKey(cash)];
+          return next;
+        })}>Remove</button>
+      </div>)}
+      {needsAdvice && <label>Reviewed bank advice identifier <input className="input" maxLength={120} value={advice} disabled={!editable}
+        onChange={(event) => setAdvice(event.target.value)} /></label>}
+      <p className="small">Principal {exactMoney(principal / 100, currency)} · Included fees {exactMoney(fee / 100, currency)}
+        · Net {exactMoney(net / 100, currency)} of {exactMoney(line.amount_minor / 100, currency)}</p>
+      <button className="btn sm accent" disabled={!editable || !valid} onClick={() => submit({
+        kind: "allocate_return", line: line.id, legs, ...(needsAdvice ? { advice: advice.trim() } : {}),
+      })}>Post return allocation</button>
+    </div>
+  </details>;
+}
 
 export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds: Dataset; currency: string }) {
   const settlement = useSettlement("carrier_bank", "worklist");
@@ -40,9 +98,11 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
     && (!selectedPeriod || (cash.date >= selectedPeriod.starts_on && cash.date <= selectedPeriod.ends_on))
     && Math.sign(cash.amount_minor) === Math.sign(selected.amount_minor)
     && cash.reference.toLowerCase() === selected.reference.toLowerCase()) : [];
-  const originals = selected?.reversal ? (bank.reversible_cash ?? []).filter((cash) => cash.company === selected.company
+  const returnSources = selected?.reversal ? (bank.reversible_cash ?? []).filter((cash) => cash.company === selected.company
     && cash.bank_account === selected.account && (cash.original_bank_date ?? cash.date) <= selected.date
-    && cash.eligible_from <= reversalDate
+    && cash.eligible_from <= reversalDate) : [];
+  const originals = selected?.return_source_checked && !selected.included_fee_minor && !selected.unresolved_charges ? returnSources.filter((cash) =>
+    (cash.full_return_eligible ?? true)
     && cash.amount_minor === -selected.amount_minor && cash.reference.toLowerCase() === selected.reference.toLowerCase()) : [];
   const original = originals.find((cash) => cashKey(cash) === originalKey);
   const locked = !!selected && (bank.locked_lines ?? []).includes(selected.id);
@@ -128,7 +188,8 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
     {selected && <section className="stack">
       <h4>{selected.statement_line} · {selected.account}{selectedPeriod && ` · ${selectedPeriod.number}`}</h4>
       {timing && <p className="small">Bank booked {day(timing.bank_date)} · Posted {day(timing.posting_date)} · {timing.reason}</p>}
-      {active.length ? <ul>{active.map((item) => <li key={JSON.stringify(item)}>{item.voucher}</li>)}</ul> :
+      {active.length ? <><ul>{active.map((item) => <li key={JSON.stringify(item)}>{item.voucher}</li>)}</ul>
+        {!!selected.included_fee_minor && <p className="small">Bank fee {exactMoney(selected.included_fee_minor / 100, currency)} · {selected.id}/F</p>}</> :
         selected.reversal ? <>
           <p className="small">{late
             ? `The bank booked this return on ${day(selected.date)} in a closed period. Enter an open posting date and the reason.`
@@ -145,7 +206,14 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
             {originals.map((cash) => <option key={cashKey(cash)} value={cashKey(cash)}>
               {cash.voucher} · {cash.carrier} · {cash.original_line} · {exactMoney(cash.amount_minor / 100, currency)}
             </option>)}
-          </select></label></Edits> : <p className="small">No individually matched carrier voucher has the same account, reference and opposite amount.</p>}
+          </select></label></Edits> : <p className="small">{!selected.return_source_checked
+            ? "Reattach the exact original statement to verify this return's fees and references before posting."
+            : selected.unresolved_charges
+            ? "The statement contains ambiguous bank charge evidence. Review the original statement before posting."
+            : "No individually matched carrier voucher has the same account, reference and opposite amount."}</p>}
+          {settlement.live && <Edits><ReturnAllocation key={selected.id} line={selected} sources={returnSources} currency={currency}
+            editable={editable && (!late || (date > closed && !!lateReason.trim()))}
+            submit={(event) => record({ ...event, ...(late ? { late_reason: lateReason.trim() } : {}) }, reversalDate)} /></Edits>}
         </> : <>
         {candidates.length ? <Edits>{candidates.map((cash) => <label className="row" key={cashKey(cash)}>
           <input type="checkbox" checked={picked.has(cashKey(cash))} aria-label={`Select cash voucher ${cash.voucher}`}
@@ -173,7 +241,8 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
         </>}
       </div></Edits>}
       {!!history.length && <details><summary>Statement history</summary><ol>{history.map((entry, index) =>
-        <li key={index}>{day(entry.date)} · {entry.targets.length ? entry.targets.map((item) => item.voucher).join(", ") : "Released"}</li>)}</ol></details>}
+        <li key={index}>{day(entry.date)} · {entry.targets.length ? entry.targets.map((item) => item.voucher).join(", ") : "Released"}
+          {entry.allocation?.advice && ` · Bank advice ${entry.allocation.advice}`}</li>)}</ol></details>}
     </section>}
   </Panel>;
 }

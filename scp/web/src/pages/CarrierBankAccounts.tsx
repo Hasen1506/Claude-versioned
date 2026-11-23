@@ -12,7 +12,7 @@ export function carrierPostingAccounts(ds: Dataset, company: string, date: strin
   return (ds.carrier_bank_accounts ?? []).filter((account) => account.company === company && account.starts_on <= date);
 }
 
-function minorUnits(input: string) {
+export function minorUnits(input: string) {
   const amount = input.trim();
   if (!/^[+-]?\d{1,13}(\.\d{1,2})?$/.test(amount)) return undefined;
   const [whole, fraction = ""] = amount.replace(/^[+-]/, "").split(".");
