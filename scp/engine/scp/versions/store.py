@@ -240,9 +240,8 @@ class Store:
             return self._meta(self._row(vid))
 
     def promote(self, vid: str, name: str | None = None, note: str = "", scope: str | None = None, *,
-                expected_sha256: str | None = None) -> VersionMeta:
-        """A scenario becomes the new base: a new immutable base version with the scenario's content. The
-        base it descends from is marked superseded (its content is untouched)."""
+                expected_sha256: str | None = None, released: Dataset | None = None) -> VersionMeta:
+        """Create an immutable base from the scenario or its approved live release and supersede its old base."""
         with self.lock, atomic(self.db):
             r = self._row(vid, scope)
             if r["kind"] != "scenario" or r["status"] != "active":
@@ -251,7 +250,8 @@ class Store:
             root = self._base_of(vid)
             if root is None or self._row(root, scope)["status"] != "active":
                 raise VersionError("the scenario's base was superseded; review the scenario against the current base")
-            new = self._insert(Dataset.model_validate_json(r["dataset"]), name or r["name"], "base", vid,
+            new = self._insert(released if released is not None else Dataset.model_validate_json(r["dataset"]),
+                               name or r["name"], "base", vid,
                                note or f"promoted from scenario {vid}", r["scope"])
             self.db.execute("UPDATE versions SET status = 'promoted', updated_at = ? WHERE id = ?", (_now(), vid))
             self.db.execute("UPDATE versions SET status = 'superseded', updated_at = ? WHERE id = ?", (_now(), root))
@@ -259,6 +259,14 @@ class Store:
             self._log(vid, "promoted", f"to {new} at {r['sha256']}")
             self._log(new, "created", f"promoted from {vid} at {r['sha256']}")
             return self._meta(self._row(new))
+
+    def publication_source(self, vid: str, scope: str) -> tuple[VersionDoc, VersionDoc]:
+        with self.lock:
+            scenario = self.get(vid, scope)
+            root = self._base_of(vid)
+            if scenario.meta.kind != "scenario" or root is None:
+                raise VersionError("choose a scenario to publish")
+            return scenario, self.get(root, scope)
 
     def _base_of(self, vid: str) -> str | None:
         cur: str | None = self._row(vid)["parent_id"]

@@ -834,17 +834,6 @@ export const store = {
     return lines.join(" ");
   },
 
-  /** The working copy was a plan version of the open company: make it the company's live data again. */
-  useAsCompanyData(latestRevision: number, note: string) {
-    const c = state.company;
-    if (!c || !state.dataset || refused()) return;
-    persistVersion(null, false);
-    set({ company: { ...c, live: true, revision: latestRevision, savedRevision: -1 }, version: null,
-      save: { ...state.save, status: "pending", conflict: null, newer: null } });
-    persistCompany();
-    void saveNow(note);
-  },
-
   /** The captured revision was saved; edits made during the request still differ from the stored version. */
   saved(version: Omit<WorkingVersion, "savedRevision">, before: WorkingSnapshot) {
     store.assertWorking(before);

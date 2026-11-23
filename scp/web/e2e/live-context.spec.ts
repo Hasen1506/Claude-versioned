@@ -52,6 +52,30 @@ async function version(page:Page) {
   return id;
 }
 
+async function publicationDraft(page: Page, company: string) {
+  const csrf = (await page.context().cookies()).find((cookie) => cookie.name === "scp_csrf")!.value;
+  const headers = { "X-CSRF-Token": csrf, "X-Company": company };
+  const companyPath = `/api/companies/${company}`;
+  const opened = await (await page.request.get(companyPath, { headers })).json();
+  opened.dataset.purchase_orders = [{ id: "PO-LIVE", supplier: "S", location: "P", order_date: "2026-01-05" }];
+  opened.dataset.receipts = [{ id: "PO-LIVE-10", po: "PO-LIVE", kind: "purchase", location: "P", product: "A",
+    qty: 60, due_date: "2026-01-09", price: 10, source: "BUY-A" }];
+  const seeded = await page.request.put(companyPath, { headers, data: { dataset: opened.dataset, base_revision: opened.meta.revision } });
+  expect(seeded.ok(), await seeded.text()).toBe(true);
+  const baseline = await (await page.request.get(companyPath, { headers })).json();
+  const base = await (await page.request.post("/api/versions", { headers,
+    data: { name: "Publication base", dataset: baseline.dataset } })).json();
+  const scenario = await (await page.request.post(`/api/versions/${base.id}/branch`, { headers, data: { name: "Supplier delay" } })).json();
+  baseline.dataset.receipts[0].confirmed_date = "2026-01-14";
+  baseline.dataset.receipts[0].confirmed_qty = 60;
+  const updated = await page.request.put(`/api/versions/${scenario.id}`, {
+    headers: { ...headers, "If-Match": JSON.stringify(scenario.sha256) }, data: baseline.dataset });
+  expect(updated.ok(), await updated.text()).toBe(true);
+  await page.goto("/#/versions");
+  await page.getByRole("button", { name: `Open ${scenario.id}`, exact: true }).click();
+  return scenario.id as string;
+}
+
 async function hold(page:Page,url:string,method='GET') {
   let release!:()=>void,notify!:()=>void,used=false;
   const gate=new Promise<void>(resolve=>{release=resolve;});
@@ -95,10 +119,10 @@ test('an edit made during live-data return survives the response and reload',asy
   await expect(page.getByRole('button',{name:'Back to the live data',exact:true})).toBeVisible();
 });
 
-test('publishing a version cannot use another company opened during its revision lookup',async({page})=>{
-  await live(page); await version(page); const delayed=await hold(page,'**/api/companies');
-  page.once('dialog',d=>d.accept());
-  await page.getByRole('button',{name:'Make this the live data',exact:true}).click(); await delayed.arrived;
+test('publication preview stays with the company it reviewed',async({page})=>{
+  const {company}=await live(page); const scenario=await publicationDraft(page,company.id);
+  const delayed=await hold(page,`**/api/companies/${company.id}/scenarios/${scenario}/publication-preview`,'POST');
+  await page.getByRole('button',{name:'Review live publication',exact:true}).click(); await delayed.arrived;
   await imported(page,'Live company B'); await page.goto('/#/account');
   await page.getByRole('button',{name:'Keep it on the server',exact:true}).click();
   await expect(page.locator('.save-chip .save-long')).toHaveText(/^Saved/);
@@ -201,12 +225,15 @@ test('live-data return reports a failed read and can retry without losing its ve
   await expect(page.locator('.save-chip .save-long')).toHaveText(/^Saved/);
 });
 
-test('publishing a version does not implicitly publish edits made during the revision lookup',async({page})=>{
-  await live(page); await version(page); const delayed=await hold(page,'**/api/companies');
-  page.once('dialog',d=>d.accept());
-  await page.getByRole('button',{name:'Make this the live data',exact:true}).click(); await delayed.arrived;
+test('a delayed publication preview cannot approve unsaved edits',async({page})=>{
+  const {company}=await live(page); const scenario=await publicationDraft(page,company.id);
+  const delayed=await hold(page,`**/api/companies/${company.id}/scenarios/${scenario}/publication-preview`,'POST');
+  await page.getByRole('button',{name:'Review live publication',exact:true}).click(); await delayed.arrived;
   await stock(page,35); await delayed.release();
-  await expect(page.getByRole('alert')).toContainText('The working copy was edited');
+  await page.goto('/#/versions');
+  await expect(page.getByRole('button',{name:'Approve and publish',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Review live publication',exact:true})).toBeDisabled();
+  await page.goto('/#/data/location_products/P%7CA');
   await expect(page.locator('#on_hand')).toHaveValue('35');
   await expect(page.getByRole('button',{name:'Back to the live data',exact:true})).toBeVisible();
   await page.reload(); await expect(page.locator('#on_hand')).toHaveValue('35');
@@ -314,3 +341,17 @@ test('a manual merge finishing after import cannot replace the imported company'
   await page.reload(); await expect(page.locator('.topbar .company')).toHaveText('Live company B');
 });
 
+
+test("an owner reviews the supplier delay and publishes the reviewed scenario once", async ({ page }) => {
+  const {company} = await live(page);
+  const scenario = await publicationDraft(page, company.id);
+  await page.getByRole("button", { name: "Review live publication", exact: true }).click();
+  const panel = page.locator("section.panel").filter({ has: page.getByRole("heading", { name: `Publish ${scenario} to the live plan` }) });
+  await expect(panel.getByText(/PO-LIVE-10/)).toBeVisible();
+  await panel.getByRole("button", { name: "Approve and publish" }).click();
+  await expect(page.getByText("Live company revision 3", { exact: false })).toBeVisible();
+  const liveDoc = await (await page.request.get(`/api/companies/${company.id}`)).json();
+  expect(liveDoc.meta.revision).toBe(3);
+  expect(liveDoc.dataset.receipts[0].confirmed_date).toBe("2026-01-14");
+  await expect(page.getByRole("button", { name: "Approve and publish" })).toHaveCount(0);
+});

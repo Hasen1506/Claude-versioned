@@ -186,21 +186,24 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
                "Only SO-A3 (80 on 11 Mar) waited for the transfer.")
 
     with ctx.step("Backorder processing without CTP", "promise", "POST /api/promise/bop",
-                  "Key accounts (priority 1–2) win, standard orders are redistributed, low priority may lose."):
+                  "Key accounts (priority 1–2) win, standard orders are redistributed, and low priority releases its supply."):
         raw["promising"]["ctp"] = False
         bop = c.bop(Dataset.model_validate(raw))
         rows = {r.order: r for r in bop.bop}
         ctx.eq("outcomes", {k: rows[k].outcome for k in sorted(rows)},
                {"SO-A1": "changed", "SO-A2": "lost", "SO-A3": "unchanged", "SO-A4": "gained", "SO-C1": "unchanged"},
                "SO-A3 keeps 80 of the 120 on the shelf; SO-A4 takes the other 40 and 30 from the south DC; SO-A1 "
-               "moves to the south DC; SO-C1 keeps its 30; SO-A2 (priority 7) finds nothing until the replenishment "
-               "lead time and ships 13 Mar, a week late.")
+               "moves to the south DC; SO-C1 keeps its 30; SO-A2 (priority 7) releases its confirmation.")
         a2 = one(bop.orders, order="SO-A2")
-        ctx.eq("SO-A2 after BOP", _lines(a2), [("DC-N", d("2026-03-13"), d("2026-03-14"), 100, "rlt")])
+        ctx.eq("SO-A2 after Lose", _lines(a2), [])
         ctx.near("on-time quantity after BOP", bop.kpis.on_time_qty, 240, 1e-9, "340 ordered − SO-A2's 100.")
 
     with ctx.step("Backorder processing with CTP", "promise", "POST /api/promise/bop",
-                  "With capable-to-promise on, the plant can make SO-A2's 100 in time."):
+                  "When the planner allows SO-A2 to be redistributed, the plant can make its 100 in time."):
+        raw["promising"]["bop_segments"][-1]["strategy"] = "redistribute"
+        raw["promising"]["bop_segments"][-1]["name"] = "Low priority, replan"
+        a2 = one(c.bop(Dataset.model_validate(raw)).orders, order="SO-A2")
+        ctx.eq("SO-A2 redistributed without CTP", _lines(a2), [("DC-N", d("2026-03-13"), d("2026-03-14"), 100, "rlt")])
         raw["promising"]["ctp"] = True
         bop2 = c.bop(Dataset.model_validate(raw))
         a2 = one(bop2.orders, order="SO-A2")

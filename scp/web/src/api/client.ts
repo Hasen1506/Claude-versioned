@@ -14,6 +14,7 @@ import type {
   OutsideView, OutsideAction, OutsideActionInput, OutsideActionResponse,
   PortalView, PortalAction, PortalActionInput, PortalActionResponse, PortalLink,
   WarehouseAction,
+  PublicationPreview,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
 import { done } from "../lib/guide";
@@ -573,6 +574,15 @@ export const api = {
   promote: (id: string, sha256: string) =>
     call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, {
       method: "POST", headers: { "If-Match": JSON.stringify(sha256) }, body: "{}",
+    }),
+  previewPublication: (company: string, id: string, sha256: string) =>
+    call<PublicationPreview>(`${co(company)}/scenarios/${encodeURIComponent(id)}/publication-preview`, {
+      method: "POST", headers: { "If-Match": JSON.stringify(sha256) },
+    }),
+  publishScenario: (company: string, id: string, sha256: string, preview: PublicationPreview) =>
+    call<CompanyCommandResult>(`${co(company)}/scenarios/${encodeURIComponent(id)}/publish`, {
+      method: "POST", headers: { "If-Match": JSON.stringify(sha256) },
+      body: JSON.stringify({ base_revision: preview.base_revision, plan_sha256: preview.plan_sha256 }),
     }),
   compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`).then(done("whatif")),
   /** The monthly S&OP cycle (enterprise 4.1): its steps are signed in order, each freezing the company. */

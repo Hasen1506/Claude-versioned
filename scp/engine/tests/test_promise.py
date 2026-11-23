@@ -238,15 +238,15 @@ def test_bop_after_shortage_priority_gains_low_priority_loses():
     b = run_bop(ds(d))
     by = {o.order: o for o in b.orders}
     assert by["SO-HIGH"].confirmed == 80 and by["SO-HIGH"].change == "gained"   # WIN segment
-    assert by["SO-LOW"].confirmed == 10 and by["SO-LOW"].change == "lost"       # LOSE segment
+    assert by["SO-LOW"].confirmed == 0 and by["SO-LOW"].change == "lost"       # LOSE segment
     log = {x.order: x for x in b.bop}
     assert (log["SO-HIGH"].before_confirmed, log["SO-HIGH"].after_confirmed) == (20, 80)
     assert log["SO-LOW"].segment == "Low priority" and log["SO-LOW"].strategy == "lose"
     committed, _ = commit(ds(d), "bop")
-    assert {c.order: c.qty for c in committed.confirmations} == {"SO-LOW": 10, "SO-HIGH": 80}
+    assert {c.order: c.qty for c in committed.confirmations} == {"SO-HIGH": 80}
 
 
-def test_lose_never_gains_and_fill_keeps_its_lines():
+def test_lose_releases_and_fill_never_increases():
     d = _bop_case()
     d["demand"][0]["priority"] = 5               # LOW becomes "Standard" (redistribute)
     new, _ = commit(ds(d))
@@ -255,9 +255,9 @@ def test_lose_never_gains_and_fill_keeps_its_lines():
         {"name": "Keep", "priorities": [5], "strategy": "fill"},
         {"name": "Give back", "priorities": [1], "strategy": "lose"},
     ]
-    lp(x, "D", "A")["on_hand"] = 200             # more supply: LOSE may not take it, FILL may top up
+    lp(x, "D", "A")["on_hand"] = 200             # extra supply cannot increase either confirmation
     b = {o.order: o for o in run_bop(ds(x)).orders}
-    assert b["SO-HIGH"].confirmed == 20          # lose: capped at what it had
+    assert b["SO-HIGH"].confirmed == 0           # lose: all previous confirmations released
     assert b["SO-LOW"].confirmed == 80 and lines(b["SO-LOW"])[0][1] == "2026-01-09"
 
 
@@ -306,3 +306,30 @@ def test_why_this_date_on_time_from_stock_and_late_from_a_firm_receipt():
     assert [w.kind for w in o.why] == ["receipt", "ship"]
     assert o.why[0].ref == "STO1" and o.why[0].date.isoformat() == "2026-01-15"
     assert o.why[1].date.isoformat() == "2026-01-16"
+
+
+def test_bop_win_freezes_shared_group_and_commits_unrelated_stock():
+    data = net(bop_segments=[{"name": "Win", "priorities": [1], "strategy": "win"},
+                             {"name": "Normal", "priorities": [5], "strategy": "redistribute"}])
+    lp(data, "D", "A")["on_hand"] = 100
+    data["demand"] = [so("C1", 60, "2026-01-10", "WIN", priority=1),
+                      so("C2", 40, "2026-01-10", "RELATED", priority=5),
+                      so("D2", 10, "2026-01-10", "INDEPENDENT", priority=5)]
+    baseline, _ = commit(ds(data))
+    updated = baseline.model_dump(mode="json")
+    lp(updated, "D", "A")["on_hand"] = 40
+    lp(updated, "D2", "A")["on_hand"] = 10
+    saved, outcome = commit(ds(updated), "bop")
+    assert [issue.object_id for issue in outcome.issues if issue.code == "BOP_GROUP_STOPPED"] == ["WIN"]
+    assert [c for c in saved.confirmations if c.order != "INDEPENDENT"] == baseline.confirmations
+    assert saved.confirmations[-1].order == "INDEPENDENT" and saved.confirmations[-1].qty == 10
+
+
+def test_bop_fill_cannot_advance_or_increase_existing_schedule():
+    data = net(bop_segments=[{"name": "Fill", "strategy": "fill"}])
+    lp(data, "D", "A")["on_hand"] = 100
+    data["demand"] = [so("C1", 60, "2026-01-10", "FILL")]
+    data["confirmations"] = [{"order": "FILL", "ship_from": "D", "ship_date": "2026-01-14",
+                              "date": "2026-01-15", "qty": 20}]
+    [promise] = run_bop(ds(data)).orders
+    assert lines(promise) == [("D", "2026-01-14", "2026-01-15", 20, "atp")]

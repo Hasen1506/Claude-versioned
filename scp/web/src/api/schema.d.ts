@@ -2846,6 +2846,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/companies/{cid}/scenarios/{vid}/publication-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Publication */
+        post: operations["preview_publication_api_companies__cid__scenarios__vid__publication_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/scenarios/{vid}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish Scenario */
+        post: operations["publish_scenario_api_companies__cid__scenarios__vid__publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/versions/{a}/compare/{b}": {
         parameters: {
             query?: never;
@@ -5286,7 +5320,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "purchasing" | "sales" | "stock" | "transport" | "intercompany" | "outside" | "production_cost" | "carrier_bank";
+            kind: "purchasing" | "sales" | "stock" | "transport" | "intercompany" | "outside" | "production_cost" | "carrier_bank" | "scenario_publication";
             /** Action */
             action: string;
             /** Parameters */
@@ -13788,6 +13822,26 @@ export interface components {
             /** Storage Type */
             storage_type: string;
         };
+        /** PublicationPreview */
+        PublicationPreview: {
+            /** Base Revision */
+            base_revision: number;
+            /** Plan Sha256 */
+            plan_sha256: string;
+            /** Receipts */
+            receipts: components["schemas"]["ReceiptChange"][];
+            /** Orders */
+            orders: components["schemas"]["OrderPromise"][];
+            /** Exceptions */
+            exceptions: string[];
+        };
+        /** PublicationRequest */
+        PublicationRequest: {
+            /** Base Revision */
+            base_revision: number;
+            /** Plan Sha256 */
+            plan_sha256: string;
+        };
         /**
          * PurchaseContract
          * @description An outline agreement (≈ contract): prices agreed with a supplier for a period. Purchase orders for its products
@@ -14335,6 +14389,29 @@ export interface components {
              * @default
              */
             code: string;
+        };
+        /** ReceiptChange */
+        ReceiptChange: {
+            /** Id */
+            id: string;
+            /**
+             * Before
+             * Format: date
+             */
+            before: string;
+            /**
+             * After
+             * Format: date
+             */
+            after: string;
+            /** Before Quantity */
+            before_quantity: number;
+            /** Quantity */
+            quantity: number;
+            /** Previous Schedule */
+            previous_schedule: components["schemas"]["ConfirmedDelivery"][];
+            /** Schedule */
+            schedule: components["schemas"]["ConfirmedDelivery"][];
         };
         /**
          * ReceiptKind
@@ -25042,6 +25119,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VersionMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_publication_api_companies__cid__scenarios__vid__publication_preview_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+            };
+            path: {
+                cid: string;
+                vid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicationPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_scenario_api_companies__cid__scenarios__vid__publish_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "if-match"?: string | null;
+            };
+            path: {
+                cid: string;
+                vid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublicationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult"];
                 };
             };
             /** @description Validation Error */

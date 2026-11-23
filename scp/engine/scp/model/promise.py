@@ -14,11 +14,11 @@ from .common import Id, Model, Ref, Unit
 class ConfirmationStrategy(str, Enum):
     """BOP confirmation strategy (guide §7.3)."""
 
-    WIN = "win"                    # may not lose, may gain; claims supply first
-    GAIN = "gain"                  # may not lose, may gain; placed later in the sequence
+    WIN = "win"                    # requires full on-time confirmation or stops the affected group
+    GAIN = "gain"                  # must preserve prior quantities and dates or stops the affected group
     REDISTRIBUTE = "redistribute"  # re-planned from scratch: may lose or gain
-    FILL = "fill"                  # keeps its schedule lines, tops up toward the requested quantity
-    LOSE = "lose"                  # may lose, may not gain: gives supply back
+    FILL = "fill"                  # can preserve or worsen the existing confirmation
+    LOSE = "lose"                  # clears the confirmation and releases its supply
 
 
 class BopSegment(Model):

@@ -20,7 +20,7 @@ from ..model.promise import Confirmation
 from ..actuals.post import delivered, ordered_now
 from ..plan import run_mrp
 from ..plan.rates import independent_demand
-from ..validate import has_errors, validate
+from ..validate import Issue, has_errors, validate
 from .atp import EPS
 from .engine import OrderPromise, Promiser, finish, sales_orders, segment_of, sort_key
 from .result import AllocationUse, BopRow, PromiseKpis, PromiseResult, SafeView, ScheduleLine
@@ -113,82 +113,135 @@ def _summary(lines: list[ScheduleLine]) -> tuple[float, float]:
     return (round(sum(x.qty for x in lines if x.on_time), 6), round(sum(x.qty for x in lines), 6))
 
 
-def _reclaim(P: Promiser, d: DemandRecord, key: str, prev: list[Confirmation]) -> list[ScheduleLine]:
-    """Take back a requirement's previous schedule lines as far as supply still allows."""
-    lines = []
-    allocs = P.allocations(d)
-    for c in sorted(prev, key=lambda c: c.ship_date):
-        node = (c.ship_from, d.product)
-        day = P.day(c.ship_date)
-        take = min(c.qty, P.series_for(node).available(day), P.alloc_cap(allocs, day))
-        if take > EPS:
-            sh = next((s for s in P.ships(d) if s.node == node), None)
-            if sh is None:
+_STRATEGY_ORDER = {strategy: index for index, strategy in enumerate((
+    ConfirmationStrategy.LOSE, ConfirmationStrategy.WIN, ConfirmationStrategy.GAIN,
+    ConfirmationStrategy.REDISTRIBUTE, ConfirmationStrategy.FILL,
+))}
+
+
+def _promise(key: str, d: DemandRecord, lines: list[ScheduleLine]) -> OrderPromise:
+    return finish(OrderPromise(order=key, location=d.location, product=d.product, qty=d.qty, requested=d.date,
+                               priority=d.priority, complete_delivery=d.complete_delivery, lines=lines))
+
+
+def _kept(P: Promiser, key: str, d: DemandRecord, previous: list[Confirmation]) -> OrderPromise:
+    return _promise(key, d, [P.register(d, c) for c in previous])
+
+
+def _no_later(lines: list[ScheduleLine], previous: list[Confirmation]) -> bool:
+    """Gain must preserve the amount available by each existing confirmation date."""
+    before, after = sorted(previous, key=lambda c: c.date), iter(sorted(lines, key=lambda x: x.date))
+    line = next(after, None)
+    required = supplied = 0.0
+    for confirmation in before:
+        required += confirmation.qty
+        while line is not None and line.date <= confirmation.date:
+            supplied += line.qty
+            line = next(after, None)
+        if supplied < required - EPS:
+            return False
+    return True
+
+
+def _affected_orders(ds: Dataset, P: Promiser, orders: list[tuple[str, DemandRecord]],
+                     persisted: dict[str, list[Confirmation]], failures: set[str]) -> set[str]:
+    """Close the failed groups over supply nodes, allocations, delivery groups and CTP inputs."""
+    together = {h.id for h in ds.sales_orders if h.single_delivery}
+    by_resource = defaultdict(set)
+    by_order = {}
+    for key, d in orders:
+        nodes = {ship.node for ship in P.ships(d)} | {(c.ship_from, d.product) for c in persisted.get(key, ())}
+        resources = {("allocation", a.id) for level in P.allocations(d) for a in level}
+        if d.order in together:
+            resources.add(("delivery", d.order))
+        pending = list(nodes)
+        while pending:
+            node = pending.pop()
+            resource = ("stock", node)
+            if resource in resources:
                 continue
-            lines.append(P.commit_line(d, sh, day, take, c.method, allocs, d.date))
-    return lines
+            resources.add(resource)
+            if not P.cfg.ctp:
+                continue
+            for option in P.g.options.get(node, ()):
+                if option.kind == "buy":
+                    continue
+                pending.extend(option.upstream)
+                if option.kind == "make":
+                    source = ds.production_source_by_id[option.source_id]
+                    for operation in source.operations:
+                        resources.add(("capacity", operation.resource))
+                        resources.update(("capacity", r) for r in operation.alternatives)
+        resources.discard(("capacity", None))
+        resources.discard(("capacity", ""))
+        by_order[key] = resources
+        for resource in resources:
+            by_resource[resource].add(key)
+
+    affected, pending_orders = set(failures), list(failures)
+    visited = set()
+    while pending_orders:
+        for resource in by_order[pending_orders.pop()] - visited:
+            visited.add(resource)
+            newly_affected = by_resource[resource] - affected
+            affected.update(newly_affected)
+            pending_orders.extend(newly_affected)
+    return affected
 
 
-def _combine(P: Promiser, d: DemandRecord, key: str, lines: list[ScheduleLine]) -> OrderPromise:
-    got = sum(x.qty for x in lines)
-    extra = P.check(d, key, qty=d.qty - got) if d.qty - got > EPS else None
-    r = OrderPromise(order=key, location=d.location, product=d.product, qty=d.qty, requested=d.date,
-                     priority=d.priority, complete_delivery=d.complete_delivery,
-                     lines=lines + (extra.lines if extra else []), ctp=extra.ctp if extra else [])
-    return finish(r)
-
-
-_KEEPS = (ConfirmationStrategy.WIN, ConfirmationStrategy.GAIN, ConfirmationStrategy.FILL)
-
-
-def _bop(ds: Dataset, P: Promiser) -> tuple[list[OrderPromise], list[BopRow]]:
+def _bop(ds: Dataset, P: Promiser) -> tuple[list[OrderPromise], list[BopRow], list[Issue]]:
     persisted = _persisted(ds)
     orders = sales_orders(ds)
     idx = {k: i for i, (k, _) in enumerate(orders)}
     segs = ds.promising.bop_segments
-    out: dict[str, OrderPromise] = {}
     seg_of = {k: segment_of(segs, d) for k, d in orders}
-    # orders no segment selects keep their confirmations and claim supply first
+    members = defaultdict(list)
     for key, d in orders:
-        if seg_of[key] is None and key in persisted:
-            lines = [P.register(d, c) for c in persisted[key]]
-            out[key] = finish(OrderPromise(order=key, location=d.location, product=d.product, qty=d.qty,
-                                           requested=d.date, priority=d.priority, complete_delivery=d.complete_delivery,
-                                           lines=lines))
-    members_of = {id(sg): sorted(((k, d) for k, d in orders if seg_of[k] is sg),
-                                 key=lambda kd: sort_key(sg, kd[1], idx[kd[0]])) for sg in segs}
-    # Win, Gain and Fill may not lose (guide §7.3): their confirmations are held BEFORE any segment is re-planned, so a
-    # Redistribute segment placed ahead of them in the sequence cannot take their supply (only as far as supply still
-    # covers them: a confirmation the supply no longer backs is lost whatever the strategy)
-    held: dict[str, list[ScheduleLine]] = {}
-    for sg in segs:
-        if sg.strategy in _KEEPS:
-            for key, d in members_of[id(sg)]:
-                held[key] = _reclaim(P, d, key, persisted.get(key, []))
-    for sg in segs:
-        for key, d in members_of[id(sg)]:
-            prev = persisted.get(key, [])
+        sg = seg_of[key]
+        if sg is not None:
+            members[id(sg)].append((key, d))
+    cascade = [order for sg in sorted(segs, key=lambda sg: _STRATEGY_ORDER[sg.strategy])
+               for order in sorted(members[id(sg)], key=lambda kd: sort_key(sg, kd[1], idx[kd[0]]))]
+    snapshot = P.snapshot()
+    frozen: set[str] = set()
+    issues: list[Issue] = []
+    while True:
+        out = {}
+        for key, d in orders:
+            if seg_of[key] is None or key in frozen:
+                out[key] = _kept(P, key, d, persisted.get(key, []))
+                if key in frozen:
+                    out[key].reason = "Previous confirmation retained because this backorder group failed"
+        failed = set()
+        for key, d in cascade:
+            sg = seg_of[key]
+            if key in frozen:
+                out[key].segment, out[key].strategy = sg.name, sg.strategy.value
+                continue
+            previous = persisted.get(key, [])
             st = sg.strategy
-            if st in (ConfirmationStrategy.WIN, ConfirmationStrategy.GAIN):
-                snap = P.snapshot()
-                for x in held[key]:
-                    P.release(d, x)        # re-checked from scratch with its own supply back in the pool
-                r = P.check(d, key)
-                before = _summary(held[key])
-                if _summary(r.lines) < before:
-                    P.restore(snap)
-                    r = _combine(P, d, key, held[key])
+            if st is ConfirmationStrategy.LOSE:
+                r = _promise(key, d, [])
             elif st is ConfirmationStrategy.FILL:
-                r = _combine(P, d, key, held[key])
-            elif st is ConfirmationStrategy.LOSE:
-                cap = sum(c.qty for c in prev)
-                r = P.check(d, key, qty=cap) if cap > EPS else finish(OrderPromise(
-                    order=key, location=d.location, product=d.product, qty=d.qty, requested=d.date,
-                    priority=d.priority, complete_delivery=d.complete_delivery))
+                r = _promise(key, d, P.refill(d, previous))
             else:
                 r = P.check(d, key)
             r.segment, r.strategy = sg.name, st.value
             out[key] = r
+            if st is ConfirmationStrategy.WIN and r.on_time < d.qty - EPS:
+                reason = f"Win requires {d.qty:g} on time and could confirm {r.on_time:g}"
+            elif st is ConfirmationStrategy.GAIN and not _no_later(r.lines, previous):
+                reason = "Gain could not preserve the quantities and delivery dates previously confirmed"
+            else:
+                continue
+            failed.add(key)
+            issues.append(Issue(code="BOP_GROUP_STOPPED", severity="warning", object_type="demand", object_id=key,
+                                message=f"{reason}. The affected group's confirmations were retained."))
+        if not failed:
+            break
+        frozen.update(_affected_orders(ds, P, orders, persisted, failed))
+        P.restore(snapshot)
+
     rows: list[BopRow] = []
     result: list[OrderPromise] = []
     for key, d in orders:
@@ -216,11 +269,14 @@ def _bop(ds: Dataset, P: Promiser) -> tuple[list[OrderPromise], list[BopRow]]:
                            strategy=r.strategy, before_confirmed=b_conf, before_on_time=b_on, after_confirmed=a_conf,
                            after_on_time=a_on, outcome=outcome))
         result.append(r)
-    return result, rows
+    return result, rows, issues
 
 
 def _same(a: list[ScheduleLine], b: list[ScheduleLine]) -> bool:
-    key = lambda x: (x.ship_from, x.ship_date, round(x.qty, 6))  # noqa: E731
+    def key(line: ScheduleLine):
+        return (line.ship_from, line.ship_date, line.date, line.goods_issue or line.ship_date,
+                line.method, round(line.qty, 6))
+
     return sorted(map(key, a)) == sorted(map(key, b))
 
 
@@ -288,8 +344,9 @@ def run_bop(ds: Dataset) -> PromiseResult:
     res, P = _start(ds, "bop")
     if P is None:
         return res
-    orders, rows = _bop(ds, P)
+    orders, rows, issues = _bop(ds, P)
     res.bop = rows
+    res.issues.extend(issues)
     return _finish(ds, P, res, orders)
 
 

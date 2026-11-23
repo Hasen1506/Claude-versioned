@@ -457,6 +457,26 @@ class Promiser:
         res.why = self.explain(d, res)
         return res
 
+    def refill(self, d: DemandRecord, previous: list[Confirmation]) -> list[ScheduleLine]:
+        """Reconfirm only prior Fill quantities on their source, on the same date or later."""
+        ships = {ship.node[0]: ship for ship in self.ships(d)}
+        allocs = self.allocations(d)
+        lines = []
+        remaining = d.qty
+        for c in sorted(previous, key=lambda c: (c.ship_date, c.date)):
+            if (ship := ships.get(c.ship_from)) is None:
+                continue
+            earliest = max(d.date, c.date)
+            day = max(self.ship_day(ship, d.product, earliest), self.day(c.ship_date))
+            taken = self._late(d.model_copy(update={"date": earliest}), ship, day, min(c.qty, remaining), allocs)
+            lines.extend(taken)
+            remaining -= sum(line.qty for line in taken)
+            if remaining <= EPS:
+                break
+        for line in lines:
+            line.on_time = line.date <= max(d.date, self.origin)
+        return lines
+
     def substitutes(self, d: DemandRecord, res: OrderPromise) -> list[SubstituteOffer]:
         """What substitutes could ship on time for the part of ``d`` that is not on time (S/4 aATP product
         substitution): each substitution that applies to the customer and the requested date, in its order, offered
