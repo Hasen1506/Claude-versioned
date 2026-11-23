@@ -107,17 +107,21 @@ function MachineView({ ds, m, plan, stale }: { ds: Dataset; m: MachineLoad; plan
   const [scale, setScale] = useState<Scale>("days");
   const [pick, setPick] = useState<number | null>(null);
   // levelling by hand: a planned run dragged (or moved with its date field) to another day, confirmed, made firm there
-  const [move, setMove] = useState<{ id: string; to: string } | null>(null);
+  const [move, setMove] = useState<{ id: string; to: string; basis: string } | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const today = ds.settings.planning_start;
   const ro = useReadOnly();
+  const pickMove = (id: string, to: string) => {
+    if (plan.firming_sha256 && !stale) setMove({ id, to, basis: plan.firming_sha256 });
+  };
+  const moveStale = stale || move?.basis !== plan.firming_sha256;
   const doMove = async () => {
-    if (!move) return;
+    if (!move || moveStale) return;
     setBusy(true); setNote(null);
     try {
-      const out = await api.firm(ds, [move.id], undefined, { [move.id]: move.to });
+      const out = await api.firm(ds, [move.id], move.basis, { [move.id]: move.to });
       store.replace(out.dataset, ds);
       const f = out.report.firmed[0];
       setNote(f ? { ok: true, text: `${move.id} is now ${f.receipt_id}, a firm run starting ${day(f.start_date)}; it stays there when the plan is recalculated. Undo reverts it.` }
@@ -180,7 +184,7 @@ function MachineView({ ds, m, plan, stale }: { ds: Dataset; m: MachineLoad; plan
                 title={`${day(d.date)}: ${qty(d.load)} of ${qty(d.cap)} h${past ? "" : " · drop a run here to start it this day"}`}
                 onClick={() => setPick(i === pick ? null : i)}
                 onDragOver={(e) => { if (!past) { e.preventDefault(); setOver(d.date); } }} onDragLeave={() => setOver(null)}
-                onDrop={(e) => { e.preventDefault(); setOver(null); const id = e.dataTransfer.getData("text/plain"); if (id && !past) setMove({ id, to: d.date }); }}
+                onDrop={(e) => { e.preventDefault(); setOver(null); const id = e.dataTransfer.getData("text/plain"); if (id && !past) pickMove(id, d.date); }}
                 style={{ minWidth: 18, height: 26, padding: 0, borderRadius: 3, cursor: "pointer",
                   border: over === d.date || pick === i ? "2px solid var(--accent)" : "1px solid var(--border)",
                   background: limited && d.load > d.cap + 1e-6 ? "var(--critical)" : `color-mix(in srgb, var(--series-1) ${Math.round(Math.min(1, u) * 100)}%, var(--surface))`,
@@ -196,7 +200,7 @@ function MachineView({ ds, m, plan, stale }: { ds: Dataset; m: MachineLoad; plan
         <Badge sev="warning">Check</Badge>
         <span>Start {move.id} on {day(move.to)}? It becomes a firm production run there, so later plans leave it on that day; its parts are reserved for the new day.</span>
         <span className="spacer" />
-        <Edits><button className="btn sm accent" onClick={doMove} disabled={busy || stale} title={stale ? "Recalculate the supply plan first" : undefined}>
+        <Edits><button className="btn sm accent" onClick={doMove} disabled={busy || moveStale} title={moveStale ? "Select the run again from the current plan" : undefined}>
           {busy ? "Moving…" : `Move to ${day(move.to)}`}</button></Edits>
         <button className="btn sm ghost" onClick={() => setMove(null)} disabled={busy}>Cancel</button>
       </div>}
@@ -222,7 +226,7 @@ function MachineView({ ds, m, plan, stale }: { ds: Dataset; m: MachineLoad; plan
                     : <span className="faint">·</span>}</td>
                   <td>{o && o.kind === "make" ? <Edits><input type="date" className="cell" aria-label={`Move ${ol.order} to`} min={today}
                     defaultValue={o.start_date} key={o.start_date}
-                    onChange={(e) => { const v = e.target.value; if (v && v >= today && v !== o.start_date) setMove({ id: ol.order, to: v }); }} /></Edits>
+                    onChange={(e) => { const v = e.target.value; if (v && v >= today && v !== o.start_date) pickMove(ol.order, v); }} /></Edits>
                     : <span className="faint small">—</span>}</td>
                 </tr>
               );
@@ -240,7 +244,7 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
   const [preview, setPreview] = useState<LevelPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [asking, setAsking] = useState(false);
+  const [asking, setAsking] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const moved = plan.orders.filter((o) => o.capacity_shift_days !== 0 || Object.keys(o.step_resources ?? {}).length > 0);
   const show = async () => {
@@ -259,12 +263,13 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
     if (on) await store.run("plan");
   };
   const keep = async () => {
+    if (!asking || stale || asking !== plan.firming_sha256) return;
     setBusy(true); setErr(null);
     try {
-      const out = await api.firm(ds, moved.map((o) => o.id));
+      const out = await api.firm(ds, moved.map((o) => o.id), asking);
       store.replace(out.dataset, ds);
       setMsg(`${plural(out.report.firmed.length, "order")} kept at their levelled dates as production orders.`);
-      setAsking(false);
+      setAsking(null);
       await store.run("plan");
     } catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };
@@ -276,7 +281,7 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
       <button className="btn sm" onClick={show} disabled={busy}>{busy && !asking ? "Working…" : "Show what levelling moves"}</button>
       {on ? <Edits><button className="btn sm ghost" onClick={() => toggle(false)} disabled={busy}>Go back to unlimited capacity</button></Edits>
         : <Edits><button className="btn sm accent" onClick={() => toggle(true)} disabled={busy}>Plan within capacity</button></Edits>}
-      {on && moved.length > 0 && <Edits><button className="btn sm" onClick={() => setAsking(true)} disabled={busy || stale}
+      {on && moved.length > 0 && <Edits><button className="btn sm" onClick={() => setAsking(plan.firming_sha256)} disabled={busy || stale || !plan.firming_sha256}
         title={stale ? "Recalculate the supply plan first" : "Make the moved orders firm production orders at their levelled dates"}>Keep these dates</button></Edits>}
     </div>}>
       <p className="small" style={{ marginTop: 0 }}>{on
@@ -307,8 +312,8 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
         <Badge sev="warning">Check</Badge>
         <span>This makes {plural(moved.length, "planned order")} firm production orders at the dates levelling gave them, so they stay there even if you
           switch levelling off. Undo reverts it.</span><span className="spacer" />
-        <Edits><button className="btn sm accent" onClick={keep} disabled={busy}>{busy ? "Saving…" : "Keep the dates"}</button></Edits>
-        <button className="btn sm ghost" onClick={() => setAsking(false)} disabled={busy}>Cancel</button>
+        <Edits><button className="btn sm accent" onClick={keep} disabled={busy || stale || asking !== plan.firming_sha256}>{busy ? "Saving…" : "Keep the dates"}</button></Edits>
+        <button className="btn sm ghost" onClick={() => setAsking(null)} disabled={busy}>Cancel</button>
       </div>}
       {preview && preview.ok && <>
         <p className="small"><b>Levelling moves {plural(preview.moves.length, "order")}</b>: {early} earlier, {alt} onto an alternative machine, {later} later.

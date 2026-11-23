@@ -109,8 +109,9 @@ class HttpClient:
         return self._pair("/api/promise/commit", {"dataset": _ds(ds), "mode": mode}, "result", PromiseResult)
 
     def firm(self, ds: Dataset, ids: list[str] | None = None, within_days: int | None = None) -> tuple[Dataset, FirmReport]:
-        return self._pair("/api/orders/firm", {"dataset": _ds(ds), "ids": ids, "within_days": within_days}, "report",
-                          FirmReport)
+        fingerprint = self.plan(ds).firming_sha256 if ids is not None else None
+        return self._pair("/api/orders/firm", {"dataset": _ds(ds), "ids": ids, "within_days": within_days,
+                                             "plan_sha256": fingerprint}, "report", FirmReport)
 
     def actuals(self, ds: Dataset, as_of: dt.date | None = None) -> ActualsView:
         return self._post("/api/actuals", {"dataset": _ds(ds), "as_of": as_of.isoformat() if as_of else None},

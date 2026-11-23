@@ -440,8 +440,8 @@ export const api = {
       date: extra.date ?? null, reference: extra.reference ?? "", note: extra.note ?? "" }),
   /** Firm planned orders into receipts: `ids`, or everything starting within the firm zone; `send` sends the
    * purchase orders it makes at once. */
-  firm: (dataset: Dataset, ids?: string[], withinDays?: number, starts?: Record<string, string>, send = false) =>
-    write<FirmResponse>("/api/orders/firm", dataset, { ids: ids ?? null, within_days: withinDays ?? null, starts: starts ?? null, send }),
+  firm: (dataset: Dataset, ids: string[], planSha256: string, starts?: Record<string, string>) =>
+    write<FirmResponse>("/api/orders/firm", dataset, { ids, plan_sha256: planSha256, starts: starts ?? null }),
   // ---- sign-in and companies kept on the server (Phase I)
   authConfig: () => call<AuthConfig>("/api/auth/config"),
   signUp: (email: string, name: string, password: string) =>

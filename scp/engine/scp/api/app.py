@@ -87,7 +87,7 @@ from ..whatif import (
     KeepRequest, KeepResult, SweepRequest, SweepResult, WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios,
     keep_scenario, sweep_chip,
 )
-from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
+from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, canonical, compare, get_store, sha
 from ..companies import CompanyError, get_companies
 from ..companies.commands import CommandRecord, CommandRequest, CommandResult, execute as execute_command, record as command_record
 from .connect import router as connect_router
@@ -672,7 +672,20 @@ def post_sales_order(req: SalesOrderRequest) -> SalesOrderResponse:
 def post_plan(ds: PlanData, pegging: bool = True) -> Response:
     """The supply plan. ``pegging=false`` leaves out the requirements and the pegging (two thirds of a large plan):
     ``/api/plan/trace`` gives an order's or a product's part of them when it is looked at."""
-    return respond("plan", ds, lambda: run_mrp(ds), exclude=None if pegging else {"requirements", "pegs"})
+    def result() -> PlanResult:
+        plan = run_mrp(ds)
+        return plan.model_copy(update={"firming_sha256": firming_digest(ds, plan)}) if plan.ok else plan
+
+    return respond("plan", ds, result, exclude=None if pegging else {"requirements", "pegs"})
+
+
+def firming_digest(ds: Dataset, plan: PlanResult) -> str:
+    def fingerprint() -> str:
+        content = sha(canonical(ds))
+        proposals = sha(plan.model_dump_json(include={"orders", "requirements"}))
+        return sha(f"{content}:{proposals}")
+
+    return with_kept_plan(ds, plan, "firming-digest", fingerprint)
 
 
 class TraceRequest(Out):
@@ -737,6 +750,7 @@ class FirmRequest(Out):
     within_days: int | None = None        # overrides the dataset's firm zone
     starts: dict[str, dt.date] | None = None  # planned production runs moved by hand: firm, starting that day
     send: bool = False                    # send the purchase orders it makes at once (all but those to be released)
+    plan_sha256: str | None = Field(None, pattern=r"^[a-f0-9]{64}$")
 
 
 class FirmResponse(Out):
@@ -747,7 +761,12 @@ class FirmResponse(Out):
 
 @app.post("/api/orders/firm", response_model=FirmResponse)
 def post_firm(req: FirmRequest) -> FirmResponse:
-    new, rep = firm_orders(req.dataset, run_mrp(req.dataset), req.ids, req.within_days, req.starts, req.send)
+    if (req.ids is not None or req.starts) and req.plan_sha256 is None:
+        raise HTTPException(428, "supply the reviewed plan fingerprint for selected or rescheduled orders")
+    plan = run_mrp(req.dataset)
+    if req.plan_sha256 is not None and req.plan_sha256 != firming_digest(req.dataset, plan):
+        raise HTTPException(412, "the supply plan changed; recalculate it and review the orders before firming")
+    new, rep = firm_orders(req.dataset, plan, req.ids, req.within_days, req.starts, req.send)
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before firming orders")
     return FirmResponse(**answer(req.dataset, new), report=rep)

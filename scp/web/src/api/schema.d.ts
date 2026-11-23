@@ -7482,6 +7482,8 @@ export interface components {
              * @default false
              */
             send: boolean;
+            /** Plan Sha256 */
+            plan_sha256?: string | null;
         };
         /** FirmResponse */
         FirmResponse: {
@@ -12353,6 +12355,8 @@ export interface components {
             issues: components["schemas"]["Issue"][];
             /** Planned Again */
             planned_again: number | null;
+            /** Firming Sha256 */
+            firming_sha256: string | null;
         };
         /** PlanSummary */
         PlanSummary: {

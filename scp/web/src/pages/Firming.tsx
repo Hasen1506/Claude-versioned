@@ -32,13 +32,17 @@ function SourceFrom({ ds, id }: { ds: Dataset; id?: string | null }) {
 
 export function Firming({ ds }: { ds: Dataset }) {
   const plan = useStore((s) => s.runs.plan);
-  const planStale = useStore((s) => isStale(s, "plan"));
+  const stale = useStore((s) => isStale(s, "plan"));
+  const basis = plan.data?.firming_sha256;
+  const planStale = stale || (!!plan.data?.ok && !basis);
   const zone = ds.execution?.firm_zone_days ?? 14;
   const limit = addDays(ds.settings.planning_start, zone);
   const cands = useMemo(() => (plan.data?.ok ? firmCandidates(ds, plan.data.orders) : []), [plan.data, ds]);
-  const [pick, setPick] = useState<Set<string> | null>(null);
+  const [pick, setPick] = useState<{ basis: string; orders: Set<string> } | null>(null);
   // a purchase that an open order would cover if it came sooner is left out until someone decides (Q9)
-  const chosen = pick ?? new Set(cands.filter((o) => !o.open_later?.length).map((o) => o.id));
+  const chosen = pick ? (pick.basis === basis ? pick.orders : new Set<string>())
+    : new Set(cands.filter((o) => !o.open_later?.length).map((o) => o.id));
+  const select = (orders: Set<string>) => { if (basis) setPick({ basis, orders }); };
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -95,10 +99,11 @@ export function Firming({ ds }: { ds: Dataset }) {
     }
   };
   const firm = async () => {
+    if (!basis || planStale) return;
     setBusy(true);
     setErr(null);
     try {
-      const out = await api.firm(ds, [...chosen]);
+      const out = await api.firm(ds, [...chosen], basis);
       store.replace(out.dataset, ds);
       setPick(null);
       const r = out.report;
@@ -120,11 +125,11 @@ export function Firming({ ds }: { ds: Dataset }) {
     const n = new Set(chosen);
     if (n.has(o.id)) n.delete(o.id);
     else n.add(o.id);
-    setPick(n);
+    select(n);
   };
   return (
     <Panel flush title={`Firm zone: planned orders starting before ${day(limit)} (${zone} days)`} actions={
-      plan.data ? <Edits><><button className="btn sm ghost" disabled={busy || planStale || !cands.length} onClick={() => setPick(new Set(chosen.size ? [] : cands.map((o) => o.id)))}>
+      plan.data ? <Edits><><button className="btn sm ghost" disabled={busy || planStale || !cands.length} onClick={() => select(new Set(chosen.size ? [] : cands.map((o) => o.id)))}>
         {chosen.size ? "Select none" : "Select all"}</button><button className="btn sm accent" disabled={busy || planStale || chosen.size === 0} onClick={firm}
         title={planStale ? "Recalculate the supply plan first" : "Turns these planned orders into firm purchase, production and transfer orders in your data. Undo reverts it."}>
         {busy ? "Saving…" : `Make ${chosen.size} order${chosen.size === 1 ? "" : "s"} firm`}</button></></Edits> : null}>
