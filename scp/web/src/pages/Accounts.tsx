@@ -11,7 +11,7 @@ import { day, exactMoney, money, plural } from "../lib/format";
 import { Msg, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { download } from "../lib/tabular";
-import { store, useStore } from "../state/store";
+import { store, unsaved, useStore } from "../state/store";
 
 type View = "balances" | "parties" | "journal" | "checks" | "production" | "tally";
 const NATURE: Record<string, string> = { asset: "What the company has", liability: "What it owes",
@@ -291,19 +291,22 @@ function Checks({ v, cur }: { v: AccountingView; cur: string }) {
 function Tally({ ds, v, co, start, end }: { ds: Dataset; v: AccountingView; co: string; start: string; end: string }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const pending = useStore(unsaved);
   const c = v.companies.find((x) => x.id === co)!;
   const ledgers = (ds.finance?.ledgers ?? {}) as Record<string, string>;
-  const setLedger = (code: string, name: string) => store.update((d) => {
+  const bankLedgers = ds.finance?.tally_bank_ledgers ?? {};
+  const bankAccounts = (ds.carrier_bank_accounts ?? []).filter((account) => account.company === co);
+  const setLedger = (code: string, name: string, field: "ledgers" | "tally_bank_ledgers" = "ledgers") => store.update((d) => {
     const f = { ...(d.finance ?? {}) } as NonNullable<Dataset["finance"]>;
-    const l = { ...((f.ledgers ?? {}) as Record<string, string>) };
+    const l = { ...(f[field] ?? {}) } as Record<string, string>;
     if (name.trim()) l[code] = name; else delete l[code];
-    f.ledgers = l;
+    if (Object.keys(l).length || field === "ledgers") f[field] = l; else delete f[field];
     d.finance = f;
   });
-  const save = async (format: "tally" | "csv") => {
+  const save = async (format: "tally" | "csv", bankDetail = false) => {
     setBusy(true); setErr(null);
     try {
-      const out = await api.accountingExport(ds, format, co, start || undefined, end || undefined);
+      const out = await api.accountingExport(ds, format, co, start || undefined, end || undefined, bankDetail);
       download(out.name, out.text, format === "csv" ? "text/csv" : "application/xml");
     } catch (e) {
       setErr(String(e).replace(/^Error:\s*/, ""));
@@ -312,9 +315,14 @@ function Tally({ ds, v, co, start, end }: { ds: Dataset; v: AccountingView; co: 
     }
   };
   return <>
-    <Panel title={`Tally's file for ${c.name}`} actions={<div className="row">
-      <button className="btn sm primary" disabled={busy} onClick={() => save("tally")}>Download the Tally file</button>
-      <button className="btn sm" disabled={busy} onClick={() => save("csv")}>Download the journal (CSV)</button></div>}>
+    <Panel title={`Tally's file for ${c.name}`} actions={<div className="row wrap">
+      {bankAccounts.length > 0 && <button className="btn sm primary" disabled={busy || pending}
+        onClick={() => save("tally", true)}>Download bank-detail Tally file</button>}
+      <button className={`btn sm${bankAccounts.length ? "" : " primary"}`} disabled={busy}
+        onClick={() => save("tally")}>{bankAccounts.length ? "Download consolidated Tally file" : "Download the Tally file"}</button>
+      <button className="btn sm" disabled={busy} onClick={() => save("csv")}>Download the journal (CSV)</button>
+      {!!ds.carrier_bank_accounts?.length && <button className="btn sm" disabled={busy || pending}
+        onClick={() => save("csv", true)}>Download bank-detail CSV</button>}</div>}>
       {err && <div className="banner error" role="alert"><Badge sev="error">Not made</Badge>{err}</div>}
       <p>{plural(c.vouchers, "voucher")} from {day(v.period_start)} to {day(v.period_end)} for the company <b>{c.tally_name}</b> in
         Tally, with the ledgers they post to (customers and suppliers by name, under Sundry Debtors and Sundry Creditors).
@@ -327,6 +335,18 @@ function Tally({ ds, v, co, start, end }: { ds: Dataset; v: AccountingView; co: 
       </label></Edits>}
       {co !== "" && <p className="faint">Its name in Tally is its name here: change it under <a href={href("data", "entities")}>Companies</a>.</p>}
     </Panel>
+    {bankAccounts.length > 0 && <Panel flush title="Registered bank ledgers in Tally">
+      <p className="small">Enter the exact names of existing Bank Accounts ledgers in this Tally company. The bank-detail file uses these names for registered carrier cash.</p>
+      {pending && <p className="small" role="status">Bank-detail downloads are available when the company changes are saved.</p>}
+      <div className="table-wrap"><table className="t" aria-label="Registered bank ledgers">
+        <thead><tr><th>Registered bank account</th><th>Ledger in Tally</th></tr></thead>
+        <tbody>{bankAccounts.map((account) => <tr key={account.id}>
+          <td className="mono">{account.id}</td>
+          <td><Edits><input className="input sm" aria-label={`Tally bank ledger for ${account.id}`}
+            value={bankLedgers[account.id] ?? ""} maxLength={120} onChange={(e) => setLedger(account.id, e.target.value, "tally_bank_ledgers")} /></Edits></td>
+        </tr>)}</tbody>
+      </table></div>
+    </Panel>}
     <Panel flush title="Ledger names in Tally">
       <div className="table-wrap"><table className="t" aria-label="Ledger names">
         <thead><tr><th>Account</th><th>Tally group</th><th>Ledger in Tally</th></tr></thead>

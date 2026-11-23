@@ -368,8 +368,8 @@ export const api = {
     return planPost<AccountingView>(`/api/accounting${q.size ? `?${q}` : ""}`, ds);
   },
   /** One company's vouchers as Tally's import file, or the journal as a spreadsheet. */
-  accountingExport: (ds: Dataset, format: "tally" | "csv", company = "", start?: string, end?: string) => {
-    const q = new URLSearchParams({ format, company });
+  accountingExport: (ds: Dataset, format: "tally" | "csv", company = "", start?: string, end?: string, bankDetail = false) => {
+    const q = new URLSearchParams({ format: bankDetail ? `${format}_bank_detail` : format, company });
     if (start) q.set("period_start", start);
     if (end) q.set("period_end", end);
     return planPost<AccountingExport>(`/api/accounting/export?${q}`, ds);

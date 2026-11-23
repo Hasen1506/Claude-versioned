@@ -1504,9 +1504,11 @@ class AccountingExport(Out):
 
 
 @app.post("/api/accounting/export", response_model=AccountingExport)
-def post_accounting_export(ds: PlanData, format: Literal["tally", "csv"] = "tally", company: str = "",
-                           period_start: dt.date | None = None, period_end: dt.date | None = None) -> Response:
+def post_accounting_export(ds: PlanData, format: Literal["tally", "csv", "tally_bank_detail", "csv_bank_detail"] = "tally",
+                           company: str = "", period_start: dt.date | None = None, period_end: dt.date | None = None) -> Response:
     """One company's vouchers of the period as Tally's import file, or the whole journal as a spreadsheet (CSV)."""
+    bank_detail = format in ("tally_bank_detail", "csv_bank_detail")
+
     def make() -> AccountingExport:
         from ..model.currency import CurrencyPrecisionError
         try:
@@ -1517,15 +1519,18 @@ def post_accounting_export(ds: PlanData, format: Literal["tally", "csv"] = "tall
         if failed:
             raise HTTPException(409, "the accounts do not reconcile: " + "; ".join(
                 f"{c.company or 'main'}: {c.what}" for c in failed))
-        stem = f"journal-{v.period_start.isoformat()}-{v.period_end.isoformat()}"
-        if format == "csv":
+        stem = f"journal-{v.period_start.isoformat()}-{v.period_end.isoformat()}" + ("-bank-detail" if bank_detail else "")
+        if format in ("csv", "csv_bank_detail"):
             buf = io.StringIO()
-            csv.writer(buf).writerows(acct.csv_rows(v, ds))
+            csv.writer(buf).writerows(acct.csv_rows(v, ds, bank_detail=bank_detail))
             return AccountingExport(name=stem + ".csv", text=buf.getvalue())
         if company and company not in ds.entity_by_id:
             raise HTTPException(404, f"there is no company {company}")
-        return AccountingExport(name=f"tally-{company or 'main'}-{stem}.xml",
-                                text=acct.tally_xml(ds, company, period_start, period_end))
+        try:
+            xml = acct.tally_from_view(v, ds, company, bank_detail=bank_detail)
+        except acct.TallyExportError as exc:
+            raise HTTPException(409, str(exc)) from None
+        return AccountingExport(name=f"tally-{company or 'main'}-{stem}.xml", text=xml)
     return respond("accounting-export", ds, make, format, company, period_start, period_end)
 
 

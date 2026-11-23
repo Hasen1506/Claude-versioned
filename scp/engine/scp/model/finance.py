@@ -2,10 +2,32 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Literal
-from pydantic import Field
+from typing import Annotated, Literal
+from pydantic import Field, StringConstraints, TypeAdapter
 
+from .carrier_bank import BankAccountId
 from .common import Id, Model, Ref, Unit
+
+
+TallyBankLedgers = dict[BankAccountId, Annotated[str, StringConstraints(
+    strip_whitespace=True, min_length=1, max_length=120, pattern=r"^[^\x00-\x1f\x7f\uFFFE\uFFFF]+$",
+)]]
+_tally_bank_ledgers = TypeAdapter(TallyBankLedgers)
+
+
+def validate_tally_bank_ledgers(document: dict) -> None:
+    finance = document.get("finance")
+    if not isinstance(finance, dict) or "tally_bank_ledgers" not in finance:
+        return
+    names = _tally_bank_ledgers.validate_python(finance["tally_bank_ledgers"])
+    if not names:
+        return
+    accounts = document.get("carrier_bank_accounts") or []
+    if not isinstance(accounts, list):
+        raise ValueError("Tally bank ledgers require a registered account list")
+    registered = {row.get("id") for row in accounts if isinstance(row, dict) and isinstance(row.get("id"), str)}
+    if missing := names.keys() - registered:
+        raise ValueError("Tally bank ledgers require registered accounts: " + ", ".join(sorted(missing)))
 
 
 class ProductionCostPosting(Model):
@@ -51,5 +73,7 @@ class FinanceSettings(Model):
     ledgers: dict[str, str] = Field(default_factory=dict, max_length=60,
                                     description="Accounting (Enterprise 7.4): the ledger name in Tally for an account "
                                                 "of the journal, by its code (STOCK, GRIR, SALES, …); empty = ours")
+    tally_bank_ledgers: TallyBankLedgers = Field(default_factory=dict, exclude_if=lambda names: not names,
+                description="Existing destination Tally ledger names by registered carrier bank account ID")
     tally_company: str = Field("", max_length=120, description="The company's name in Tally, for the export; empty = "
                                                                "its name here")

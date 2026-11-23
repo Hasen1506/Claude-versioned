@@ -1213,6 +1213,11 @@ class Companies:
         with self.lock:
             if self.is_key(user):
                 raise CompanyError("a key works only in its company; a person must create a company", 403)
+            from ..model.finance import validate_tally_bank_ledgers
+            try:
+                validate_tally_bank_ledgers(doc)
+            except ValueError as exc:
+                raise CompanyError(f"invalid Tally bank ledger mapping: {exc}", 422) from None
             bank_fields = ("carrier_bank_accounts", "carrier_bank_lines", "carrier_bank_periods")
             freight = doc.get("freight_orders")
             has_posted_bank_account = isinstance(freight, list) and any(

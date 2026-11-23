@@ -11,6 +11,7 @@ from datetime import date
 from pydantic import ValidationError
 
 from ..model import GoodsMovement, MovementType, PurchaseOrder, SupplierInvoice
+from ..model.finance import validate_tally_bank_ledgers
 from ..purchasing.payables import (
     cancel_invoice, enter_invoice, invoice_entity, lines_index, pay_invoice, posting_rate, release_invoice,
 )
@@ -34,6 +35,10 @@ def _rows(doc: dict, name: str) -> dict[str, dict]:
 def protect(before: dict, after: dict, email: str, *, allow_production_posting: bool = False,
             freight_action: str = "", allow_carrier_bank: bool = False) -> dict:
     """Return a normalized document or refuse an invalid financial state transition."""
+    try:
+        validate_tally_bank_ledgers(after)
+    except ValueError as exc:
+        raise TransactionRefused(f"invalid Tally bank ledger mapping: {exc}") from None
     names = ("supplier_invoices", "movements", "purchase_orders", "invoices", "intercompany_invoices", "freight_orders",
              "inventory_docs", "challans", "third_party_orders", "purchase_valuation", "production_cost_postings",
              "carrier_bank_accounts", "carrier_bank_lines", "carrier_bank_periods")
