@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 from pydantic import Field, StringConstraints, TypeAdapter, ValidationError
 
 from .camt_statements import file_evidence, file_set_evidence, read_statement_files
-from .carrier_accounts import (BankAccounts, CarrierBankTieOut, check_window, last_period, next_start,
+from .carrier_accounts import (BankAccounts, CarrierBankTieOut, CarrierBankTiming, check_window, last_period, next_start,
                                period_id, protect_accounts, statement_periods, tie_out)
 from .freight import BankPosting, CarrierBill, active_bank_matches, carrier_bills, freight_company
 from .model import Dataset
@@ -80,6 +80,7 @@ class ReverseBankCash(Model):
     kind: Literal["reverse_cash"]
     line: str = Field(min_length=1, max_length=64)
     original: BankCashRef
+    late_reason: str = Field("", max_length=200)
 
 
 BankOperation = Annotated[ImportStatement | MatchStatement | ReleaseStatement | ReverseBankCash | RegisterBankAccount | ImportBankPeriod
@@ -107,6 +108,7 @@ class CarrierCash(Out):
 
 class ReversibleCash(CarrierCash):
     original_line: str
+    original_bank_date: date
     eligible_from: date
 
 
@@ -116,6 +118,7 @@ class CarrierBankView(Out):
     periods: list[CarrierBankTieOut]
     reversible_cash: list[ReversibleCash]
     locked_lines: list[str]
+    timing: list[CarrierBankTiming]
 
 
 def _cash(bill: CarrierBill, posting: BankPosting) -> CarrierCash:
@@ -128,11 +131,23 @@ def bank_view(ds: Dataset, bills: list[CarrierBill]) -> CarrierBankView:
     unmatched = []
     posted = []
     reversible = []
+    timing = []
+    lines = {line.id: line for line in ds.carrier_bank_lines}
     locked = _locked_reversal_lines(bills)
     sources = _original_matches(ds, locked)
     for bill in bills:
         available = set(bill.unreconciled_cash)
         latest = bill.latest_monetary_date()
+        for voucher, event in bill.reversals():
+            if not event.late_reason:
+                continue
+            line = lines.get(event.statement_line)
+            if (line and line.reversal and (line.account, line.company, line.amount_minor) == (
+                    event.bank_account, bill.company, event.amount_minor) and line.date < event.date
+                    and [target.key() for target in line.active] == [(bill.order, voucher)]):
+                timing.append(CarrierBankTiming(account=line.account, voucher=voucher, statement_line=line.id,
+                                                bank_date=line.date, posting_date=event.date,
+                                                amount_minor=event.amount_minor, reason=event.late_reason))
         for posting in bill.cash():
             posted.append(posting)
             if posting.voucher in available:
@@ -140,10 +155,11 @@ def bank_view(ds: Dataset, bills: list[CarrierBill]) -> CarrierBankView:
             original = sources.get((bill.order, posting.voucher))
             if original:
                 reversible.append(ReversibleCash(**_cash(bill, posting).model_dump(),
-                                                  original_line=original.statement_line, eligible_from=max(latest, original.date)))
+                                                  original_line=original.statement_line, original_bank_date=original.date,
+                                                  eligible_from=max(latest, original.date)))
     return CarrierBankView(lines=sorted(ds.carrier_bank_lines, key=lambda line: (line.date, line.id), reverse=True),
-                           unmatched_cash=unmatched, periods=tie_out(ds, posted), reversible_cash=reversible,
-                           locked_lines=sorted(locked))
+                           unmatched_cash=unmatched, periods=tie_out(ds, posted, timing), reversible_cash=reversible,
+                           locked_lines=sorted(locked), timing=timing)
 
 
 def _locked_reversal_lines(bills: list[CarrierBill]) -> set[str]:
@@ -293,7 +309,7 @@ def _camt(ds: Dataset, request: CamtFile | CamtFiles, day: date) -> tuple[Datase
 
 
 def _validate_match(line: CarrierBankLine, targets: list[BankCashRef], cash: dict[tuple[str, str], CarrierCash], day: date,
-                    period: CarrierBankPeriod | None) -> None:
+                    period: CarrierBankPeriod | None, *, late_return: bool = False) -> None:
     keys = [target.key() for target in targets]
     if len(keys) != len(set(keys)):
         raise ValueError("select each cash voucher once")
@@ -302,7 +318,8 @@ def _validate_match(line: CarrierBankLine, targets: list[BankCashRef], cash: dic
         leg = cash.get(key)
         if not leg or leg.company != line.company or (leg.amount_minor > 0) != (line.amount_minor > 0):
             raise ValueError("cash vouchers must be unmatched and have the statement's entity and direction")
-        if leg.bank_account != (period.account if period else None) or (period and not period.starts_on <= leg.date <= period.ends_on):
+        if (leg.bank_account != (period.account if period else None)
+                or (period and not late_return and not period.starts_on <= leg.date <= period.ends_on)):
             raise ValueError("the carrier cash must belong to the statement's registered account and posting period")
         if leg.reference.casefold() != line.reference.casefold():
             raise ValueError("the cash vouchers must share the statement's bank reference")
@@ -322,8 +339,14 @@ def _check_reversal_source(line: CarrierBankLine, original: CarrierBankLine, per
 
 
 def _record_reversal(ds: Dataset, request: ReverseBankCash, line: CarrierBankLine, day: date) -> tuple[Dataset, str]:
-    if day != line.date or line.history:
-        raise ValueError("post an unused reversal on the bank booking date")
+    if day < line.date or line.history:
+        raise ValueError("select an unused reversal and a date on or after its bank booking date")
+    if day != line.date:
+        closed = ds.finance.closed_through
+        if closed is None or line.date > closed or not request.late_reason:
+            raise ValueError("a later posting requires a closed bank booking date and a reason")
+    elif request.late_reason:
+        raise ValueError("a late posting reason requires a date after the bank booking date")
     bills = list(carrier_bills(ds))
     locked = _locked_reversal_lines(bills)
     original = _original_matches(ds, locked).get(request.original.key())
@@ -333,10 +356,11 @@ def _record_reversal(ds: Dataset, request: ReverseBankCash, line: CarrierBankLin
     bill = next((b for b in bills if b.order == request.original.order and any(
         cash.voucher == request.original.voucher for cash in b.cash())), None)
     if bill is None or day < bill.latest_monetary_date():
-        raise ValueError("the bank booking date precedes a later cash or credit posting on this carrier bill")
+        raise ValueError("the posting date precedes a later cash or credit posting on this carrier bill")
     order = next(order for order in ds.freight_orders if order.id == bill.order)
     event = CarrierBankReversal(date=day, reverses=request.original.voucher, original_line=original.id, statement_line=line.id,
-                                reference=line.reference, amount_minor=line.amount_minor, bank_account=line.account)
+                                reference=line.reference, amount_minor=line.amount_minor, bank_account=line.account,
+                                late_reason=request.late_reason)
     changed = order.model_copy(update={"bill_events": [*order.bill_events, event]})
     target = BankCashRef(order=bill.order, voucher=f"{bill.voucher}/V-{len(changed.bill_events)}")
     matched = line.model_copy(update={"history": [BankMatchEvent(date=day, targets=[target])]})
@@ -414,8 +438,14 @@ def protect_bank(old: Dataset, new: Dataset, command: bool) -> None:
         reversal, original = lines.get(line_id), lines.get(event.original_line)
         if (reversal is None or original is None or original.id not in periods or original.active != [original_target]
                 or reversal.active != [target] or len(reversal.history) != 1
-                or reversal.date != event.date or reversal.history[0].date != event.date):
+                or reversal.history[0].date != event.date):
             raise ValueError("a posted bank reversal must retain both of its original statement allocations")
+        if event.late_reason:
+            closed = new.finance.closed_through
+            if closed is None or reversal.date > closed or reversal.date >= event.date:
+                raise ValueError("a late return must retain its closed bank date and later accounting date")
+        elif reversal.date != event.date:
+            raise ValueError("a reversal posted across accounting periods must retain its reason")
         _check_reversal_source(reversal, original, periods.get(line_id))
     for (company, account_id, _), match in legacy.items():
         account = accounts.get(account_id.upper())
@@ -438,7 +468,8 @@ def protect_bank(old: Dataset, new: Dataset, command: bool) -> None:
                                     or len(row.history) > len(earlier.history) + 1):
             raise ValueError("statement source and match history are retained")
         if row.active:
-            _validate_match(row, row.active, cash, row.history[-1].date, periods.get(row.id))
+            late = row.id in reversals and bool(reversals[row.id][2].late_reason)
+            _validate_match(row, row.active, cash, row.history[-1].date, periods.get(row.id), late_return=late)
             active_keys = {target.key() for target in row.active}
             if active_keys & claimed:
                 raise ValueError("that cash voucher already belongs to another statement match")

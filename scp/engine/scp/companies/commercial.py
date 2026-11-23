@@ -125,7 +125,8 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
             if isinstance(event, CarrierBankReversal):
                 from ..carrier_bank import ReverseBankCash, record_bank
                 request = ReverseBankCash(kind="reverse_cash", line=event.statement_line,
-                                          original=BankCashRef(order=prior.id, voucher=event.reverses))
+                                          original=BankCashRef(order=prior.id, voucher=event.reverses),
+                                          late_reason=event.late_reason)
                 result, _ = record_bank(old, request, event.date)
             else:
                 base = proposed.model_copy(update={"freight_orders": [prior if f.id == prior.id else f for f in proposed.freight_orders]})

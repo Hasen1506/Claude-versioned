@@ -126,12 +126,25 @@ class CarrierBankTieOut(Out):
     period: CarrierBankPeriod
     ledger_opening_minor: int
     ledger_closing_minor: int
+    opening_timing_minor: int
+    closing_timing_minor: int
+    has_timing: bool
     unmatched_lines: list[str]
     unmatched_vouchers: list[str]
     reconciled: bool
 
 
-def tie_out(ds: Dataset, postings: Iterable[BankPosting]) -> list[CarrierBankTieOut]:
+class CarrierBankTiming(Out):
+    account: str
+    voucher: str
+    statement_line: str
+    bank_date: date
+    posting_date: date
+    amount_minor: int
+    reason: str
+
+
+def tie_out(ds: Dataset, postings: Iterable[BankPosting], timing: list[CarrierBankTiming]) -> list[CarrierBankTieOut]:
     if not ds.carrier_bank_periods:
         return []
     lines = {line.id: line for line in ds.carrier_bank_lines}
@@ -142,7 +155,14 @@ def tie_out(ds: Dataset, postings: Iterable[BankPosting]) -> list[CarrierBankTie
             history[posting.bank_account].append(posting)
     for entries in history.values():
         entries.sort(key=attrgetter("date", "voucher"))
+    changes: dict[str, list[tuple[date, int, int]]] = defaultdict(list)
+    for item in timing:
+        changes[item.account].extend(((item.bank_date, item.amount_minor, 1), (item.posting_date, -item.amount_minor, -1)))
+    for adjustments in changes.values():
+        adjustments.sort()
+    timed_vouchers = {(item.account, item.voucher) for item in timing}
     offset: dict[str, int] = defaultdict(int)
+    reconciliation: dict[str, tuple[int, int, int]] = defaultdict(lambda: (0, 0, 0))
     results = []
     for period in ds.carrier_bank_periods:
         entries = history[period.account]
@@ -151,11 +171,22 @@ def tie_out(ds: Dataset, postings: Iterable[BankPosting]) -> list[CarrierBankTie
         ledger_opening = opening[period.account]
         ledger_closing = ledger_opening + sum(posting.amount_minor for posting in activity)
         opening[period.account], offset[period.account] = ledger_closing, end
+        prior_index, timing_opening, opening_count = reconciliation[period.account]
+        adjustments = changes[period.account]
+        timing_end = bisect_right(adjustments, period.ends_on, lo=prior_index, key=lambda change: change[0])
+        in_period = adjustments[prior_index:timing_end]
+        timing_closing = timing_opening + sum(amount for _, amount, _ in in_period)
+        closing_count = opening_count + sum(delta for _, _, delta in in_period)
+        reconciliation[period.account] = timing_end, timing_closing, closing_count
         matched = {target.voucher for key in period.line_ids for target in lines[key].active}
         missing_lines = [lines[key].statement_line for key in period.line_ids if not lines[key].active]
-        missing_vouchers = [posting.voucher for posting in activity if posting.voucher not in matched]
+        missing_vouchers = [posting.voucher for posting in activity
+                            if posting.voucher not in matched and (period.account, posting.voucher) not in timed_vouchers]
         results.append(CarrierBankTieOut(period=period, ledger_opening_minor=ledger_opening, ledger_closing_minor=ledger_closing,
+                                       opening_timing_minor=timing_opening, closing_timing_minor=timing_closing,
+                                       has_timing=bool(opening_count or closing_count or in_period),
                                        unmatched_lines=missing_lines, unmatched_vouchers=missing_vouchers,
-                                       reconciled=(not missing_lines and not missing_vouchers and ledger_opening == period.opening_minor
-                                                   and ledger_closing == period.closing_minor)))
+                                       reconciled=(not missing_lines and not missing_vouchers
+                                                   and ledger_opening + timing_opening == period.opening_minor
+                                                   and ledger_closing + timing_closing == period.closing_minor)))
     return results[::-1]

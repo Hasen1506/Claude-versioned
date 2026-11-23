@@ -5,10 +5,11 @@ import { expect, test, type Page } from "@playwright/test";
 const billDate = "2026-01-08";
 const paymentDate = "2026-01-09";
 
-async function saveCarrierCompany(page: Page, mode: "legacy" | "unpaid" | "registered" | "returned") {
+async function saveCarrierCompany(page: Page, mode: "legacy" | "unpaid" | "registered" | "returned", closedThrough?: string) {
   const registered = mode === "registered" || mode === "returned";
   const company = {
     settings: { company_name: "Carrier statement fixture", planning_start: "2026-01-05", horizon_days: 28, currency: "INR" },
+    ...(closedThrough && { finance: { closed_through: closedThrough } }),
     entities: [{ id: "E1", name: "Paying entity" }],
     locations: [{ id: "W", type: "dc", entity: "E1" }, { id: "C", type: "customer" }],
     lanes: [{ id: "L", origin: "W", destination: "C", modes: [{ mode: "truck_ftl", transit_days: 1 }] }],
@@ -296,10 +297,12 @@ test("import every original statement page once and recover after reattaching th
   await expect(table).toContainText("Reconciled");
 });
 
-test("post a native bank return and retry the same correction after a lost response", async ({ page }) => {
+for (const late of [false, true]) test(`post a native ${late ? "closed-period" : "open-period"} bank return and retry after a lost response`, async ({ page }) => {
   test.setTimeout(90_000);
-  await saveCarrierCompany(page, "returned");
   const returnDate = "2026-01-10";
+  const postingDate = late ? "2026-01-12" : returnDate;
+  const reason = "The bank confirmed the return after close";
+  await saveCarrierCompany(page, "returned", late ? returnDate : undefined);
   const source = (name: "payment" | "return") => ({
     name: `${name}.xml`, mimeType: "application/xml",
     buffer: readFileSync(new URL(`../../engine/tests/fixtures/camt053-carrier-${name}.xml`, import.meta.url)),
@@ -337,6 +340,10 @@ test("post a native bank return and retry the same correction after a lost respo
     return route.continue();
   });
   await page.getByRole("button", { name: `SVCR-${returnDate}` }).click();
+  if (late) {
+    await page.getByLabel("Accounting posting date").fill(postingDate);
+    await page.getByLabel("Reason for posting after close").fill(reason);
+  }
   await page.getByLabel("Original cash voucher").selectOption({ index: 1 });
   await page.getByRole("button", { name: "Record bank reversal" }).click();
   await expect(page.getByText(/Bank statement operation confirmation is unavailable/)).toBeVisible();
@@ -346,12 +353,17 @@ test("post a native bank return and retry the same correction after a lost respo
   expect(attempts).toHaveLength(2);
   expect(attempts[1]).toEqual(attempts[0]);
   await expect(page.getByRole("table", { name: "Carrier bank account reconciliation" })).not.toContainText("Review differences");
+  if (late) {
+    await expect(page.getByRole("table", { name: "Carrier bank account reconciliation" })).toContainText("Reconciled with timing");
+    await page.getByRole("button", { name: `SVCR-${returnDate}` }).click();
+    await expect(page.getByText(reason, { exact: false })).toBeVisible();
+  }
   await expect(page.getByRole("table", { name: "Carrier bills" })).toContainText("to pay");
   await page.getByRole("button", { name: `SVCR-${paymentDate}` }).click();
   await expect(page.getByText("This allocation is retained with the posted bank reversal.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Release allocation" })).toHaveCount(0);
   const saved = await (await page.request.get(companyUrl)).json();
   expect(saved.dataset.freight_orders[0].bill_payments).toHaveLength(1);
-  expect(saved.dataset.freight_orders[0].bill_events).toMatchObject([{ kind: "reverse_bank_cash", date: returnDate,
-    reverses: "FO-1/P-1", amount_minor: 4025, bank_account: "BANK-A" }]);
+  expect(saved.dataset.freight_orders[0].bill_events).toMatchObject([{ kind: "reverse_bank_cash", date: postingDate,
+    reverses: "FO-1/P-1", amount_minor: 4025, bank_account: "BANK-A", ...(late ? { late_reason: reason } : {}) }]);
 });

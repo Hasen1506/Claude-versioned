@@ -119,7 +119,12 @@ export function CarrierBankAccounts({ ds, currency, periods, live, editable, rec
         </details>}</td><td>{row.period.account}</td><td>{day(row.period.starts_on)} – {day(row.period.ends_on)}</td>
         {[row.period.opening_minor, row.ledger_opening_minor, row.period.closing_minor, row.ledger_closing_minor]
           .map((value, i) => <td className="num" key={i}>{exactMoney(value / 100, currency)}</td>)}
-        <td><Badge sev={row.reconciled ? "ok" : "warning"}>{row.reconciled ? "Reconciled" : "Review differences"}</Badge>
+        <td><Badge sev={row.reconciled ? "ok" : "warning"}>{row.reconciled ? (row.has_timing ? "Reconciled with timing" : "Reconciled") : "Review differences"}</Badge>
+          {row.has_timing && <details className="small">
+            <summary>Timing adjustments</summary>
+            <div>Opening {exactMoney(row.opening_timing_minor / 100, currency)}</div>
+            <div>Closing {exactMoney(row.closing_timing_minor / 100, currency)}</div>
+          </details>}
           {(row.unmatched_lines.length > 0 || row.unmatched_vouchers.length > 0) && <details className="small">
             <summary>{row.unmatched_lines.length} statement lines · {row.unmatched_vouchers.length} cash vouchers</summary>
             {!!row.unmatched_lines.length && <div>Statement lines · {row.unmatched_lines.join(", ")}</div>}

@@ -21,11 +21,16 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
   const [nativeFiles, setNativeFiles] = useState<string[]>();
   const [lineId, setLineId] = useState("");
   const [date, setDate] = useState(today);
+  const [lateReason, setLateReason] = useState("");
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const [originalKey, setOriginalKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean }>();
   const selected = bank.lines.find((line) => line.id === lineId);
+  const closed = ds.finance?.closed_through ?? "";
+  const late = !!selected?.reversal && !!closed && selected.date <= closed;
+  const reversalDate = late ? date : selected?.date ?? "";
+  const timing = selected && bank.timing?.find((item) => item.statement_line === selected.id);
   const periods = bank.periods ?? [];
   const selectedPeriod = selected && periods.find(({ period }) => period.line_ids.includes(selected.id))?.period;
   const history = selected?.history ?? [];
@@ -36,7 +41,8 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
     && Math.sign(cash.amount_minor) === Math.sign(selected.amount_minor)
     && cash.reference.toLowerCase() === selected.reference.toLowerCase()) : [];
   const originals = selected?.reversal ? (bank.reversible_cash ?? []).filter((cash) => cash.company === selected.company
-    && cash.bank_account === selected.account && cash.eligible_from <= selected.date
+    && cash.bank_account === selected.account && (cash.original_bank_date ?? cash.date) <= selected.date
+    && cash.eligible_from <= reversalDate
     && cash.amount_minor === -selected.amount_minor && cash.reference.toLowerCase() === selected.reference.toLowerCase()) : [];
   const original = originals.find((cash) => cashKey(cash) === originalKey);
   const locked = !!selected && (bank.locked_lines ?? []).includes(selected.id);
@@ -49,6 +55,7 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
     setLineId(line.id);
     setPicked(new Set());
     setOriginalKey("");
+    setLateReason("");
     const first = line.history?.at(-1)?.date ?? line.date;
     setDate(today() < first ? first : today());
   };
@@ -60,6 +67,7 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
       setMessage({ text: result.report.message, error: false });
       setPicked(new Set());
       setOriginalKey("");
+      setLateReason("");
       if (event?.kind === "import") setFile(undefined);
       await store.run("purchasing");
     } catch (error) {
@@ -119,9 +127,18 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
     </table></div> : <Empty title="No imported statement lines" />}
     {selected && <section className="stack">
       <h4>{selected.statement_line} · {selected.account}{selectedPeriod && ` · ${selectedPeriod.number}`}</h4>
+      {timing && <p className="small">Bank booked {day(timing.bank_date)} · Posted {day(timing.posting_date)} · {timing.reason}</p>}
       {active.length ? <ul>{active.map((item) => <li key={JSON.stringify(item)}>{item.voucher}</li>)}</ul> :
         selected.reversal ? <>
-          <p className="small">The reversal posts on {day(selected.date)} and reopens the carrier balance. Verify the original payment or refund against the bank statement.</p>
+          <p className="small">{late
+            ? `The bank booked this return on ${day(selected.date)} in a closed period. Enter an open posting date and the reason.`
+            : `The reversal posts on ${day(selected.date)} and reopens the carrier balance.`} Verify the original payment or refund against the bank statement.</p>
+          {late && <Edits><div className="row wrap" style={{ gap: 8 }}>
+            <label>Accounting posting date <input className="input" type="date" min={closed} value={date}
+              onChange={(e) => setDate(e.target.value)} /></label>
+            <label>Reason for posting after close <input className="input" value={lateReason} maxLength={200}
+              onChange={(e) => setLateReason(e.target.value)} /></label>
+          </div></Edits>}
           {originals.length ? <Edits><label>Original cash voucher <select className="input" value={originalKey} disabled={!editable}
             onChange={(e) => setOriginalKey(e.target.value)}>
             <option value="">Choose the original payment or refund</option>
@@ -143,9 +160,10 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
       </>}
       {locked && <p className="small">This allocation is retained with the posted bank reversal.</p>}
       {settlement.live && !locked && <Edits><div className="row wrap" style={{ gap: 8 }}>
-        {selected.reversal ? <button className="btn sm accent" disabled={!editable || !original}
+        {selected.reversal ? <button className="btn sm accent" disabled={!editable || !original || (late && (date <= closed || !lateReason.trim()))}
           onClick={() => original && record({ kind: "reverse_cash", line: selected.id,
-            original: { order: original.order, voucher: original.voucher } }, selected.date)}>Record bank reversal</button> : <>
+            original: { order: original.order, voucher: original.voucher }, ...(late ? { late_reason: lateReason.trim() } : {}) },
+            reversalDate)}>Record bank reversal</button> : <>
         <label>Reconciliation date <input className="input" type="date" min={earliest} value={date} onChange={(e) => setDate(e.target.value)} /></label>
         {active.length ? <button className="btn sm" disabled={!editable || !date || date < earliest}
           onClick={() => record({ kind: "release", line: selected.id, version: history.length })}>Release allocation</button>
