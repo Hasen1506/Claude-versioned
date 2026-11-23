@@ -6,7 +6,7 @@ from datetime import date
 from hashlib import sha256
 from operator import attrgetter
 
-from .freight import BankPosting
+from .freight import BankPosting, bank_return_fees
 from .model import Dataset
 from .model.carrier_bank import CarrierBankAccount, CarrierBankLine, CarrierBankPeriod
 from .model.common import Out
@@ -142,12 +142,14 @@ class CarrierBankTiming(Out):
     posting_date: date
     amount_minor: int
     reason: str
+    additional_vouchers: list[str] = []
 
 
 def tie_out(ds: Dataset, postings: Iterable[BankPosting], timing: list[CarrierBankTiming]) -> list[CarrierBankTieOut]:
     if not ds.carrier_bank_periods:
         return []
     lines = {line.id: line for line in ds.carrier_bank_lines}
+    fee_vouchers = {line: posting.voucher for _, line, posting in bank_return_fees(ds)}
     opening = {account.id: account.opening_minor for account in ds.carrier_bank_accounts}
     history: dict[str, list[BankPosting]] = defaultdict(list)
     for posting in postings:
@@ -160,7 +162,7 @@ def tie_out(ds: Dataset, postings: Iterable[BankPosting], timing: list[CarrierBa
         changes[item.account].extend(((item.bank_date, item.amount_minor, 1), (item.posting_date, -item.amount_minor, -1)))
     for adjustments in changes.values():
         adjustments.sort()
-    timed_vouchers = {(item.account, item.voucher) for item in timing}
+    timed_vouchers = {(item.account, voucher) for item in timing for voucher in (item.voucher, *item.additional_vouchers)}
     offset: dict[str, int] = defaultdict(int)
     reconciliation: dict[str, tuple[int, int, int]] = defaultdict(lambda: (0, 0, 0))
     results = []
@@ -179,6 +181,7 @@ def tie_out(ds: Dataset, postings: Iterable[BankPosting], timing: list[CarrierBa
         closing_count = opening_count + sum(delta for _, _, delta in in_period)
         reconciliation[period.account] = timing_end, timing_closing, closing_count
         matched = {target.voucher for key in period.line_ids for target in lines[key].active}
+        matched.update(fee_vouchers[key] for key in period.line_ids if key in fee_vouchers)
         missing_lines = [lines[key].statement_line for key in period.line_ids if not lines[key].active]
         missing_vouchers = [posting.voucher for posting in activity
                             if posting.voucher not in matched and (period.account, posting.voucher) not in timed_vouchers]

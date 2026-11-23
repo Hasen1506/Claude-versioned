@@ -88,6 +88,7 @@ class CarrierBankReversal(Model):
     amount_minor: BankMinor
     bank_account: BankAccountId
     late_reason: str = Field("", max_length=200, exclude_if=lambda value: not value)
+    allocated: bool = Field(False, strict=True, exclude_if=lambda value: not value)
 
 
 class CarrierBankMatch(Model):
@@ -216,7 +217,7 @@ class FreightOrder(Model):
         cash = {f"{self.bill_voucher()}/P-{i}": (p.reference.casefold(), -round(p.amount * 100), p.bank_account)
                 for i, p in enumerate(self.bill_payments, 1)}
         cash_dates = {f"{self.bill_voucher()}/P-{i}": p.date for i, p in enumerate(self.bill_payments, 1)}
-        reversed_cash: set[str] = set()
+        reversed_cash: dict[str, int] = {}
         matches: dict[str, CarrierBankMatch] = {}
         allocations: dict[int, FreightLandedCost] = {}
         for i, event in enumerate(self.bill_events, 1):
@@ -225,11 +226,14 @@ class FreightOrder(Model):
                 cash[voucher] = event.reference.casefold(), event.amount_minor, event.bank_account
                 cash_dates[voucher] = event.date
             elif isinstance(event, CarrierBankReversal):
-                if (not event.amount_minor or event.reverses in reversed_cash or cash.get(event.reverses) != (
-                        event.reference.casefold(), -event.amount_minor, event.bank_account)
-                        or event.date < cash_dates[event.reverses]):
-                    raise ValueError("a bank reversal must exactly offset one earlier carrier payment or refund")
-                reversed_cash.add(event.reverses)
+                original = cash.get(event.reverses)
+                used = reversed_cash.get(event.reverses, 0) + abs(event.amount_minor)
+                if (original is None or not event.amount_minor or event.amount_minor * original[1] >= 0
+                        or event.bank_account != original[2] or event.date < cash_dates[event.reverses]
+                        or used > abs(original[1]) or (not event.allocated and (
+                            event.reference.casefold() != original[0] or event.amount_minor != -original[1]))):
+                    raise ValueError("a bank reversal must offset an earlier carrier payment or refund within its remaining principal")
+                reversed_cash[event.reverses] = used
             elif isinstance(event, CarrierBankMatch):
                 if event.released:
                     original = matches.pop(event.cash_voucher, None)

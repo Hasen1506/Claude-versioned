@@ -60,11 +60,12 @@ class CarrierBill(Out):
             return "credited"
         if self.open:
             return "refund due" if self.open < 0 else "to pay"
-        reversed_vouchers = {event.reverses for _, event in self.reversals()}
-        if any(isinstance(event, CarrierRefund) and f"{self.voucher}/R-{index}" not in reversed_vouchers
+        reversed_amounts = self.returned_principal()
+        if any(isinstance(event, CarrierRefund) and event.amount_minor > reversed_amounts.get(f"{self.voucher}/R-{index}", 0)
                for index, event in enumerate(self.events, 1)):
             return "refunded"
-        if all(f"{self.voucher}/P-{index}" in reversed_vouchers for index in range(1, len(self.payments) + 1)) and any(
+        if all(round(payment.amount * 100) == reversed_amounts.get(f"{self.voucher}/P-{index}", 0)
+               for index, payment in enumerate(self.payments, 1)) and any(
                 isinstance(e, CarrierBillAdjustment) for e in self.events):
             return "credited"
         return "paid"
@@ -83,6 +84,12 @@ class CarrierBill(Out):
             if isinstance(event, CarrierBankReversal):
                 yield f"{self.voucher}/V-{index}", event
 
+    def returned_principal(self) -> dict[str, int]:
+        amounts: dict[str, int] = defaultdict(int)
+        for _, event in self.reversals():
+            amounts[event.reverses] += abs(event.amount_minor)
+        return amounts
+
     def latest_monetary_date(self) -> date:
         return max([self.date, *(posting.date for posting in self.cash()),
                     *(e.date for e in self.events if isinstance(e, CarrierBillAdjustment))])
@@ -98,6 +105,13 @@ class CarrierBill(Out):
     def legacy_unmatched_cash(self) -> list[str]:
         available = set(self.unreconciled_cash)
         return [posting.voucher for posting in self.cash() if posting.voucher in available and posting.bank_account is None]
+
+
+def bank_return_fees(ds: Dataset) -> Iterator[tuple[str, str, BankPosting]]:
+    for line in ds.carrier_bank_lines:
+        if line.included_fee_minor and line.history and line.history[0].allocation:
+            yield line.company, line.id, BankPosting(
+                f"{line.id}/F", line.history[0].date, line.reference, -line.included_fee_minor, line.account)
 
 
 def bills_for_order(ds: Dataset, order: FreightOrder, statement_vouchers: list[str] | None = None) -> Iterator[CarrierBill]:

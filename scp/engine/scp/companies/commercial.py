@@ -88,6 +88,25 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
 
     # Shipped/settled carrier facts drive the ledger and cannot be rewritten as a draft.
     freight = {f.id: f for f in proposed.freight_orders}
+    allocated_freight = None
+    if freight_action == "allocate_return":
+        from ..carrier_bank import AllocateBankReturn, record_bank
+
+        earlier_lines = {row.id: row for row in old.carrier_bank_lines}
+        created = [row for row in proposed.carrier_bank_lines if row.history and row.history[0].allocation
+                   and (row.id not in earlier_lines or not earlier_lines[row.id].history)]
+        if len(created) != 1:
+            raise ValueError("a return allocation command must match exactly one retained bank movement")
+        row = created[0]
+        match = row.history[0]
+        assert match.allocation is not None
+        open_period(match.date)
+        request = AllocateBankReturn(kind="allocate_return", line=row.id, **match.allocation.model_dump())
+        replay, _ = record_bank(old, request, match.date)
+        if proposed.carrier_bank_lines != replay.carrier_bank_lines:
+            raise ValueError("the saved bank evidence differs from the authoritative return allocation")
+        allocated_freight = {f.id: f for f in replay.freight_orders}
+
     reversed_receipts = {m.reversal_of for m in proposed.movements if m.reversal_of}
     for prior in old.freight_orders:
         if prior.status not in ("shipped", "settled"):
@@ -102,7 +121,9 @@ def protect_commercial(old: Dataset, proposed: Dataset, open_period: Callable[[d
             if (payer != freight_company(proposed, target)
                     or (payer in old.entity_by_id and payer not in proposed.entity_by_id)):
                 raise ValueError(f"{prior.id}: the freight bill keeps its posting company")
-        if target.bill_credits != prior.bill_credits:
+        if allocated_freight is not None:
+            expected = allocated_freight[prior.id]
+        elif target.bill_credits != prior.bill_credits:
             if (freight_action != "credit" or prior.status != "settled"
                     or len(target.bill_credits) != len(prior.bill_credits) + 1
                     or target.bill_credits[:-1] != prior.bill_credits):
