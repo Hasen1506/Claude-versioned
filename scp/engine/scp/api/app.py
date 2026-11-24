@@ -784,8 +784,12 @@ def post_firm(req: FirmRequest) -> FirmResponse:
 def post_purchasing(ds: PlanData) -> Response:
     """Requisitions from the supply plan, every purchase order with its lines' status, and the supplier scorecard."""
     def result() -> PurchasingView:
+        from ..model.currency import CurrencyPrecisionError
         plan = run_mrp(ds)
-        view = purchasing_view(ds, plan)
+        try:
+            view = purchasing_view(ds, plan)
+        except CurrencyPrecisionError as exc:
+            raise HTTPException(409, str(exc)) from None
         return view.model_copy(update={"firming_sha256": firming_digest(ds, plan)}) if plan.ok else view
 
     return respond("purchasing", ds, result)
@@ -897,6 +901,7 @@ def post_po_action(req: PoActionRequest) -> PoActionResponse:
 
 
 def _apply_po_action(req: PoActionRequest, actor: str) -> PoActionResponse:
+    from ..model.currency import CurrencyPrecisionError
     lines = None if req.lines is None else [
         {**x.model_dump(exclude_none=True), **({"order": x.order or x.id})} for x in req.lines]
     try:
@@ -906,8 +911,10 @@ def _apply_po_action(req: PoActionRequest, actor: str) -> PoActionResponse:
                                   tax=req.tax, kind=req.kind, return_id=req.return_id, amount=req.amount,
                                   stock_type=req.stock_type, replace=req.replace,
                                   delivery_costs=req.delivery_costs)
-    except PurchasingError as e:
+    except (PurchasingError, CurrencyPrecisionError) as e:
         raise HTTPException(409, str(e)) from e
+    if req.action == "receive":
+        _verify_receipt_posting(req.dataset, new)
     return PoActionResponse(**answer(req.dataset, new), report=rep)
 
 
@@ -996,7 +1003,13 @@ def post_valuation(ds: PlanData, as_of: dt.date | None = None,
     """Stock in the books: each place's quantity, value and price (standard or moving average), the postings that
     moved it and the price differences booked aside. With several companies, ``books=group`` values transfers
     between them at what they cost the group instead of at their transfer prices."""
-    return respond("valuation", ds, lambda: value_stock(ds, as_of, books=books), as_of, books)
+    def result() -> ValuationView:
+        from ..model.currency import CurrencyPrecisionError
+        try:
+            return value_stock(ds, as_of, books=books)
+        except CurrencyPrecisionError as exc:
+            raise HTTPException(409, str(exc)) from None
+    return respond("valuation", ds, result, as_of, books)
 
 
 @app.post("/api/cycle-counts", response_model=CyclePlan)
@@ -1370,7 +1383,20 @@ def _apply_posting(req: PostRequest, count_actor: str | None = None) -> PoAction
                         ship_from=req.ship_from, classes=req.classes, count_actor=count_actor)
     except PostingError as e:
         raise HTTPException(409, str(e)) from e
+    if req.action in ("receive", "reverse"):
+        _verify_receipt_posting(req.dataset, new)
     return PoActionResponse(**answer(req.dataset, new), report=rep)
+
+
+def _verify_receipt_posting(old: Dataset, new: Dataset) -> None:
+    from ..model.currency import MATERIAL_CURRENCIES, CurrencyPrecisionError, require_material_ledger
+    if old.settings.currency not in MATERIAL_CURRENCIES or not old.supplier_invoices:
+        return
+    from ..actuals.valuation import protect_material_matching
+    try:
+        protect_material_matching(old, new, require_material_ledger(new))
+    except CurrencyPrecisionError as exc:
+        raise HTTPException(409, str(exc)) from None
 
 
 # ------------------------------------------------------------------------------------------------ companies (7.3)

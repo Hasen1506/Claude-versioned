@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Iterable
 from decimal import Decimal, ROUND_HALF_UP
 from math import isfinite
 from typing import TYPE_CHECKING
@@ -50,9 +51,8 @@ class CurrencyUnits:
             return self.amount(quantity * unit_price)
         return self.major(self.minor(Decimal(str(quantity)) * Decimal(str(unit_price))))
 
-    def prorated_minor(self, booked: int, quantity: float, original_quantity: float) -> int:
-        value = Decimal(booked) * Decimal(str(round(quantity, 6))) / Decimal(str(round(original_quantity, 6)))
-        return int(value.to_integral_value(rounding=ROUND_HALF_UP))
+    def total(self, values: Iterable[float]) -> float:
+        return self.amount(sum(values)) if self.digits == 2 else self.major(sum(self.minor(value) for value in values))
 
 
 def material_units(currency: str) -> CurrencyUnits:
@@ -66,7 +66,7 @@ def require_posting_currency(currency: str) -> None:
 
 
 def require_material_ledger(ds: Dataset) -> CurrencyUnits:
-    """Accept the tested material ledgers. Keep invoice, cash and manufacturing books guarded."""
+    """Accept the tested domestic material and receipt-matched supplier invoices."""
     currency = ds.settings.currency
     if currency not in MATERIAL_CURRENCIES:
         require_posting_currency(currency)
@@ -74,18 +74,35 @@ def require_material_ledger(ds: Dataset) -> CurrencyUnits:
 
     from .actuals import MovementType
     from ..purchasing.payables import lines_index
-    if (ds.entities or ds.invoices or ds.supplier_invoices or ds.intercompany_invoices or ds.production_cost_postings
+    if (ds.entities or ds.invoices or ds.intercompany_invoices or ds.production_cost_postings
             or ds.third_party_orders or ds.challans or ds.carrier_bank_accounts or ds.carrier_bank_lines
             or ds.carrier_bank_periods or any(f.settled_on or f.bill_credits or f.bill_events or f.bill_payments
                                             for f in ds.freight_orders)):
         raise CurrencyPrecisionError(f"{currency} currently supports the material ledger only; "
-                                     "invoice, cash, manufacturing and group books require a two-decimal currency")
+                                     "sales, cash, manufacturing and group books require a two-decimal currency")
     if any((po.currency and po.currency != currency) or po.fx_rate not in (None, 1.0) for po in ds.purchase_orders):
         raise CurrencyPrecisionError(f"{currency} material postings require purchase orders in the company currency at rate 1")
     if any(basis.currency != currency for basis in ds.purchase_valuation):
         raise CurrencyPrecisionError(f"{currency} material postings require valuation terms in the company currency")
 
+    units = material_units(currency)
     lines = lines_index(ds, outside=False)
+    for sequence, invoice in enumerate(ds.supplier_invoices, 1):
+        if (invoice.kind != "invoice" or invoice.currency != currency or invoice.fx_rate != 1
+                or invoice.entity not in ("", None) or invoice.delivery_costs or invoice.payments or invoice.return_id
+                or invoice.tax < 0 or units.amount(invoice.tax) != invoice.tax
+                or invoice.cancelled and (invoice.cancelled_on is None or invoice.cancelled_after is None
+                    or not sequence <= invoice.cancelled_after <= len(ds.supplier_invoices))):
+            raise CurrencyPrecisionError(f"{invoice.id}: {currency} supports domestic supplier invoices without extra "
+                                         "delivery charges or payments; other postings require a two-decimal currency")
+        for ln in invoice.lines:
+            order = lines.get(ln.order)
+            basis = ds.purchase_valuation_by_id.get(ln.order)
+            if (order is None or order.currency != currency or order.supplier != invoice.supplier
+                    or order.product != ln.product or order.price != ln.price or round(ln.qty, 6) <= 0
+                    or basis is not None and basis.base != ln.price):
+                raise CurrencyPrecisionError(f"{invoice.id}: match each supplier invoice line to a local order "
+                                             "at its saved price")
     movements = {move.id: move for move in ds.movements}
     ordinary = {MovementType.OPENING, MovementType.RECEIPT, MovementType.ADJUSTMENT, MovementType.SCRAP,
                 MovementType.STATUS}
@@ -99,4 +116,4 @@ def require_material_ledger(ds: Dataset) -> CurrencyUnits:
                     (round(original.qty, 6) <= 0 or line is None or line.currency != currency or line.price is None))):
             raise CurrencyPrecisionError(f"{currency} material ledger cannot value movement {move.id}; "
                                          "use supported material movements and priced local purchase receipts")
-    return material_units(currency)
+    return units

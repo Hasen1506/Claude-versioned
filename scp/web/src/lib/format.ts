@@ -30,6 +30,9 @@ export function money(v: number | null | undefined, currency = "INR"): string {
 const nfMoney = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const nfKwd = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 
+export const moneyDigits = (currency: string) => currency === "JPY" ? 0 : currency === "KWD" ? 3 : 2;
+export const hasMoney = (value: number, currency: string) => Math.abs(value) > (moneyDigits(currency) === 2 ? 0.005 : 0);
+
 /** An exact amount, as on an invoice: ₹2,257.20, never compacted. */
 export function exactMoney(v: number | null | undefined, currency = "INR"): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";

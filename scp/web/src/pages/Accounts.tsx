@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { AccountingView, Dataset, Voucher } from "../api/types";
 import { Badge, Edits, Empty, Panel, StageHeader, StatTile, Tabs } from "../components/ui";
-import { day, exactMoney, money, plural } from "../lib/format";
+import { day, exactMoney, hasMoney, money, moneyDigits, plural } from "../lib/format";
 import { Msg, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { download } from "../lib/tabular";
@@ -65,7 +65,8 @@ export function Accounts({ route }: { route: string[] }) {
       </div>
       <Tabs<View> value={view} onChange={(x) => go("accounts", x)} tabs={[
         { id: "balances", label: "Balances" },
-        { id: "parties", label: "Who owes what", count: v ? v.parties.filter((p) => p.company === (company?.id ?? "") && Math.abs(p.balance) > 0.005).length || undefined : undefined },
+        { id: "parties", label: "Who owes what", count: v ? v.parties.filter((p) => p.company === (company?.id ?? "")
+          && hasMoney(p.balance, cur)).length || undefined : undefined },
         { id: "journal", label: "Journal", count: v ? v.vouchers.filter((x) => x.company === (company?.id ?? "")).length || undefined : undefined },
         { id: "checks", label: "Checks", count: bad.length || undefined },
         { id: "production", label: "Production WIP" },
@@ -225,12 +226,12 @@ function Balances({ v, co, cur }: { v: AccountingView; co: string; cur: string }
 }
 
 function balance(x: number, cur: string) {
-  if (Math.abs(x) < 0.005) return "0";
+  if (x === 0 || moneyDigits(cur) === 2 && Math.abs(x) < 0.005) return "0";
   return x > 0 ? `${exactMoney(x, cur)} Dr` : `${exactMoney(-x, cur)} Cr`;
 }
 
 function Parties({ v, co, cur }: { v: AccountingView; co: string; cur: string }) {
-  const rows = v.parties.filter((p) => p.company === co && Math.abs(p.balance) > 0.005);
+  const rows = v.parties.filter((p) => p.company === co && hasMoney(p.balance, cur));
   if (!rows.length) return <Empty title="Nobody owes anything">Every invoice of the period is paid, and nothing is owed to suppliers or carriers.</Empty>;
   const kind: Record<string, string> = { RECEIVABLES: "customer", PAYABLES: "supplier or carrier", IC_RECEIVABLES: "group company",
     IC_PAYABLES: "group company" };

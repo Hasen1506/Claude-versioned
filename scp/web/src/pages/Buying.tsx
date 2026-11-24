@@ -5,7 +5,7 @@ import {
   Badge, Edits, Empty, Panel, Provenance, Reading, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
   MoreRows, ROW_LIMIT,
 } from "../components/ui";
-import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
+import { day, hasMoney, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Prod, namesOf } from "../lib/names";
 import { poAddresses, poDocument, poEmail } from "../lib/podoc";
 import { ServerSend } from "../components/ServerSend";
@@ -60,7 +60,8 @@ export function Buying({ route }: { route: string[] }) {
     <Tabs<View> value={view} onChange={(v) => go("buying", v)} tabs={[
       { id: "order", label: "To order", count: res.totals.requisitions },
       { id: "orders", label: "Purchase orders", count: res.totals.open_orders },
-      { id: "invoices", label: "Supplier invoices", count: (res.payables?.invoices.filter((i) => i.open > 0.005 && i.status !== "cancelled").length ?? 0) + res.totals.to_invoice },
+      { id: "invoices", label: "Supplier invoices", count: (res.payables?.invoices.filter((i) => hasMoney(i.open, i.currency)
+        && i.status !== "cancelled").length ?? 0) + res.totals.to_invoice },
       { id: "owed", label: "What we owe", count: res.payables?.payables.length ?? 0 },
       { id: "returns", label: "Returns", count: res.payables?.returns.length ?? 0 },
       { id: "contracts", label: "Contracts", count: res.payables?.contracts.length ?? 0 },
