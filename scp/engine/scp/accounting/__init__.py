@@ -35,7 +35,7 @@ from xml.sax.saxutils import escape, quoteattr
 from pydantic import Field
 
 from ..actuals.transfer_price import destination, entity_of, party
-from ..actuals.valuation import EPS, material_receipt_accruals, run_books
+from ..actuals.valuation import EPS, run_books
 from ..freight import bank_return_fees, bills_for_order, carrier_bills, freight_company
 from ..model import Dataset, FreightOrder, GoodsMovement, MovementType, SupplierInvoice
 from ..model.transport import CarrierBankMatch, CarrierBillAdjustment
@@ -347,12 +347,14 @@ class _Journal:
                 own.append(("SUSPENSE", co, "", sign * amt, loc, ln.product))
         if inv.tax:
             own.append(("INPUT_TAX", co, "", sign * inv.tax * rate, "", ""))
-        own.append(("PAYABLES", co, inv.supplier, -sign * (inv.net + inv.tax) * rate, "", ""))
+        total = inv.total if self.units.digits != 2 else inv.net + inv.tax
+        own.append(("PAYABLES", co, inv.supplier, -sign * total * rate, "", ""))
         kind = {"invoice": "Purchase", "credit_memo": "Debit Note", "subsequent_debit": "Purchase",
                 "subsequent_credit": "Debit Note"}[inv.kind]
         words = inv.kind.replace("_", " ")
         self._post(inv.date, inv.id, kind, inv.id,
-                   f"{words} {inv.reference or inv.id} from {_name(ds, inv.supplier)}", lines + own, "DELIVERY",
+                   f"{words} {inv.reference or inv.id} from {_name(ds, inv.supplier)}", lines + own,
+                   "PRICE_DIFF" if self.units.digits != 2 else "DELIVERY",
                    wip_orders=wip_orders)
 
     # -- writing a voucher ---------------------------------------------------------------------------------------
@@ -575,9 +577,10 @@ def _n(q: float) -> str:
 
 def journal(ds: Dataset, day: date) -> tuple[list[Voucher], object]:
     """Every voucher up to ``day``, in date order, and the stock books they were made with."""
-    require_material_ledger(ds)
-    for invoice in ds.supplier_invoices:
-        require_posting_currency(invoice.currency or ds.settings.currency)
+    units = require_material_ledger(ds)
+    if units.digits == 2:
+        for invoice in ds.supplier_invoices:
+            require_posting_currency(invoice.currency or ds.settings.currency)
     j = _Journal(ds)
     b, _std = run_books(ds, day, "entity", watch=j)
     j.production_costs(day)
@@ -660,7 +663,7 @@ def view(ds: Dataset, period_start: date | None = None, period_end: date | None 
     wip = production_wip(ds, end, vs)
     notes = []
     if units.digits != 2:
-        notes.append(f"{ds.settings.currency} material ledger covers domestic receipts, stock and CSV export.")
+        notes.append(f"{ds.settings.currency} ledger covers domestic stock, receipt-matched supplier invoices and CSV export.")
     if any(x.account == "SUSPENSE" and units.minor(x.balance) for x in balances):
         notes.append("Something is on the suspense account: stock moved without an order the journal knows (a receipt "
                      "or a transfer with no order, a return with no purchase order, an invoice line for an order it "
@@ -729,9 +732,12 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
     j = _Journal(ds)
     for inv in ds.supplier_invoices:
         if inv.active_at(day):
-            left = inv.total - sum(p.amount + p.discount for p in inv.payments if p.date <= day)
-            rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
-            pay[j._company_of_supplier_invoice(inv)] += (-1 if inv.credit else 1) * _r(_r(left) * rate)
+            if b.material is not None:
+                pay[""] = units.add(pay[""], inv.total)
+            else:
+                left = inv.total - sum(p.amount + p.discount for p in inv.payments if p.date <= day)
+                rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
+                pay[j._company_of_supplier_invoice(inv)] += (-1 if inv.credit else 1) * _r(_r(left) * rate)
     for bill in carrier_bills(ds):
         pay[bill.company] += bill.open_at(day)
     grir: dict[str, float] = defaultdict(float)
@@ -760,10 +766,10 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
         else:
             at = purchase.base if open_ >= 0 else billed_at.get(lid, purchase.base)
             grir[entity_of(ds, info.location)] -= open_ * at
-    if units.digits != 2:
-        # Reconcile to the independently dated receipt and reversal records.
+    if b.material is not None:
+        # Reconcile the journal to the minor units still assigned to unbilled receipt slices.
         accruals: dict[str, int] = defaultdict(int)
-        for (_, location), amount in material_receipt_accruals(ds, units, lines, through=day).items():
+        for (_, location), amount in b.material.accruals.items():
             accruals[entity_of(ds, location)] -= amount
         grir = {company: units.major(amount) for company, amount in accruals.items()}
     ic_rec: dict[str, float] = defaultdict(float)

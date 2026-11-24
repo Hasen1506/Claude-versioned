@@ -21,6 +21,7 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from .actuals import StockType
+from .currency import material_units
 from .common import Id, Model, Ref, Unit
 from .sales import Payment
 from .transactional import ScheduledReceipt
@@ -214,11 +215,20 @@ class SupplierInvoice(Model):
     return_id: str | None = Field(None, max_length=64, description="Credit memo: the return it credits")
     cancelled: bool = False
     cancelled_on: dt.date | None = None
+    cancelled_after: int | None = Field(None, ge=1, exclude_if=lambda value: value is None,
+        description="Supplier invoice sequence at cancellation for domestic material matching")
     note: str = Field("", max_length=400)
 
     @property
     def net(self) -> float:
-        return round(sum(x.amount for x in self.lines) + self.delivery_costs, 2)
+        units = material_units(self.currency or "")
+        if units.digits == 2:
+            return round(sum(x.amount for x in self.lines) + self.delivery_costs, 2)
+        return units.total([*(self.line_amount(x) for x in self.lines), self.delivery_costs])
+
+    def line_amount(self, line: SupplierInvoiceLine) -> float:
+        units = material_units(self.currency or "")
+        return line.amount if units.digits == 2 else units.product(line.qty, line.price)
 
     @property
     def credit(self) -> bool:
@@ -232,7 +242,8 @@ class SupplierInvoice(Model):
 
     @property
     def total(self) -> float:
-        return round(self.net + self.tax, 2)
+        units = material_units(self.currency or "")
+        return units.total((self.net, self.tax))
 
     @property
     def settled(self) -> float:
@@ -240,7 +251,8 @@ class SupplierInvoice(Model):
 
     @property
     def open(self) -> float:
-        return 0.0 if self.cancelled else round(self.total - self.settled, 2)
+        units = material_units(self.currency or "")
+        return 0.0 if self.cancelled else units.total((self.total, -self.settled))
 
     def active_at(self, on: dt.date) -> bool:
         """Legacy cancellations with no date remain excluded; new cancellations preserve earlier history."""
@@ -250,6 +262,8 @@ class SupplierInvoice(Model):
     def _cancellation_date(self) -> SupplierInvoice:
         if self.cancelled_on is not None and (not self.cancelled or self.cancelled_on < self.date):
             raise ValueError("an invoice cancellation is dated on or after the invoice and marks it cancelled")
+        if self.cancelled_after is not None and self.cancelled_on is None:
+            raise ValueError("a cancellation sequence requires a dated cancellation")
         return self
 
 

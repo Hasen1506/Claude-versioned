@@ -84,8 +84,9 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         before, after, old_ds, ds = retain_openings(before, after, old_ds, ds)
         from ..model.currency import require_material_ledger, require_posting_currency
         monetary = require_material_ledger(ds)
-        for invoice in ds.supplier_invoices:
-            require_posting_currency(invoice.currency or ds.settings.currency)
+        if monetary.digits == 2:
+            for invoice in ds.supplier_invoices:
+                require_posting_currency(invoice.currency or ds.settings.currency)
         from ..model.sales import Invoice
         from ..model.intercompany import IntercompanyInvoice
         from ..model.transport import FreightOrder
@@ -101,6 +102,8 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
             for raw in [*_rows(before, name).values(), *_rows(after, name).values()]:
                 model.model_validate(raw)
         old_inv, new_inv = _rows(before, "supplier_invoices"), _rows(after, "supplier_invoices")
+        if monetary.digits != 2 and list(new_inv)[:len(old_inv)] != list(old_inv):
+            raise TransactionRefused("posted supplier invoices retain their entry order")
         old_moves, new_moves = _rows(before, "movements"), _rows(after, "movements")
         old_pos, new_pos = _rows(before, "purchase_orders"), _rows(after, "purchase_orders")
         if old_ds.settings.currency != ds.settings.currency:
@@ -295,7 +298,7 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         ds = lenient(result)[0]
         existing = [SupplierInvoice.model_validate(new_inv[i]) for i in new_inv if i in old_inv]
         working = ds.model_copy(update={"supplier_invoices": existing})
-        lifecycle = {"payments", "released_by", "released_on", "cancelled", "cancelled_on", "note"}
+        lifecycle = {"payments", "released_by", "released_on", "cancelled", "cancelled_on", "cancelled_after", "note"}
         for iid, raw in new_inv.items():
             target = SupplierInvoice.model_validate(raw)
             if iid in old_inv:
@@ -335,11 +338,15 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
                 working, _ = pay_invoice(working, iid, payment.amount, payment.date, payment.reference)
                 if working.supplier_invoices[[i.id for i in working.supplier_invoices].index(iid)].payments[-1] != payment:
                     raise TransactionRefused(f"{iid}: the payment/discount does not match the amount due")
-            if target.cancelled != prior.cancelled or target.cancelled_on != prior.cancelled_on:
+            if (target.cancelled, target.cancelled_on, target.cancelled_after) != (
+                    prior.cancelled, prior.cancelled_on, prior.cancelled_after):
                 if prior.cancelled or not target.cancelled or target.cancelled_on is None:
                     raise TransactionRefused(f"{iid}: cancellation requires a date and cannot be undone by a save")
                 open_period(target.cancelled_on)
                 working, _ = cancel_invoice(working, iid, target.cancelled_on)
+                cancelled = next(inv for inv in working.supplier_invoices if inv.id == iid)
+                if target.cancelled_after != cancelled.cancelled_after:
+                    raise TransactionRefused(f"{iid}: the server determines the invoice cancellation sequence")
         from .commercial import protect_commercial
         protect_commercial(old_ds, ds, open_period, freight_action=freight_action)
         from ..carrier_bank import protect_bank
@@ -351,8 +358,10 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         from ..accounting.production import protect_orders
         protect_orders(old_ds, ds)
         books = None
-        if monetary.digits != 2 and ds.movements != old_ds.movements:
+        if monetary.digits != 2 and (ds.movements != old_ds.movements or ds.supplier_invoices != old_ds.supplier_invoices):
             from ..accounting import view
+            from ..actuals.valuation import protect_material_matching
+            protect_material_matching(old_ds, ds, monetary)
             books = view(ds)
             if any(not check.ok for check in books.checks):
                 raise TransactionRefused("the material posting does not reconcile at the company currency precision")

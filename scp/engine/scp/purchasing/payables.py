@@ -31,7 +31,8 @@ from ..model import (
 )
 from ..plan.costing import contract_for, fx
 from ..model.currency import (
-    MATERIAL_CURRENCIES, CurrencyPrecisionError, CurrencyUnits, require_material_ledger, require_posting_currency,
+    MATERIAL_CURRENCIES, CurrencyPrecisionError, CurrencyUnits, material_units, require_material_ledger,
+    require_posting_currency,
 )
 from .result import (
     ActionReport, ContractLineView, ContractView, InvoiceLineView, PayableRow, PayablesView, SupplierInvoiceView,
@@ -57,7 +58,7 @@ def posting_rate(ds: Dataset, currency: str | None) -> float:
 
 
 def _money(v: float, cur: str) -> str:
-    return f"{cur} {v:,.2f}"
+    return f"{cur} {v:,.{material_units(cur).digits}f}"
 
 
 def _next(ds: Dataset, prefix: str, ids: list[str]) -> str:
@@ -251,12 +252,14 @@ def to_invoice(ds: Dataset, *, units: CurrencyUnits | None = None) -> list[ToInv
     index = lines_index(ds, refs)
     accruals: dict[str, int] = defaultdict(int)
     if units.digits != 2:
-        from ..actuals.valuation import material_receipt_accruals
-        for (lid, _), amount in material_receipt_accruals(ds, units, index).items():
+        from ..actuals.valuation import material_matching
+        for (lid, _), amount in material_matching(ds, units).accruals.items():
             accruals[lid] += amount
     out = []
     for lid in sorted(refs):
         q = got.get(lid, 0.0) - billed.get(lid, 0.0)
+        if units.digits != 2:
+            q = round(q, 6)
         li = index.get(lid)
         if li is None:
             continue            # a production order or transfer
@@ -300,6 +303,13 @@ def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *
         raise PayablesError(f"{kind} is not a kind of supplier invoice")
     if delivery_costs < 0:
         raise PayablesError("delivery costs cannot be negative")
+    units = material_units(ds.settings.currency)
+    domestic = units.digits != 2
+    if domestic and (kind != "invoice" or return_id or delivery_costs):
+        raise PayablesError(f"{ds.settings.currency} supplier invoice posting supports local receipt matching without "
+                            "delivery charges; credit memos and other corrections require a two-decimal currency")
+    if domestic and tax is not None and tax < 0:
+        raise PayablesError("supplier invoice tax cannot be negative")
     if kind.startswith("subsequent"):
         return _subsequent(ds, supplier, lines, kind, on=on, reference=reference, tax=tax, note=note,
                            delivery_costs=delivery_costs)
@@ -338,12 +348,18 @@ def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *
         q = float(w["qty"]) if w.get("qty") is not None else None
         if q is None:
             q = max(0.0, received(ds).get(li.id, 0.0) - invoiced(ds).get(li.id, 0.0))
-        if q <= EPS:
+            if domestic:
+                q = round(q, 6)
+        if q <= (EPS / 2 if domestic else EPS):
             raise PayablesError(f"{li.id}: there is nothing received to invoice; give the quantity billed")
+        if domestic and q != round(q, 6):
+            raise PayablesError(f"{li.id}: invoice quantity supports six decimal places")
         price = float(w["price"]) if w.get("price") is not None else (
             _invoiced_price(ds, li.id) if credit else None) or li.price
         if price is None:
             raise PayablesError(f"{li.id} has no price on the order: give the price invoiced")
+        if domestic and (cur != ds.settings.currency or price != li.price):
+            raise PayablesError(f"{li.id}: enter a local supplier invoice at the saved purchase order price")
         ln = SupplierInvoiceLine(order=li.id, product=li.product, qty=round(q, 6), price=price)
         got_lines.append(ln)
         if not credit and (b := _price_block(ds, ln, li.price)):
@@ -351,20 +367,21 @@ def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *
     if supplier is None:   # CV-L01: not an assert, which python -O removes
         raise PayablesError("the invoice has no lines to say which supplier it is from")
     _check_reference(ds, supplier, reference, "credit_memo" if credit else "invoice")
-    if not credit:
+    if not credit and not domestic:
         blocks = _qty_blocks(ds, got_lines) + blocks
     terms = ds.vendor_terms(supplier)
-    net = round(sum(x.amount for x in got_lines) + delivery_costs, 2)
+    net = (units.total(units.product(x.qty, x.price) for x in got_lines) if domestic
+           else round(sum(x.amount for x in got_lines) + delivery_costs, 2))
     v = ds.vendor(supplier)
     rate = v.tax_rate if v.tax_rate is not None else ds.purchasing.tax_rate
-    tax_amt = round(net * rate, 2) if tax is None else round(float(tax), 2)
+    tax_amt = units.product(net, rate) if tax is None else units.amount(float(tax))
     iid = _next(ds, "CM" if credit else "SI", [i.id for i in ds.supplier_invoices])
     inv = SupplierInvoice(
         id=iid, kind="credit_memo" if credit else "invoice", supplier=supplier, reference=reference[:64], date=on,
         due_date=on if credit else on + timedelta(days=terms.net_days),
         discount_date=on + timedelta(days=terms.discount_days) if terms.discount and not credit else None,
-        discount=0.0 if credit else terms.discount, currency=None if cur == ds.settings.currency else cur,
-        fx_rate=posting_rate(ds, cur), entity=invoice_entity(ds, got_lines),
+        discount=0.0 if credit else terms.discount, currency=cur if domestic or cur != ds.settings.currency else None,
+        fx_rate=1.0 if domestic else posting_rate(ds, cur), entity=invoice_entity(ds, got_lines),
         lines=got_lines, delivery_costs=round(delivery_costs, 2), tax=tax_amt, blocks=blocks, return_id=return_id,
         note=note[:400])
     rets = ds.supplier_returns
@@ -387,8 +404,19 @@ def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *
             msg += (f"matches the order and the goods received; due {inv.due_date.isoformat()}"
                     + (f", {inv.discount:.0%} off if paid by {inv.discount_date.isoformat()}"
                        if inv.discount_date else "") + ".")
-    return (ds.model_copy(update={"supplier_invoices": [*ds.supplier_invoices, inv], "supplier_returns": rets}),
-            ActionReport(ok=True, message=msg, id=iid))
+    new = ds.model_copy(update={"supplier_invoices": [*ds.supplier_invoices, inv], "supplier_returns": rets})
+    if domestic:
+        _check_domestic_matching(ds, new)
+    return new, ActionReport(ok=True, message=msg, id=iid)
+
+
+def _check_domestic_matching(old: Dataset, new: Dataset) -> None:
+    from ..actuals.valuation import protect_material_matching
+    try:
+        units = require_material_ledger(new)
+        protect_material_matching(old, new, units)
+    except CurrencyPrecisionError as exc:
+        raise PayablesError(str(exc)) from None
 
 
 def _subsequent(ds: Dataset, supplier: str | None, lines: list[dict] | None, kind: str, *, on: date,
@@ -505,6 +533,8 @@ def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | N
     """Pay a supplier invoice (or record the refund of a credit memo). Paid in full by the discount date, the cash
     discount is taken."""
     inv = _invoice(ds, iid)
+    if ds.settings.currency in MATERIAL_CURRENCIES:
+        raise PayablesError(f"{ds.settings.currency} supplier settlement requires a two-decimal currency")
     on = on or ds.settings.planning_start
     cur = inv.currency or ds.settings.currency
     if on < inv.date:
@@ -546,7 +576,12 @@ def cancel_invoice(ds: Dataset, iid: str, on: date | None = None) -> tuple[Datas
     if on < inv.date:
         raise PayablesError("an invoice cannot be cancelled before its posting date")
     rets = [r.model_copy(update={"credit_memo": None}) if r.credit_memo == iid else r for r in ds.supplier_returns]
-    new = _replace(ds, inv.model_copy(update={"cancelled": True, "cancelled_on": on})).model_copy(update={"supplier_returns": rets})
+    domestic = ds.settings.currency in MATERIAL_CURRENCIES
+    cancelled = inv.model_copy(update={"cancelled": True, "cancelled_on": on,
+                                       "cancelled_after": len(ds.supplier_invoices) if domestic else None})
+    new = _replace(ds, cancelled).model_copy(update={"supplier_returns": rets})
+    if domestic:
+        _check_domestic_matching(ds, new)
     return new, ActionReport(ok=True, message=f"{iid} cancelled: its lines can be invoiced again.", id=iid)
 
 
@@ -556,6 +591,8 @@ def return_goods(ds: Dataset, order: str, qty: float, *, on: date | None = None,
                  replace: bool = False) -> tuple[Dataset, ActionReport]:
     """Send goods received on an order line back to the supplier (≈ movement 122). They leave the stock type they
     are in (blocked by default: goods going back are usually held first)."""
+    if ds.settings.currency in MATERIAL_CURRENCIES:
+        raise PayablesError(f"{ds.settings.currency} supplier returns require a two-decimal currency")
     from ..actuals.documents import WORDS, StockError, _settle, _with_openings, complete
     from ..actuals.lots import node_lots
     from ..actuals.stock import before, movement_ids
@@ -693,11 +730,13 @@ def contract_views(ds: Dataset, as_of: date) -> list[ContractView]:
 def invoice_view(ds: Dataset, inv: SupplierInvoice, as_of: date, got: dict[str, float],
                  billed: dict[str, float]) -> SupplierInvoiceView:
     still = still_blocked(ds, inv)
+    units = material_units(inv.currency or "")
+    settled = inv.open <= 0.005 if units.digits == 2 else units.minor(inv.open) == 0
     if inv.cancelled:
         status = "cancelled"
     elif inv.credit:
-        status = "credited" if inv.open <= 0.005 else "credit open"
-    elif inv.open <= 0.005:
+        status = "credited" if settled else "credit open"
+    elif settled:
         status = "paid"
     elif still:
         status = "blocked"
@@ -709,7 +748,7 @@ def invoice_view(ds: Dataset, inv: SupplierInvoice, as_of: date, got: dict[str, 
     index = lines_index(ds, {ln.order for ln in inv.lines})
     for ln in inv.lines:
         li = index.get(ln.order)
-        lines.append(InvoiceLineView(order=ln.order, product=ln.product, qty=ln.qty, price=ln.price, amount=ln.amount,
+        lines.append(InvoiceLineView(order=ln.order, product=ln.product, qty=ln.qty, price=ln.price, amount=inv.line_amount(ln),
                                      order_price=li.price if li else None, received=got.get(ln.order, 0.0),
                                      invoiced=billed.get(ln.order, 0.0)))
     overdue = (as_of - inv.due_date).days if status in ("to pay", "released", "blocked") and inv.due_date < as_of \
@@ -748,14 +787,14 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
         k = fx(ds, x.currency if x.currency != ds.settings.currency else None)
         r = row(x.supplier)
         amt = x.open * k * (-1 if x.kind in ("credit_memo", "subsequent_credit") else 1)
-        r.open += amt
+        r.open = units.add(r.open, amt)
         if x.kind in ("invoice", "subsequent_debit"):
             if x.status == "blocked":
-                r.blocked += amt
+                r.blocked = units.add(r.blocked, amt)
             if x.due_date < as_of:
-                r.overdue += amt
+                r.overdue = units.add(r.overdue, amt)
             elif (x.due_date - as_of).days <= 7:
-                r.due_soon += amt
+                r.due_soon = units.add(r.due_soon, amt)
             if x.status != "blocked" and (r.next_due is None or x.due_date < r.next_due):
                 r.next_due = x.due_date
     for g in gr:
@@ -784,7 +823,7 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
     payables = [*rows.values(), *carriers.values()]
     for r in payables:
         for f in ("open", "overdue", "due_soon", "blocked"):
-            setattr(r, f, round(getattr(r, f), 2))
+            setattr(r, f, units.amount(getattr(r, f)))
         r.not_invoiced = units.amount(r.not_invoiced)
     payables.sort(key=lambda r: (-r.overdue, -r.open, r.supplier, r.company))
     rets = []
@@ -805,7 +844,7 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
         invoices=invs, carrier_bills=freight, carrier_bank=bank_view(ds, freight), to_invoice=gr, payables=payables,
         contracts=contract_views(ds, as_of), returns=rets,
         blocked=sum(x.status == "blocked" for x in invs),
-        open_value=round(sum(r.open for r in payables), 2), overdue_value=round(sum(r.overdue for r in payables), 2),
+        open_value=units.total(r.open for r in payables), overdue_value=units.total(r.overdue for r in payables),
         not_invoiced_value=not_invoiced)
 
 

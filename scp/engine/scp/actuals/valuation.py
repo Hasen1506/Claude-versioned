@@ -25,12 +25,13 @@ from datetime import date, timedelta
 from ..freight import landed_postings
 from ..model import Dataset, GoodsMovement, MovementType, PriceControl
 from ..model.common import Out
-from ..model.currency import CurrencyUnits, material_units
+from ..model.currency import CurrencyPrecisionError, CurrencyUnits, material_units, require_material_ledger
 from ..network import Node, build_graph
 from ..plan.costing import freight_per_unit, fx, handling, roll_up
 from ..plan.leadtime import supplier_lane
-from ..purchasing.payables import LineInfo, lines_index
+from ..purchasing.payables import lines_index
 from ..model.purchasing import PurchaseValuationBasis, SupplierInvoice
+from .receipt_matching import MaterialMatches, match_receipts
 from .stock import before
 from .transfer_price import crossing, entity_of, price, shipment_prices, source_of
 
@@ -232,7 +233,8 @@ class _Books:
     def __init__(self, ds: Dataset, std: dict[Node, float]):
         self.ds = ds
         self.units = material_units(ds.settings.currency)
-        self.receipt_amounts: dict[str, tuple[int, int, float]] = {}  # original GR/IR, landed minor units, open quantity
+        self.receipt_amounts: dict[str, int] = {}  # landed minor units
+        self.material: MaterialMatches | None = None
         self.std = std
         self.nodes: dict[Node, _Node] = {}
         self.entries: list[ValuationEntry] = []
@@ -264,27 +266,18 @@ class _Books:
 
     def book_purchase(self, movement: GoodsMovement, basis: _Line, clearing: float, landed: float) -> tuple[float, float]:
         """The amount recorded on this receipt is the source for every reversal."""
-        if self.units.digits == 2:
+        if self.material is None:
             return clearing, landed
-        booked = self.units.minor(self.units.product(movement.qty, basis.base))
         cost = self.units.minor(self.units.product(movement.qty, basis.price))
-        self.receipt_amounts[movement.id] = (booked, cost, movement.qty)
-        return self.units.major(booked), self.units.major(cost)
+        self.receipt_amounts[movement.id] = cost
+        return self.units.major(self.material.movements[movement.id]), self.units.major(cost)
 
-    def reverse_purchase(self, original: GoodsMovement, qty: float, clearing: float,
+    def reverse_purchase(self, reversal: GoodsMovement, original: GoodsMovement, clearing: float,
                          landed: float) -> tuple[float, float]:
-        if self.units.digits == 2 or original.id not in self.receipt_amounts:
+        if self.material is None or original.id not in self.receipt_amounts:
             return clearing, landed
-        booked, cost, open_qty = self.receipt_amounts[original.id]
-        left = max(0.0, open_qty - qty)
-        self.receipt_amounts[original.id] = (booked, cost, left)
-
-        def release(amount: int) -> float:
-            before = self.units.prorated_minor(amount, open_qty, original.qty)
-            after = self.units.prorated_minor(amount, left, original.qty)
-            return self.units.major(before - after)
-
-        return release(booked), release(cost)
+        cost = self.material.reversed_cost(reversal.id, self.receipt_amounts[original.id], original.qty)
+        return self.units.major(self.material.movements[reversal.id]), self.units.major(cost)
 
     def significant(self, amount: float) -> bool:
         return abs(amount) > 0.005 if self.units.digits == 2 else self.units.minor(amount) != 0
@@ -411,6 +404,10 @@ def run_books(ds: Dataset, day: date, books: str = "entity", watch=None) -> tupl
     lines = lines_index(ds, outside=False)
     po = {lid: _landed(ds, lid, ln) for lid, ln in lines.items() if ln.price is not None}
     books_.purchase_lines = po
+    if books_.units.digits != 2:
+        if ds.supplier_invoices:
+            require_material_ledger(ds)
+        books_.material = match_receipts(ds, books_.units, {lid: line.base for lid, line in po.items()}, through=day)
     kinds = {r.id: r.kind.value for r in ds.receipts}
     kinds.update({c.id: c.kind for c in ds.closed_orders if c.id not in kinds})
     journal = before(ds, day + timedelta(days=1))
@@ -423,13 +420,15 @@ def run_books(ds: Dataset, day: date, books: str = "entity", watch=None) -> tupl
         (m.date, 0, i, m, None) for i, m in enumerate(journal)]
     for i, inv in enumerate(ds.supplier_invoices):
         if inv.date <= day and (not inv.cancelled or inv.cancelled_on is not None):
-            events.append((inv.date, 1, i, inv, None))
+            events.append((inv.date, 1, 2 * i if books_.material is not None else i, inv, None))
             if inv.cancelled and inv.cancelled_on is not None and inv.cancelled_on <= day:
                 opposite = {"invoice": "credit_memo", "credit_memo": "invoice",
                             "subsequent_debit": "subsequent_credit", "subsequent_credit": "subsequent_debit"}
                 reversal = inv.model_copy(update={"id": f"{inv.id}/REV", "date": inv.cancelled_on,
                     "kind": opposite[inv.kind], "cancelled": False, "cancelled_on": None})
-                events.append((inv.cancelled_on, 1, len(ds.supplier_invoices) + i, reversal, inv))
+                order = (2 * (inv.cancelled_after or len(ds.supplier_invoices)) - 1 if books_.material is not None
+                         else len(ds.supplier_invoices) + i)
+                events.append((inv.cancelled_on, 1, order, reversal, inv))
     for i, posting in enumerate(landed_postings(ds)):
         if posting.event.date <= day and posting.event.receipt in by_id:
             events.append((posting.event.date, 2, i, posting, None))
@@ -512,30 +511,23 @@ def _landed(ds: Dataset, lid: str, ln) -> _Line:
                  base=basis.base, duty=basis.duty)
 
 
-def material_receipt_accruals(ds: Dataset, units: CurrencyUnits, lines: dict[str, LineInfo],
-                              through: date | None = None) -> dict[tuple[str, str], int]:
-    """Outstanding GR/IR in minor units by purchase line and receipt location, from material documents."""
-    moves = ds.movements if through is None else [move for move in ds.movements if move.date <= through]
-    reversed_qty: dict[str, float] = defaultdict(float)
-    for move in moves:
-        if move.reversal_of:
-            reversed_qty[move.reversal_of] += abs(move.qty)
-    prices: dict[str, float] = {}
-    amounts: dict[tuple[str, str], int] = defaultdict(int)
-    for move in moves:
-        if move.reversal_of or move.type is not MovementType.RECEIPT or move.reference not in lines:
-            continue
-        lid = move.reference
-        line = lines[lid]
-        if line.price is None:
-            continue
-        if lid not in prices:
-            basis = ds.purchase_valuation_by_id.get(lid) or purchase_basis(ds, lid, line)
-            prices[lid] = basis.base
-        booked = units.minor(units.product(move.qty, prices[lid]))
-        left = max(0.0, move.qty - reversed_qty[move.id])
-        amounts[lid, move.location] += units.prorated_minor(booked, left, move.qty)
-    return amounts
+def material_matching(ds: Dataset, units: CurrencyUnits) -> MaterialMatches:
+    references = {m.reference for m in ds.movements if m.type is MovementType.RECEIPT and m.reference}
+    lines = lines_index(ds, references, outside=False)
+    prices = {lid: basis.base if (basis := ds.purchase_valuation_by_id.get(lid)) is not None else line.price
+              for lid, line in lines.items() if line.price is not None}
+    return match_receipts(ds, units, prices)
+
+
+def protect_material_matching(old: Dataset, proposed: Dataset, units: CurrencyUnits) -> None:
+    """A backdated write cannot alter the receipt allocations of an existing posting."""
+    current = material_matching(proposed, units)
+    existing = material_matching(old, units)
+    for original, changed in ((existing.invoices, current.invoices), (existing.reversed, current.reversed)):
+        for document, allocation in original.items():
+            if changed.get(document) != allocation:
+                raise CurrencyPrecisionError(f"{document}: the change would alter a posted receipt allocation; "
+                                             "use a later posting date")
 
 
 WORDS = {MovementType.OPENING: "opening balance", MovementType.RECEIPT: "receipt", MovementType.ISSUE: "issue to production",
@@ -558,7 +550,7 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
         if ins:                                        # a receipt taken back leaves at what it came in at
             if orig.type is MovementType.RECEIPT and orig.reference in po:
                 clearing, landed = po[orig.reference].reverse_receipt(orig.id, q)
-                b.receipt_clearing, landed = b.reverse_purchase(orig, q, clearing, landed)
+                b.receipt_clearing, landed = b.reverse_purchase(m, orig, clearing, landed)
                 b.reversed_receipt_cost = landed
                 unit = landed / q
             b.out(day, loc, prod, q, what, m.reversal_of, unit if b.node(loc, prod).control is not PriceControl.STANDARD
@@ -652,6 +644,11 @@ def _movement(b: _Books, m: GoodsMovement, po: dict[str, _Line], kinds: dict[str
 
 def _invoice(b: _Books, ds: Dataset, inv: SupplierInvoice, po: dict[str, _Line], lines,
              reversed_invoice: SupplierInvoice | None) -> None:
+    if b.material is not None:
+        original = reversed_invoice or inv
+        sign = -1 if reversed_invoice else 1
+        b.invoice_clearings = [b.units.major(sign * amount) for amount in b.material.invoice_values[original.id]]
+        return
     rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
     total = sum(abs(ln.qty * ln.price) for ln in inv.lines) or 1.0
     b.invoice_clearings = [0.0] * len(inv.lines)

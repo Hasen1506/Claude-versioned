@@ -17910,6 +17910,11 @@ export interface components {
             /** Cancelled On */
             cancelled_on?: string | null;
             /**
+             * Cancelled After
+             * @description Supplier invoice sequence at cancellation for domestic material matching
+             */
+            cancelled_after?: number | null;
+            /**
              * Note
              * @default
              */

@@ -4,10 +4,10 @@ import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, PayablesView, PoAction, PoActionInput, PoActionResponse, PurchasingView, StockType, SupplierInvoiceView, TransportActionResponse } from "../api/types";
 import { Badge, Edits, Empty, Panel, Reading, StatTile } from "../components/ui";
-import { day, exactMoney, qty, unitMoney } from "../lib/format";
+import { day, exactMoney, hasMoney, moneyDigits, qty, unitMoney } from "../lib/format";
 import { Loc, Msg, Prod, namesOf } from "../lib/names";
 import { go, href } from "../lib/router";
-import { useSettlement } from "../state/settlement";
+import { useSettlement, useSupplierInvoicePosting } from "../state/settlement";
 import { store } from "../state/store";
 import { CarrierBillEvents } from "./CarrierBillEvents";
 import { CarrierBankWorklist } from "./CarrierBankWorklist";
@@ -40,11 +40,12 @@ export function poAct(action: PoAction, po: string, extra: PoActionInput = {}) {
   return applyPurchasing((dataset) => api.poAction(dataset, action, po, extra));
 }
 
-export function usePoAction(invoice?: string) {
+export function usePoAction(invoice?: string, afterEntry?: () => void) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const settlement = useSettlement("purchasing", invoice);
+  const invoicePosting = useSupplierInvoicePosting(!!invoice || !!afterEntry, invoice);
   const execute = async (operation: () => Promise<Pick<PoActionResponse, "report">>, after?: () => void) => {
     setBusy(true); setErr(null); setMsg(null);
     try {
@@ -59,26 +60,53 @@ export function usePoAction(invoice?: string) {
       setBusy(false);
     }
   };
-  const settle = async (post: ReturnType<typeof settlement.retry>) => {
+  const refreshPosting = async (post: ReturnType<typeof settlement.retry>) => {
     const reply = await post;
     await Promise.allSettled([store.run("purchasing"), store.run("plan")]);
     return reply.result as Pick<PoActionResponse, "report">;
   };
-  const run = (action: PoAction, po: string, extra: PoActionInput = {}, after?: () => void) => execute(
-    () => action === "pay_invoice" && settlement.live
-      ? settle(settlement.post(extra.date, extra.amount ?? null, extra.reference))
-      : poAct(action, po, extra), after);
-  const retryPayment = (after?: () => void) => execute(() => settle(settlement.retry()), after);
+  const run = (action: PoAction, po: string, extra: PoActionInput = {}, after?: () => void) => execute(async () => {
+    if (action === "pay_invoice" && settlement.live)
+      return refreshPosting(settlement.post(extra.date, extra.amount ?? null, extra.reference));
+    const { company, dataset } = store.get();
+    if (dataset && company?.live && moneyDigits(dataset.settings.currency) !== 2
+        && ((action === "enter_invoice" && afterEntry) || (action === "cancel_invoice" && invoice))) {
+      const { date, ...extraParameters } = extra;
+      const posting_date = date ?? dataset.settings.planning_start;
+      return refreshPosting(invoicePosting.post({ action, posting_date, parameters: { po, ...extraParameters } }));
+    }
+    return poAct(action, po, extra);
+  }, after);
+  const retryPayment = (after?: () => void) => execute(() => refreshPosting(settlement.retry()), after);
   const banners = <>
     {msg && <div className="banner info" role="status"><Badge sev="ok">Done</Badge><span><Msg text={msg} /></span><span className="spacer" />
       <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
-    {err && <div className="banner error" role="alert"><Badge sev="error">{settlement.pending ? "Unconfirmed" : "Not done"}</Badge><span>{err}</span><span className="spacer" />
+    {invoicePosting.pending && <div className="banner warning" role="alert"><Badge sev="warning">Unconfirmed</Badge>
+      <span>{err || "Retry the original instruction to check or finish the posting."}</span><span className="spacer" />
+      <button className="btn accent" disabled={busy} onClick={() => execute(() => refreshPosting(invoicePosting.retry()), afterEntry)}>
+        {invoice ? "Retry cancellation" : "Retry invoice"}</button></div>}
+    {err && !invoicePosting.pending && <div className="banner error" role="alert"><Badge sev="error">{settlement.pending ? "Unconfirmed" : "Not done"}</Badge><span>{err}</span><span className="spacer" />
       <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setErr(null)}>✕</button></div>}
   </>;
-  return { busy, run, banners, retryPayment, paymentPending: settlement.pending };
+  return { busy, run, banners, retryPayment, paymentPending: settlement.pending, invoicePending: invoicePosting.pending };
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
+
+function roundedMinorProduct(left: number, right: number, digits: number): bigint {
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return 0n;
+  const parts = (n: number) => {
+    const [significand, exponent = "0"] = String(Math.abs(n)).split("e");
+    const [whole, fraction = ""] = significand.split(".");
+    return { amount: BigInt(whole + fraction), power: Number(exponent) - fraction.length };
+  };
+  const a = parts(left), b = parts(right);
+  const product = a.amount * b.amount;
+  const power = a.power + b.power + digits;
+  const divisor = 10n ** BigInt(Math.max(-power, 0));
+  const magnitude = power >= 0 ? product * 10n ** BigInt(power) : (2n * product + divisor) / (2n * divisor);
+  return (left < 0) !== (right < 0) ? -magnitude : magnitude;
+}
 
 // ---- supplier invoices --------------------------------------------------------------------------------------
 export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Dataset; sel?: string; po?: string }) {
@@ -91,10 +119,11 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
   const suppliers = new Set(picked.map((g) => g.supplier));
   const [edit, setEdit] = useState<Record<string, { qty: string; price: string }>>({});
   const [ref, setRef] = useState("");
-  const [on, setOn] = useState(ds.settings.planning_start);
+  const [on, setOn] = useState("");
   const [tax, setTax] = useState("");
   const [freight, setFreight] = useState("");
-  const { busy, run, banners } = usePoAction();
+  const clearInvoice = () => { setPick(null); setEdit({}); setRef(""); setTax(""); setFreight(""); };
+  const { busy, run, banners, invoicePending } = usePoAction(undefined, clearInvoice);
   const line = (o: string) => edit[o] ?? { qty: "", price: "" };
   const net = picked.reduce((a, g) => a + Number(line(g.order).qty || g.qty) * Number(line(g.order).price || g.price || 0), 0)
     + Number(freight || 0);
@@ -110,11 +139,25 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
   // the invoice is in the supplier's currency: the lines' own when they share one
   const curs = new Set(picked.map((g) => g.currency ?? res.currency));
   const billCur = curs.size === 1 ? [...curs][0] : res.currency;
+  const precision = moneyDigits(res.currency);
+  const domestic = precision !== 2;
+  const postingDate = on || (domestic ? picked.reduce((latest, g) =>
+    g.last_receipt && g.last_receipt > latest ? g.last_receipt : latest,
+    ds.settings.planning_start) : ds.settings.planning_start);
+  const netMinor = domestic ? picked.reduce((sum, g) =>
+    sum + roundedMinorProduct(Number(line(g.order).qty || g.qty), g.price ?? 0, precision), 0n) : 0n;
+  const safeNet = Number.isSafeInteger(Number(netMinor));
+  const taxMinor = domestic ? (tax === "" ? roundedMinorProduct(Number(netMinor), rate, 0)
+    : roundedMinorProduct(Number(tax), 1, precision)) : 0n;
+  const totalMinor = Number(netMinor + taxMinor);
+  const invoiceTotal = domestic
+    ? safeNet && Number.isSafeInteger(totalMinor) ? totalMinor / 10 ** precision : null
+    : round2(net + (tax === "" ? net * rate : Number(tax)));
   const enter = () => run("enter_invoice", "", {
-    supplier, date: on, reference: ref, tax: tax === "" ? null : Number(tax), delivery_costs: Number(freight || 0),
+    supplier, date: postingDate, reference: ref, tax: tax === "" ? null : Number(tax), delivery_costs: Number(freight || 0),
     lines: picked.map((g) => ({ id: g.order, order: g.order, final: false, qty: Number(line(g.order).qty || g.qty),
       price: line(g.order).price === "" ? null : Number(line(g.order).price) })),
-  }, () => { setPick(null); setEdit({}); setRef(""); setTax(""); setFreight(""); });
+  }, clearInvoice);
   const cur = pay.invoices.find((i) => i.id === sel);
   return (
     <div className="stack">
@@ -128,16 +171,16 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
       <Panel flush title="Received, not invoiced yet" actions={waiting.length > 0 && <>
         <label className="row small">Their invoice no. <input className="input" style={{ width: 130 }} value={ref} aria-label="Their invoice number"
           onChange={(e) => setRef(e.target.value)} /></label>
-        <label className="row small">Dated <input type="date" className="input" style={{ width: 150 }} value={on} aria-label="Invoice date"
-          onChange={(e) => setOn(e.target.value || ds.settings.planning_start)} /></label>
-        <label className="row small" title="Freight and other delivery costs on the invoice that the order did not plan">Delivery costs <input className="input num"
+        <label className="row small">Dated <input type="date" className="input" style={{ width: 150 }} value={postingDate} aria-label="Invoice date"
+          onChange={(e) => setOn(e.target.value)} /></label>
+        {!domestic && <label className="row small" title="Freight and other delivery costs on the invoice that the order did not plan">Delivery costs <input className="input num"
           style={{ width: 90 }} type="number" min={0} step="any" aria-label="Delivery costs" placeholder="0" value={freight}
-          onChange={(e) => setFreight(e.target.value)} /></label>
+          onChange={(e) => setFreight(e.target.value)} /></label>}
         <label className="row small">Tax <input className="input num" style={{ width: 90 }} type="number" min={0} step="any" aria-label="Tax charged"
-          placeholder={String(round2(net * rate))} value={tax} onChange={(e) => setTax(e.target.value)} /></label>
-        <Edits><button className="btn accent" disabled={busy || !picked.length || suppliers.size !== 1} onClick={enter}
+          placeholder={String(domestic ? Number(taxMinor) / 10 ** precision : round2(net * rate))} value={tax} onChange={(e) => setTax(e.target.value)} /></label>
+        <Edits><button className="btn accent" disabled={busy || invoicePending || !picked.length || suppliers.size !== 1} onClick={enter}
           title={suppliers.size > 1 ? "One invoice is from one supplier: tick lines of one supplier" : undefined}>
-          {busy ? "Checking…" : `Enter the invoice (${exactMoney(round2(net + (tax === "" ? net * rate : Number(tax))), billCur)})`}</button></Edits>
+          {busy ? "Checking…" : invoiceTotal == null ? "Enter the invoice" : `Enter the invoice (${exactMoney(invoiceTotal, billCur)})`}</button></Edits>
       </>}>
         {waiting.length === 0 ? <Empty title="Nothing waiting for an invoice">Every goods receipt is invoiced. A supplier's credit memo for goods sent back is entered on Returns.</Empty> : (
           <div className="table-wrap" style={{ maxHeight: 360 }}>
@@ -154,9 +197,9 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
                     <td className="num"><input className="input num" style={{ width: 80 }} type="number" min={0} aria-label={`Billed quantity ${g.order}`}
                       placeholder={String(g.qty)} value={line(g.order).qty} onChange={(e) => type(g.order, { qty: e.target.value })} /></td>
                     <td className="num">{g.price != null ? unitMoney(g.price, g.currency) : "—"}</td>
-                    <td className="num"><input className="input num" style={{ width: 80 }} type="number" min={0} step="any" aria-label={`Billed price ${g.order}`}
+                    <td className="num">{domestic ? unitMoney(g.price, g.currency) : <input className="input num" style={{ width: 80 }} type="number" min={0} step="any" aria-label={`Billed price ${g.order}`}
                       placeholder={g.price != null ? String(g.price) : ""} value={line(g.order).price}
-                      onChange={(e) => type(g.order, { price: e.target.value })} /></td>
+                      onChange={(e) => type(g.order, { price: e.target.value })} />}</td>
                     <td>{g.last_receipt ? day(g.last_receipt) : "—"}</td>
                   </tr>
                 ))}
@@ -178,7 +221,7 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
                     <td><Loc id={i.supplier} /></td><td>{i.reference || "—"}</td><td>{day(i.date)}</td>
                     <td>{!isCredit(i.kind) ? day(i.due_date) : "—"}{i.days_overdue > 0 && <Badge sev="error">{i.days_overdue} d overdue</Badge>}</td>
                     <td className="num">{exactMoney(isCredit(i.kind) ? -i.total : i.total, i.currency)}</td>
-                    <td className="num">{i.open > 0.005 ? exactMoney(isCredit(i.kind) ? -i.open : i.open, i.currency) : ""}</td>
+                    <td className="num">{hasMoney(i.open, i.currency) ? exactMoney(isCredit(i.kind) ? -i.open : i.open, i.currency) : ""}</td>
                     <td><Badge sev={INV_SEV[i.status]}>{i.status}</Badge></td>
                   </tr>
                 ))}
@@ -188,10 +231,11 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
         )}
       </Panel>
       {cur && <InvoiceDetail key={cur.id} inv={cur} ds={ds} />}
-      <Reading formula={<>Each line is checked when entered: the quantity against what arrived and is not yet invoiced, the price against the order's
+      {domestic ? <p className="small muted">Invoice the unbilled goods already received on the invoice date at the saved purchase order price.</p>
+        : <Reading formula={<>Each line is checked when entered: the quantity against what arrived and is not yet invoiced, the price against the order's
         (more than {Math.round((ds.purchasing?.price_tolerance ?? 0.02) * 1000) / 10} % and {exactMoney(ds.purchasing?.amount_tolerance ?? 1, res.currency)} over blocks it).</>}
         soWhat={<>A quantity block lifts by itself once the goods arrive; a price block waits until someone releases the invoice. {nm.loc(supplier ?? "")
-          ? `${nm.loc(supplier!)} is paid on ${vendor?.payment_terms ? "its payment terms" : `${vendor?.payment_terms_days ?? 30} days`}.` : ""}</>} />
+          ? `${nm.loc(supplier!)} is paid on ${vendor?.payment_terms ? "its payment terms" : `${vendor?.payment_terms_days ?? 30} days`}.` : ""}</>} />}
     </div>
   );
 }
@@ -199,25 +243,32 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
 function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
   const today = ds.settings.planning_start;
   const [on, setOn] = useState(today);
+  const domestic = moneyDigits(ds.settings.currency) !== 2;
+  const [cancelOn, setCancelOn] = useState(inv.date > today ? inv.date : today);
   const inTime = !isCredit(inv.kind) && !!inv.discount_date && on <= inv.discount_date && inv.payments.length === 0 && inv.discount > 0;
   const due = round2(inv.open - (inTime ? round2(inv.total * inv.discount) : 0));
   const [amount, setAmount] = useState("");
   const [ref, setRef] = useState("");
-  const { busy, run, banners, retryPayment, paymentPending } = usePoAction(inv.id);
+  const { busy, run, banners, retryPayment, paymentPending, invoicePending } = usePoAction(inv.id);
   const clearPayment = () => { setAmount(""); setRef(""); };
   const blocked = inv.status === "blocked";
-  const open = inv.open > 0.005 && inv.status !== "cancelled";
+  const open = hasMoney(inv.open, inv.currency) && inv.status !== "cancelled";
   return (
     <Panel title={<h3>{KIND[inv.kind]} {inv.id} <span className="muted">from {namesOf(ds).loc(inv.supplier)}</span>{" "}
       <Badge sev={INV_SEV[inv.status]}>{inv.status}</Badge></h3>}
       actions={<Edits>
         {blocked && <button className="btn accent" disabled={busy} onClick={() => run("release_invoice", inv.id, { date: today })}>Release for payment</button>}
-        {inv.status !== "cancelled" && inv.payments.length === 0 && <button className="btn ghost" disabled={busy} onClick={() => run("cancel_invoice", inv.id)}>Cancel it</button>}
+        {inv.status !== "cancelled" && inv.payments.length === 0 && <>
+          {domestic && <label className="row small">Cancellation date <input className="input" type="date" value={cancelOn}
+            onChange={(e) => setCancelOn(e.target.value)} /></label>}
+          <button className="btn ghost" disabled={busy || invoicePending || (domestic && !cancelOn)}
+            onClick={() => run("cancel_invoice", inv.id, domestic ? { date: cancelOn } : {})}>Cancel it</button>
+        </>}
       </Edits>}>
       <div className="row wrap small muted" style={{ gap: 16, marginBottom: 10 }}>
         {inv.reference && <span>Their no. {inv.reference}</span>}<span>Dated {day(inv.date)}</span>
         {!isCredit(inv.kind) && <span>Due {day(inv.due_date)}</span>}
-        {inv.discount_date && <span>{Math.round(inv.discount * 1000) / 10} % off if paid by {day(inv.discount_date)}</span>}
+        {!domestic && inv.discount_date && <span>{Math.round(inv.discount * 1000) / 10} % off if paid by {day(inv.discount_date)}</span>}
         <span>Net {exactMoney(inv.net, inv.currency)}{inv.delivery_costs ? ` (of which delivery costs ${exactMoney(inv.delivery_costs, inv.currency)})` : ""} · tax {exactMoney(inv.tax, inv.currency)} · total {exactMoney(inv.total, inv.currency)}</span>
         {inv.released_on && <span>Released {day(inv.released_on)}{inv.released_by ? ` by ${inv.released_by}` : ""}</span>}
       </div>
@@ -247,7 +298,8 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
       {inv.payments.length > 0 && <p className="small" style={{ marginTop: 8 }}>{inv.payments.map((p, i) => <span key={i}>{i > 0 && "; "}
         {exactMoney(p.amount, inv.currency)} on {day(p.date)}{p.discount ? ` (discount ${exactMoney(p.discount, inv.currency)})` : ""}{p.reference ? `, ${p.reference}` : ""}</span>)}</p>}
       {paymentPending && <Edits><button className="btn accent" disabled={busy} onClick={() => retryPayment(clearPayment)}>Retry payment</button></Edits>}
-      {open && !blocked && <Edits><div className="row wrap" style={{ gap: 10, marginTop: 10 }}>
+      {domestic && open && <p className="small muted">Settlement recording currently supports two-decimal currencies.</p>}
+      {!domestic && open && !blocked && <Edits><div className="row wrap" style={{ gap: 10, marginTop: 10 }}>
         <label className="row small">{isCredit(inv.kind) ? "Refund received on" : "Paid on"} <input type="date" className="input" value={on} aria-label="Paid on"
           onChange={(e) => setOn(e.target.value || today)} /></label>
         <label className="row small">Amount <input className="input num" style={{ width: 110 }} type="number" min={0} step="any" aria-label="Amount paid"
@@ -257,7 +309,7 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
           clearPayment)}>{isCredit(inv.kind) ? "Refund received" : `Pay ${exactMoney(amount === "" ? due : Number(amount), inv.currency)}`}</button>
         {inTime && <span className="small faint">in time for the cash discount of {exactMoney(round2(inv.total * inv.discount), inv.currency)}</span>}
       </div></Edits>}
-      {inv.kind === "invoice" && inv.status !== "cancelled" && <PriceCorrection inv={inv} ds={ds} />}
+      {!domestic && inv.kind === "invoice" && inv.status !== "cancelled" && <PriceCorrection inv={inv} ds={ds} />}
     </Panel>
   );
 }

@@ -213,9 +213,9 @@ test("the accounts downloads retain two registered bank destinations", async ({ 
   expect(csv).toMatch(/FO-2\/P-1.*E1,BANK-B/);
 });
 
-test("the dinar purchasing accrual, material trial balance and CSV keep three decimal places", async ({ page }) => {
-  const data = {
-    settings: { company_name: "Dinar inventory", currency: "KWD", planning_start: "2026-01-05", horizon_days: 28,
+function dinarInventory(company_name: string) {
+  return {
+    settings: { company_name, currency: "KWD", planning_start: "2026-01-05", horizon_days: 28,
       default_calendar: "CAL" },
     calendars: [{ id: "CAL", workdays: [0, 1, 2, 3, 4, 5, 6] }],
     locations: [{ id: "P", type: "plant" }, { id: "S", type: "supplier" }],
@@ -227,11 +227,16 @@ test("the dinar purchasing accrual, material trial balance and CSV keep three de
       due_date: "2026-01-06", source: "BUY-B" }],
     movements: [{ id: "R-1", date: "2026-01-06", type: "receipt", reference: "PO-LINE", location: "P", product: "B", qty: 2 }],
   };
+}
+
+test("the dinar purchasing accrual, material trial balance and CSV keep three decimal places", async ({ page }) => {
+  const data = dinarInventory("Dinar inventory");
   await page.goto("/");
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Import a file", exact: true }).click();
   await (await chooser).setFiles({ name: "dinar-stock.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(data)) });
   await expect(page).toHaveURL(/#\/home$/);
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
   await page.goto("/#/buying/owed");
   const accrued = page.locator(".tile").filter({ hasText: "Received, not invoiced" });
   await expect(accrued.getByText("KWD 2.469", { exact: true })).toBeVisible();
@@ -244,4 +249,67 @@ test("the dinar purchasing accrual, material trial balance and CSV keep three de
   const content = readFileSync((await (await download).path())!, "utf8");
   expect(content).toContain(",2.469,0.000");
   expect(content).toContain(",0.000,2.469");
+});
+
+test("a live dinar supplier invoice survives retry and reopens its exact accrual on cancellation", async ({ page, request }) => {
+  const email = `dinar-invoice-${Date.now()}@example.invalid`;
+  const password = "fixture-only-dinar-autumn";
+  const created = await request.post("/api/auth/signup", { data: { email, password, name: "Accounts clerk" } });
+  expect(created.ok(), await created.text()).toBe(true);
+  const headers = { Authorization: `Bearer ${(await created.json()).token}` };
+  const company = await request.post("/api/companies", { headers, data: { dataset: dinarInventory("Dinar invoice fixture") } });
+  expect(company.ok(), await company.text()).toBe(true);
+  const path = `/api/companies/${(await company.json()).id}`;
+  await page.goto("/#/account");
+  await page.getByRole("tab", { name: "Sign in", exact: true }).click();
+  await page.getByLabel("E-mail").fill(email);
+  await page.getByLabel(/^Password/).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: /Open Dinar invoice fixture/ }).click();
+  await expect(page).toHaveURL(/#\/home$/);
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  await page.goto("/#/buying/invoices");
+  const entryAttempts: string[] = [];
+  const cancellationAttempts: string[] = [];
+  await page.route("**/api/companies/*/commands", async (route) => {
+    const body = route.request().postDataJSON();
+    const attempts = body.action === "enter_invoice" ? entryAttempts
+      : body.action === "cancel_invoice" ? cancellationAttempts : null;
+    if (!attempts) return route.continue();
+    attempts.push(body.id);
+    if (attempts.length !== 1) return route.continue();
+    const posted = await route.fetch();
+    expect(posted.ok(), await posted.text()).toBe(true);
+    return route.abort("failed");
+  });
+  await expect(page.getByLabel("Invoice date")).toHaveValue("2026-01-06");
+  await page.getByLabel("Their invoice number").fill("KWD-SUPPLIER-1");
+  await page.getByLabel("Billed quantity PO-LINE").fill("1");
+  await page.getByLabel("Tax charged").fill("0.001");
+  const enter = page.getByRole("button", { name: "Enter the invoice (KWD 1.236)" });
+  await enter.click();
+  await expect(page.getByRole("alert")).toContainText("Confirmation is unavailable");
+  await expect(enter).toBeDisabled();
+  await page.reload();
+  await page.getByRole("button", { name: "Retry invoice", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "SI-00001" })).toContainText("KWD 1.236");
+  expect(entryAttempts).toHaveLength(2);
+  expect(entryAttempts[1]).toBe(entryAttempts[0]);
+  const accrued = page.locator(".tile").filter({ hasText: "Received, not invoiced" });
+  await expect(accrued).toContainText("KWD 1.234");
+  await page.getByRole("row", { name: /SI-00001.*KWD-SUPPLIER-1/ }).click();
+  await expect(page.getByText("Settlement recording currently supports two-decimal currencies.")).toBeVisible();
+  await page.getByLabel("Cancellation date").fill("2026-01-07");
+  await page.getByRole("button", { name: "Cancel it", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Confirmation is unavailable");
+  await page.reload();
+  await page.getByRole("button", { name: "Retry cancellation", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "SI-00001 cancelled" })).toBeVisible();
+  await expect(accrued).toContainText("KWD 2.469");
+  expect(cancellationAttempts).toHaveLength(2);
+  expect(cancellationAttempts[1]).toBe(cancellationAttempts[0]);
+  const saved = await (await request.get(path, { headers })).json();
+  expect(saved.meta.revision).toBe(3);
+  expect(saved.dataset.supplier_invoices).toMatchObject([{ id: "SI-00001", currency: "KWD",
+    cancelled_on: "2026-01-07", cancelled_after: 1 }]);
 });
