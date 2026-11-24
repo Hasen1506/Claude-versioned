@@ -6,8 +6,10 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from scp.accounting import view
+from scp.actuals.valuation import material_matching
 from scp.companies import commands
 from scp.model import Dataset
+from scp.model.currency import CurrencyUnits
 from scp.versions import Store, set_store
 
 from .factory import base, lp
@@ -116,6 +118,21 @@ def test_backdated_invoice_cannot_replace_existing_match_or_bill_future_receipt(
     conflict = invoice(owner, cid, 4, "2026-01-07")
     assert conflict.status_code == 409 and "posted receipt allocation" in conflict.text
     assert client.get(f"/api/companies/{cid}", headers=h(owner)).json()["meta"]["revision"] == 4
+
+
+def test_cancelled_invoice_reopens_earliest_consumed_receipt():
+    owner, _, cid = business("KWD", 1.2345)
+    current(receive(owner, cid, 1, "2026-01-06", 1))
+    current(receive(owner, cid, 2, "2026-01-07", 1))
+    current(invoice(owner, cid, 3, "2026-01-07"))
+    current(invoice(owner, cid, 4, "2026-01-07", 0.5))
+    current(command(owner, cid, "cancel", "purchasing", "cancel_invoice", 5,
+                    date="2026-01-08", po="SI-00001"))
+    data = current(invoice(owner, cid, 6, "2026-01-08", 0.5))
+    first, second = (movement.id for movement in data.movements)
+    matching = material_matching(data, CurrencyUnits(3))
+    assert [matching.invoices[f"SI-{i:05}"][0][0].receipt for i in range(1, 4)] == [first, second, first]
+    assert balances(data, "2026-01-08")["GRIR"] == Decimal("-1.234")
 
 
 @pytest.mark.parametrize("backend", ["sqlite", "postgresql"])

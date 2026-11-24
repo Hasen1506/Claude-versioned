@@ -3,6 +3,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from heapq import heappop, heappush
 
 from ..model import Dataset, GoodsMovement, MovementType, SupplierInvoice
 from ..model.currency import CurrencyPrecisionError, CurrencyUnits
@@ -32,6 +33,8 @@ class Receipt:
     booked: int
     quantity: int
     free: list[tuple[int, int]]
+    position: int
+    queued: bool = True
 
     def value(self, left: int, right: int) -> int:
         return _slice_value(self.booked, self.quantity, left, right)
@@ -79,6 +82,9 @@ def match_receipts(ds: Dataset, units: CurrencyUnits, prices: dict[str, float],
             events.append((inv.cancelled_on, 1, order, inv, True))
     receipts: dict[str, Receipt] = {}
     by_order: dict[str, list[Receipt]] = defaultdict(list)
+    # A cancellation can reopen an older receipt. The heap keeps the earliest
+    # available receipt at the front without rescanning every consumed receipt.
+    available: dict[str, list[int]] = defaultdict(list)
     out = MaterialMatches()
 
     def value(slices: tuple[ReceiptSlice, ...]) -> int:
@@ -101,27 +107,35 @@ def match_receipts(ds: Dataset, units: CurrencyUnits, prices: dict[str, float],
             elif (order := event.reference) is not None:
                 qty = _quantity(event.qty)
                 booked = units.minor(units.product(event.qty, prices[order]))
-                receipt = Receipt(event, booked, qty, [(0, qty)])
+                ordered = by_order[order]
+                receipt = Receipt(event, booked, qty, [(0, qty)], len(ordered))
                 receipts[event.id] = receipt
-                by_order[order].append(receipt)
+                ordered.append(receipt)
+                heappush(available[order], receipt.position)
                 out.movements[event.id] = booked
         elif cancellation:
-            for line in out.invoices[event.id]:
-                for s in line:
-                    free = receipts[s.receipt].free
-                    free.append((s.start, s.end))
-                    free.sort()
+            for line, slices in zip(event.lines, out.invoices[event.id], strict=True):
+                for s in slices:
+                    receipt = receipts[s.receipt]
+                    receipt.free.append((s.start, s.end))
+                    receipt.free.sort()
+                    if not receipt.queued:
+                        heappush(available[line.order], receipt.position)
+                        receipt.queued = True
         else:
             allocated = []
             for line in event.lines:
                 qty = _quantity(line.qty)
                 slices = []
-                for receipt in by_order[line.order]:
+                ordered, queue = by_order[line.order], available[line.order]
+                while qty and queue:
+                    receipt = ordered[queue[0]]
                     taken = receipt.take(qty)
                     slices.extend(taken)
                     qty -= sum(s.end - s.start for s in taken)
-                    if not qty:
-                        break
+                    if not receipt.free:
+                        heappop(queue)
+                        receipt.queued = False
                 if qty:
                     raise CurrencyPrecisionError(f"{event.id}: invoice only quantities on unbilled receipts dated on or before the invoice")
                 allocated.append(tuple(slices))
