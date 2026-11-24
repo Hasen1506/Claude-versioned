@@ -1345,12 +1345,19 @@ class PostRequest(Out):
     block: bool = True                              # count_doc: refuse postings for them until the count is posted
     book_basis: CountBookBasis = "frozen"           # count_doc: when to establish the book quantity
     uncounted_zero: bool = False                    # count_post: lines not counted are posted as zero
+    review_reason: str = Field("", max_length=200)  # live count_post: attest to a reviewed above-limit count
     classes: list[Literal["A", "B", "C"]] | None = None   # cycle_count: only these classes (default: all that are due)
 
 
 @app.post("/api/actuals/post", response_model=PoActionResponse)
 def post_posting(req: PostRequest) -> PoActionResponse:
     """Post what happened: ship a transfer, receive an order (with its parts issued), or count stock."""
+    if req.review_reason:
+        raise HTTPException(422, "inventory review requires a signed-in company command")
+    return _apply_posting(req)
+
+
+def _apply_posting(req: PostRequest, count_actor: str | None = None) -> PoActionResponse:
     try:
         new, rep = post(req.dataset, req.action, order=req.order, qty=req.qty, on=req.date, final=req.final,
                         usage=None if req.usage is None else [u.model_dump() for u in req.usage],
@@ -1360,7 +1367,7 @@ def post_posting(req: PostRequest) -> PoActionResponse:
                         location=req.location, product=req.product, to_type=req.to_type, movement=req.movement,
                         doc=req.doc, nodes=None if req.nodes is None else [(n.location, n.product) for n in req.nodes],
                         block=req.block, uncounted_zero=req.uncounted_zero, book_basis=req.book_basis,
-                        ship_from=req.ship_from, classes=req.classes)
+                        ship_from=req.ship_from, classes=req.classes, count_actor=count_actor)
     except PostingError as e:
         raise HTTPException(409, str(e)) from e
     return PoActionResponse(**answer(req.dataset, new), report=rep)
@@ -1495,7 +1502,7 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
     adapters = {
         "purchasing": (PoActionRequest, lambda purchase: _apply_po_action(purchase, user.email)),
         "sales": (SalesActionRequest, post_sales_action),
-        "stock": (PostRequest, post_posting),
+        "stock": (PostRequest, _apply_posting),
         "transport": (TransportActionRequest, post_transport_action),
         "intercompany": (IntercompanyActionRequest, post_intercompany_action),
         "outside": (OutsideActionRequest, post_outside_action),
@@ -1510,6 +1517,10 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
             parsed = schema.model_validate({**req.parameters, "dataset": ds, "action": req.action, "date": req.posting_date})
         except ValidationError as exc:
             raise HTTPException(422, "invalid command: " + str(exc)) from None
+        if req.kind == "stock" and parsed.review_reason.strip():
+            if (req.action != "count_post" or parsed.counts is None or parsed.uncounted_zero
+                    or get_companies().is_key(user)):
+                raise HTTPException(422, "inventory review requires a person and every saved count quantity")
         if req.kind == "stock" and req.action in ("count_enter", "count_post"):
             count = next((d for d in ds.inventory_docs if d.id == parsed.doc), None)
             if count is not None and count.posting_date != req.posting_date:
@@ -1521,7 +1532,12 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
                             for item in parsed.counts]
                 if reviewed != supplied:
                     raise HTTPException(409, "the saved counts changed; review them before posting differences")
-        response = handler(parsed)
+        if req.kind == "stock" and req.action == "count_enter" and ds.finance.inventory_count_limits is not None:
+            if get_companies().is_key(user):
+                raise HTTPException(403, "controlled inventory counts must be recorded by a signed-in person")
+            response = _apply_posting(parsed, user.id)
+        else:
+            response = handler(parsed)
         if response.dataset is None:
             raise RuntimeError("an authoritative command must produce a complete result")
         return response.dataset, response.model_dump(mode="json", exclude={"dataset", "patch"})

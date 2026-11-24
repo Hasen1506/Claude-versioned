@@ -683,7 +683,7 @@ def capture_count_book(ds: Dataset, did: str, on: date | None) -> tuple[Dataset,
     return ds, ActionReport(ok=True, doc=did, message=f"{did}: book stock recorded for {on.isoformat()}")
 
 
-def enter_counts(ds: Dataset, did: str, counts: list[dict]) -> tuple[Dataset, ActionReport]:
+def enter_counts(ds: Dataset, did: str, counts: list[dict], *, actor: str | None = None) -> tuple[Dataset, ActionReport]:
     """Enter what was found (``[{"location", "product", "batch"?, "stock_type"?, "qty"}]``); a batch found that
     the book does not have gets a line of its own."""
     d = _doc(ds, did)
@@ -703,7 +703,10 @@ def enter_counts(ds: Dataset, did: str, counts: list[dict]) -> tuple[Dataset, Ac
                 raise StockError(f"{_name(ds, prod)} at {_at(ds, loc)} is not on {did}")
             it = CountItem(location=loc, product=prod, batch=b, stock_type=t, book_qty=0.0)
             items.append(it)
-        it.counted = None if q is None else round(float(q), 6)
+        counted = None if q is None else round(float(q), 6)
+        if actor is not None or counted != it.counted:
+            it.counted_by = actor if counted is not None else None
+        it.counted = counted
     left = sum(1 for x in items if x.counted is None)
     return (ds.model_copy(update={"inventory_docs": _replace(ds, d.model_copy(update={"items": items}))}),
             ActionReport(ok=True, message=f"{did}: counts entered" + (f"; {left} line{'s' if left != 1 else ''} still "

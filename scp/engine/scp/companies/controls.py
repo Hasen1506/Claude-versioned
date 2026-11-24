@@ -91,7 +91,7 @@ def authorize(before: dict, after: dict, email: str, *, count_projection: bool =
             a, b = old or {}, new or {}
             if a.get("closed_through") != b.get("closed_through"):
                 required.add("period_close")
-            admin = {"closed_through", "control_roles", "separate_payments"}
+            admin = {"closed_through", "control_roles", "separate_payments", "inventory_count_limits"}
             if {k: v for k, v in a.items() if k not in admin} != {k: v for k, v in b.items() if k not in admin}:
                 required.add("master_data")
         elif name == "sales_orders" and old and new and old.get("credit_block") and not new.get("credit_block"):

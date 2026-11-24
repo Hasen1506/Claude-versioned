@@ -33,7 +33,7 @@ import re
 import secrets
 import threading
 import zlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
 
 from ..model.common import Out
@@ -46,6 +46,9 @@ from .merge import MergeReport, merge
 from .patch import PatchError, apply_patch, make_patch
 from . import twostep
 from .rights import MAX_CHANGE_ROWS, Stale, apply_held, field_changes, out_of_scope, split_master
+
+if TYPE_CHECKING:
+    from .materials import CountCommand
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -1218,6 +1221,11 @@ class Companies:
                 validate_tally_bank_ledgers(doc)
             except ValueError as exc:
                 raise CompanyError(f"invalid Tally bank ledger mapping: {exc}", 422) from None
+            from .materials import prepare_count_import
+            try:
+                doc = prepare_count_import(doc)
+            except ValueError as exc:
+                raise CompanyError(f"invalid inventory posting control: {exc}", 422) from None
             bank_fields = ("carrier_bank_accounts", "carrier_bank_lines", "carrier_bank_periods")
             freight = doc.get("freight_orders")
             has_posted_bank_account = isinstance(freight, list) and any(
@@ -1294,7 +1302,8 @@ class Companies:
 
     def save(self, user: User, cid: str, doc: dict | None, base_revision: int, action: str = "saved",
              note: str = "", patch: dict | None = None, client: str = "", *, allow_production_posting: bool = False,
-             count_projection: bool = False, freight_action: str = "", allow_carrier_bank: bool = False) -> SaveReport:
+             count_projection: bool = False, freight_action: str = "", allow_carrier_bank: bool = False,
+             count_command: CountCommand | None = None) -> SaveReport:
         """Save the working copy (``doc``, or ``patch`` applied to revision ``base_revision``) over revision
         ``base_revision``; refused when the company has moved on, unless only this window's own saves moved it."""
         with self.lock.scoped("company", cid):
@@ -1323,15 +1332,21 @@ class Companies:
                 raise CompanyError("only a company owner may change purchasing release policy", 403)
             if role != "owner" and (
                     ((current.get("finance") or {}).get("control_roles") or {}) != ((doc.get("finance") or {}).get("control_roles") or {})
-                    or bool((current.get("finance") or {}).get("separate_payments")) != bool((doc.get("finance") or {}).get("separate_payments"))):
+                    or bool((current.get("finance") or {}).get("separate_payments")) != bool((doc.get("finance") or {}).get("separate_payments"))
+                    or (current.get("finance") or {}).get("inventory_count_limits")
+                       != (doc.get("finance") or {}).get("inventory_count_limits")):
                 raise CompanyError("only a company owner may change business-operation grants or separation policy", 403)
             if any((current.get("finance") or {}).get(k) != (doc.get("finance") or {}).get(k)
-                   for k in ("control_roles", "separate_payments")):
+                   for k in ("control_roles", "separate_payments", "inventory_count_limits")):
                 from ..model.finance import FinanceSettings
                 try:
                     FinanceSettings.model_validate(doc.get("finance") or {})
                 except ValueError as e:
                     raise CompanyError(f"invalid financial control configuration: {e}", 403) from None
+            if ((current.get("finance") or {}).get("inventory_count_limits") is not None
+                    and (current.get("settings") or {}).get("currency", "INR")
+                    != (doc.get("settings") or {}).get("currency", "INR")):
+                raise CompanyError("remove the inventory posting limits before changing their company currency", 403)
             from .controls import authorize
             submitted = doc
             try:
@@ -1351,7 +1366,8 @@ class Companies:
             guarded = doc
             try:
                 guarded = protect(current, guarded, user.email, allow_production_posting=allow_production_posting,
-                                  freight_action=freight_action, allow_carrier_bank=allow_carrier_bank)
+                                  freight_action=freight_action, allow_carrier_bank=allow_carrier_bank,
+                                  count_command=count_command)
             except TransactionRefused as e:
                 raise CompanyError(str(e), 403) from None
             doc = guarded

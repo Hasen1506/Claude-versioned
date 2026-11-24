@@ -257,6 +257,7 @@ const withDataset = <T>(path: string, dataset: Dataset, extra: Record<string, un
 
 /** What a posting may say besides its action (scp/api/app.py PostRequest). */
 export interface PostExtra {
+  review_reason?: string;
   order?: string; qty?: number | null; date?: string; final?: boolean; usage?: UsageInput[] | null; counts?: CountInput[];
   note?: string; ship_from?: string | null; batch?: string | null; expires_on?: string | null; supplier_batch?: string | null;
   serials?: string[] | null; stock_type?: StockType | null; to_type?: StockType | null; location?: string | null;

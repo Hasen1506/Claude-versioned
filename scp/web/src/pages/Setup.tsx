@@ -12,6 +12,7 @@ import { Checklist } from "../components/Checklist";
 import { Badge, Edits, Panel, StageHeader } from "../components/ui";
 import { TYPE_LABEL } from "../lib/format";
 import { namesOf } from "../lib/names";
+import { postAct } from "./ExecutionStock";
 import { go, href } from "../lib/router";
 import { store, useStore } from "../state/store";
 import { applyCompany, CompanyPanel, coverLabel } from "./Company";
@@ -853,7 +854,13 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
     const n = num(count);
     if (!(n >= 0)) return setMsg("Enter the quantity counted (0 or more).");
     try {
-      const out = await api.postActual(ds, "count", { counts: [{ location: place, product, qty: n }] });
+      const counts = [{ location: place, product, qty: n }];
+      if (ds.finance?.inventory_count_limits && store.get().company?.live) {
+        const out = await postAct(ds, "count", { counts });
+        setMsg(out.text); setCount("");
+        return;
+      }
+      const out = await api.postActual(ds, "count", { counts });
       store.replace(out.dataset, ds);
       setMsg(namesOf(out.dataset).text(out.report.message)); setCount("");
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }

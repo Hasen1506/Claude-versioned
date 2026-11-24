@@ -173,6 +173,8 @@ class CountItem(Model):
     stock_type: StockType = StockType.UNRESTRICTED
     book_qty: float = Unit("qty", ge=None, description="The journal quantity at the document's recorded baseline")
     counted: float | None = Unit("qty", default=None, description="What was found; empty until counted")
+    counted_by: str | None = Field(None, max_length=254, exclude_if=lambda value: value is None,
+                                  description="Stable account ID recorded by the server when entering the count")
 
 
 CountBookBasis = Literal["frozen", "at_count"]

@@ -58,6 +58,17 @@ class CapacityOption(Model):
     life_years: int = Field(5, ge=1, le=50, description="Years of benefit counted in the NPV")
 
 
+class InventoryCountLimits(Model):
+    """Physical inventory posting limits in company-currency minor units."""
+
+    item_minor: int = Field(ge=0, le=9_007_199_254_740_991, strict=True,
+                            description="Maximum absolute value per count line, in minor units")
+    document_minor: int = Field(ge=0, le=9_007_199_254_740_991, strict=True,
+                                description="Maximum sum of absolute line values per document, in minor units")
+    reviewers: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=254)]] = Field(
+        default_factory=list, max_length=100, description="Accounts permitted to review and post above-limit counts")
+
+
 class FinanceSettings(Model):
     closed_through: dt.date | None = Field(None, description="Posted financial transactions on or before this date are closed")
     control_roles: dict[Literal["master_data", "planning", "purchasing", "sales", "manufacturing", "warehouse",
@@ -67,6 +78,8 @@ class FinanceSettings(Model):
                                            description="Named e-mail grants. Empty: legacy member roles. When configured, "
                                                        "every operation requires its grant, including for owners and keys")
     separate_payments: bool = Field(False, description="A payer must differ from the invoice's recorded entrant and releaser")
+    inventory_count_limits: InventoryCountLimits | None = Field(
+        None, exclude_if=lambda value: value is None, description="Optional physical inventory posting limits")
     capacity_options: list[CapacityOption] = Field(default_factory=list)
     discount_rate: float | None = Unit("fraction", le=1, default=None,
                                        description="Per year for NPV; empty = the company WACC")
