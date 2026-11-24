@@ -94,7 +94,7 @@ def instruction_for(ds: Dataset, identifier: str) -> SupplierPaymentInstruction:
 
 def require_payment_grant(ds: Dataset, actor: str) -> None:
     if actor not in {email.strip().lower() for email in ds.finance.control_roles.get("payments", [])}:
-        raise PermissionError("supplier instructions require an explicit company payments grant")
+        raise PermissionError("supplier bank posting and instructions require an explicit company payments grant")
 
 
 def _routing(ds: Dataset, account_id: str, routing: PaymentRouting) -> None:

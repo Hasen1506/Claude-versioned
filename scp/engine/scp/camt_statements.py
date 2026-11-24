@@ -255,7 +255,10 @@ def _entry(node: XML.Element, currency: str) -> CamtEntry:
                                or bool(node.findall("Chrgs", XML_NS) or node.findall("NtryDtls/TxDtls/Chrgs", XML_NS)))
     supplier_debit = None
     if not reversal and amount < 0:
-        debit_fee, ambiguous = _return_charges(node, currency)
+        try:
+            debit_fee, ambiguous = _return_charges(node, currency)
+        except ValueError:
+            debit_fee, ambiguous = None, True
         supplier_debit = SupplierDebitSource(included_fee_minor=debit_fee, unresolved_charges=ambiguous)
     return CamtEntry(identifier, reference, _day(node, "BookgDt"), amount, reversal, tuple(sorted(trace_ids)), fee, unresolved,
                      requires_allocation, supplier_debit)

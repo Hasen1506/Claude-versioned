@@ -3,7 +3,7 @@ import type { Dataset, PayablesView, SupplierInvoiceView } from "../api/types";
 import { Badge, Edits, Panel } from "../components/ui";
 import { day, exactMoney, moneyDigits } from "../lib/format";
 import { useSettlement, type CarrierBankEvent } from "../state/settlement";
-import { store } from "../state/store";
+import { store, useStore } from "../state/store";
 import { CamtStatementImport } from "./CamtStatementImport";
 import { CarrierBankAccounts, minorUnits } from "./CarrierBankAccounts";
 import { SupplierPaymentInstructions } from "./SupplierPaymentInstructions";
@@ -101,6 +101,7 @@ export function SupplierBankWorklist({ bank, ds, currency, invoices }: {
   bank: PayablesView["carrier_bank"]; ds: Dataset; currency: string; invoices: SupplierInvoiceView[];
 }) {
   const settlement = useSettlement("carrier_bank", "supplier");
+  const actor = useStore((state) => state.session?.user.email.trim().toLowerCase());
   const [lineId, setLineId] = useState("");
   const [voucher, setVoucher] = useState("");
   const [on, setOn] = useState(today);
@@ -125,6 +126,8 @@ export function SupplierBankWorklist({ bank, ds, currency, invoices }: {
   const earliest = history.at(-1)?.date ?? line?.date ?? "";
   const permitted = on >= earliest && on > (ds.finance?.closed_through ?? "");
   const editable = settlement.live && !busy && !settlement.pending;
+  const granted = (ds.finance?.control_roles?.payments ?? []).some((email) => email.trim().toLowerCase() === actor);
+  const canPostCash = editable && granted;
   const instruction = line && (ds.supplier_payment_instructions ?? []).find((item) =>
     item.id.toLowerCase() === line.reference.trim().toLowerCase());
   const canPost = !!line?.supplier_debit && !line.supplier_debit.unresolved_charges && !history.length
@@ -193,11 +196,13 @@ export function SupplierBankWorklist({ bank, ds, currency, invoices }: {
             </>}
         </div></Edits>}
         {canPost && settlement.live && !instruction && <SupplierClearingForm key={line.id} line={line} invoices={eligible}
-          editable={editable} submit={record} />}
+          editable={canPostCash} submit={record} />}
         {!!possibleOriginals.length && settlement.live && <SupplierReturnForm key={line.id} line={line} originals={possibleOriginals}
-          ds={ds} editable={editable} submit={record} />}
+          ds={ds} editable={canPostCash} submit={record} />}
+        {settlement.live && !granted && (canPost || possibleOriginals.length > 0)
+          && <p className="small">Posting supplier cash requires a company payments grant.</p>}
         {canPost && settlement.live && instruction?.approved_on && !instruction.statement_line && !instruction.rejection && <Edits>
-          <button className="btn accent" disabled={!editable} onClick={() => record({
+          <button className="btn accent" disabled={!canPostCash} onClick={() => record({
             kind: "clear_supplier_statement", line: line.id, instruction: instruction.id, reason: "Matched the approved instruction to the booked bank debit.",
           })}>Confirm booked instruction {instruction.id}</button>
         </Edits>}

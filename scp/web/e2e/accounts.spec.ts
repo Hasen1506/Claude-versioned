@@ -470,7 +470,8 @@ test("one booked native debit clears two KWD invoices and reconciles the account
   const headers = { Authorization: `Bearer ${(await signed.json()).token}` };
   const fixture = dinarInventory("Supplier clearing fixture");
   fixture.receipts[0].price = fixture.purchasing_sources[0].price = 0.001;
-  const created = await request.post("/api/companies", { headers, data: { dataset: fixture } });
+  const grants = Object.fromEntries(["master_data", "billing", "payments"].map((grant) => [grant, [email]]));
+  const created = await request.post("/api/companies", { headers, data: { dataset: { ...fixture, finance: { control_roles: grants } } } });
   expect(created.ok(), await created.text()).toBe(true);
   const path = `/api/companies/${(await created.json()).id}`;
   let revision = 1;
@@ -514,7 +515,7 @@ test("one booked native debit clears two KWD invoices and reconciles the account
   await expect(page.getByRole("table", { name: "Supplier bank account reconciliation" })).toContainText("Reconciled");
   await expect(page.getByRole("table", { name: "Supplier statement lines" })).toContainText("Posted and reconciled");
   const company = await (await request.get(path, { headers })).json();
-  expect(company.meta.revision).toBe(revision);
+  expect(company.meta.revision).toBe(revision + 1);
   expect(company.dataset.supplier_invoices.map((invoice: { payments: unknown[] }) => invoice.payments)).toMatchObject([
     [{ amount: 0.001, bank_account: "KWD-A" }], [{ amount: 0.001, bank_account: "KWD-A" }],
   ]);

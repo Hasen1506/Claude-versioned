@@ -37,6 +37,10 @@ def allocations(*amounts):
             for index, (inv, bank_amount) in enumerate(amounts, 1)]
 
 
+OWNER_GRANTS = {"control_roles": {grant: ["owner@integrity.example"]
+                                for grant in ("master_data", "purchasing", "payments", "billing", "warehouse", "invoice_release")}}
+
+
 @pytest.mark.parametrize(("backend", "currency", "price", "booked", "closing", "fee"), [
     ("sqlite", "JPY", 1, "3", "997", "1"),
     ("sqlite", "KWD", 0.001, "0.003", "0.997", "0.001"),
@@ -48,7 +52,7 @@ def test_grouped_clearing_and_explicit_fee_are_one_recoverable_posting(backend, 
         store = Store(request.getfixturevalue("pg_databases")())
         set_store(store)
         request.addfinalizer(store.db.close)
-    owner, _, cid = business(currency, price)
+    owner, buyer, cid = business(currency, price, finance=OWNER_GRANTS)
     current(receive(owner, cid, 1, "2026-01-06", 2))
     current(invoice(owner, cid, 2, "2026-01-07"))
     current(invoice(owner, cid, 3, "2026-01-07"))
@@ -62,6 +66,8 @@ def test_grouped_clearing_and_explicit_fee_are_one_recoverable_posting(backend, 
     source = attach(owner, cid, 5, xml)
     line = source.carrier_bank_lines[0]
     assert line.requires_allocation and line.supplier_debit.included_fee_minor == 1
+    assert financial(buyer, cid, 7, "clear_supplier_statement", line=line.id, reason="Bank advice",
+                     allocations=allocations((1, 1), (1, 1))).status_code == 403
     assert financial(owner, cid, 7, "clear_supplier_statement", line=line.id, reason="Bank advice",
                      allocations=allocations((1, 1), (1, 2))).status_code == 409
     assert financial(owner, cid, 7, "clear_supplier_statement", line=line.id, reason="Bank advice",
@@ -99,6 +105,7 @@ def test_grouped_clearing_and_explicit_fee_are_one_recoverable_posting(backend, 
 
 def test_statement_cash_sets_the_observed_fx_and_clears_the_original_liability():
     raw = base()
+    raw["finance"] = OWNER_GRANTS
     raw["settings"].update(currency="INR", fx_rates={"USD": 80})
     raw["purchase_orders"] = [{"id": "PO-1", "supplier": "S", "location": "P", "order_date": "2026-01-05", "currency": "USD"}]
     raw["receipts"] = [{"id": "PR-B", "po": "PO-1", "kind": "purchase", "product": "B", "location": "P",
@@ -146,7 +153,7 @@ def test_statement_cash_sets_the_observed_fx_and_clears_the_original_liability()
 
 
 def test_later_receipt_and_review_do_not_authorize_a_backdated_bank_posting():
-    owner, _, cid = business("INR", 100)
+    owner, _, cid = business("INR", 100, finance=OWNER_GRANTS)
     billed = current(invoice(owner, cid, 1, "2026-01-07"))
     assert billed.supplier_invoices[0].blocks
     current(receive(owner, cid, 2, "2026-01-09", 1))

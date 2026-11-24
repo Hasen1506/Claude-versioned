@@ -1502,8 +1502,8 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
         if req.action != (event.kind if isinstance(event, explicit) else "record"):
             raise HTTPException(422, "carrier bank action must match the requested event")
         companies = get_companies()
-        if (isinstance(event, INSTRUCTION_CHANGES) or isinstance(event, ClearSupplierStatement) and event.instruction) and companies.is_key(user):
-            raise HTTPException(403, "supplier payment instructions require a signed-in person")
+        if isinstance(event, (ClearSupplierStatement, ReturnSupplierStatement, *INSTRUCTION_CHANGES)) and companies.is_key(user):
+            raise HTTPException(403, "supplier bank posting and instructions require a signed-in person")
         try:
             receipt = {"event": event.receipt_event()} if isinstance(event, (CamtFile, RejectSupplierPayment)) else None
             if isinstance(event, CamtFiles):

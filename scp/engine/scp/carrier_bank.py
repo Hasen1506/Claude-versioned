@@ -520,7 +520,7 @@ def _supplier_principal(line: CarrierBankLine, period: CarrierBankPeriod | None,
     return -line.amount_minor - (line.supplier_debit.included_fee_minor or 0)
 
 
-def _clear_supplier(ds: Dataset, request: ClearSupplierStatement, line: CarrierBankLine, day: date, actor: str) -> tuple[Dataset, str]:
+def _clear_supplier(ds: Dataset, request: ClearSupplierStatement, line: CarrierBankLine, day: date) -> tuple[Dataset, str]:
     from .purchasing.payables import invoice_entity, pay_invoice
 
     if line.history:
@@ -531,7 +531,6 @@ def _clear_supplier(ds: Dataset, request: ClearSupplierStatement, line: CarrierB
     allocations = request.allocations
     reference = supplier_payment_reference(line.reference)
     if request.instruction:
-        require_payment_grant(ds, actor)
         instruction = instruction_for(ds, request.instruction)
         if (not instruction.reserved or not instruction.approved_on or instruction.account != line.account
                 or line.date < instruction.execute_on or reference != supplier_payment_reference(instruction.id)):
@@ -752,8 +751,10 @@ def record_bank(ds: Dataset, request: BankOperation, day: date, actor: str = "")
     line = next((row for row in ds.carrier_bank_lines if row.id == request.line), None)
     if line is None:
         raise ValueError("select an imported statement line in this company")
+    if isinstance(request, (ClearSupplierStatement, ReturnSupplierStatement)):
+        require_payment_grant(ds, actor)
     if isinstance(request, ClearSupplierStatement):
-        return _clear_supplier(ds, request, line, day, actor)
+        return _clear_supplier(ds, request, line, day)
     if isinstance(request, ReturnSupplierStatement):
         return _return_supplier(ds, request, line, day)
     if line.supplier_clearing:
