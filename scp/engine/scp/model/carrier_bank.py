@@ -9,7 +9,8 @@ from .common import Id, Model
 
 
 BankAccountId = Annotated[str, Field(pattern=r"^[A-Z0-9][A-Z0-9_-]{0,31}$")]
-BankMinor = Annotated[int, Field(strict=True, ge=-999999999999999, le=999999999999999)]
+MAX_BANK_MINOR = 999_999_999_999_999
+BankMinor = Annotated[int, Field(strict=True, ge=-MAX_BANK_MINOR, le=MAX_BANK_MINOR)]
 ReturnMinor = Annotated[BankMinor, Field(gt=0)]
 BankDigest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 CAMT_MAX_PAGES = 20
@@ -116,10 +117,20 @@ class BankReturnAllocation(Model):
     late_reason: str = Field("", max_length=200, exclude_if=lambda value: not value)
 
 
+class SupplierCashRef(Model):
+    invoice: Id
+    payment_number: int = Field(ge=1, strict=True)
+
+    @property
+    def voucher(self) -> str:
+        return f"{self.invoice}/{self.payment_number}"
+
+
 class BankMatchEvent(Model):
     date: date
     targets: list[BankCashRef] = Field(max_length=100, description="Empty releases the preceding match")
     allocation: BankReturnAllocation | None = Field(None, exclude_if=lambda value: value is None)
+    supplier_payment: SupplierCashRef | None = Field(None, exclude_if=lambda value: value is None)
 
 
 class CarrierBankLine(Model):
@@ -136,6 +147,8 @@ class CarrierBankLine(Model):
     trace_ids: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
     included_fee_minor: ReturnMinor | None = Field(None, exclude_if=lambda value: value is None)
     unresolved_charges: bool = Field(False, strict=True, exclude_if=lambda value: not value)
+    requires_allocation: bool = Field(False, strict=True, exclude_if=lambda value: not value,
+                                      description="Native supplier cash includes multiple transactions or bank charges")
     history: list[BankMatchEvent] = Field(default_factory=list)
 
     def source_key(self) -> tuple[str, str, str]:
@@ -145,14 +158,23 @@ class CarrierBankLine(Model):
     def active(self) -> list[BankCashRef]:
         return self.history[-1].targets if self.history else []
 
+    @property
+    def active_supplier(self) -> SupplierCashRef | None:
+        return self.history[-1].supplier_payment if self.history else None
+
+    def matched_vouchers(self) -> list[str]:
+        return [self.active_supplier.voucher] if self.active_supplier else [target.voucher for target in self.active]
+
     @model_validator(mode="after")
     def consistent_history(self) -> "CarrierBankLine":
         if not self.amount_minor:
             raise ValueError("a bank statement movement must have a nonzero signed amount")
         date_ = self.date
         for index, entry in enumerate(self.history):
-            if entry.date < date_ or bool(entry.targets) != (index % 2 == 0):
+            if entry.date < date_ or bool(entry.targets or entry.supplier_payment) != (index % 2 == 0):
                 raise ValueError("a match and its release must follow the statement date in order")
+            if entry.supplier_payment and (entry.targets or entry.allocation):
+                raise ValueError("a supplier match identifies exactly one payment or its reversal")
             if len({r.key() for r in entry.targets}) != len(entry.targets):
                 raise ValueError("a cash voucher is listed twice in the match")
             if entry.allocation and (not self.reversal or index or len(entry.targets) != len(entry.allocation.legs)):

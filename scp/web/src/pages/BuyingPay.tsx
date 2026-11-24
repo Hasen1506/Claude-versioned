@@ -12,6 +12,7 @@ import { store } from "../state/store";
 import { CarrierBillEvents } from "./CarrierBillEvents";
 import { CarrierBankWorklist } from "./CarrierBankWorklist";
 import { carrierPostingAccounts } from "./CarrierBankAccounts";
+import { SupplierBankWorklist } from "./SupplierBankWorklist";
 
 type Sev = "error" | "warning" | "info" | "ok";
 const INV_SEV: Record<string, Sev> = {
@@ -67,7 +68,8 @@ export function usePoAction(invoice?: string, afterEntry?: () => void) {
   };
   const run = (action: PoAction, po: string, extra: PoActionInput = {}, after?: () => void) => execute(async () => {
     if (action === "pay_invoice" && settlement.live)
-      return refreshPosting(settlement.post(extra.date, extra.amount ?? null, extra.reference));
+      return refreshPosting(settlement.post(extra.date, extra.amount ?? null, extra.reference, undefined, undefined,
+        extra.bank_account ?? undefined));
     const { company, dataset } = store.get();
     if (dataset && company?.live && moneyDigits(dataset.settings.currency) !== 2
         && ((action === "enter_invoice" && afterEntry) || ((action === "cancel_invoice" || action === "reverse_invoice_payment") && invoice))) {
@@ -260,10 +262,19 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
   const due = domestic ? (openMinor - discountMinor) / factor : round2(inv.open - discount);
   const [amount, setAmount] = useState("");
   const [ref, setRef] = useState("");
+  const [account, setAccount] = useState("");
   const [reverseNumber, setReverseNumber] = useState(0);
   const [reverseOn, setReverseOn] = useState("");
   const [reason, setReason] = useState("");
+  const [returnAccount, setReturnAccount] = useState("");
+  const [returnRef, setReturnRef] = useState("");
   const reversalDate = reverseOn || (latest > today ? latest : today);
+  const accounts = domestic ? carrierPostingAccounts(ds, "", paymentDate) : [];
+  const selectedAccount = accounts.some((row) => row.id === account) ? account : accounts.length === 1 ? accounts[0].id : "";
+  const originalAccount = inv.payments[reverseNumber - 1]?.bank_account;
+  const returnAccounts = domestic ? carrierPostingAccounts(ds, "", reversalDate) : [];
+  const selectedReturnAccount = originalAccount || (returnAccounts.some((row) => row.id === returnAccount) ? returnAccount
+    : returnAccounts.length === 1 ? returnAccounts[0].id : "");
   const { busy, run, banners, retryPayment, paymentPending, invoicePending, live } = usePoAction(inv.id);
   const clearPayment = () => { setAmount(""); setRef(""); };
   const pending = busy || paymentPending || invoicePending;
@@ -314,7 +325,8 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
       {inv.payments.length > 0 && <ul className="small">{inv.payments.map((p, i) => <li key={i}>
         {p.reverses ? `Reversal of payment ${p.reverses} · ` : domestic ? `Payment ${i + 1} · ` : ""}
         {exactMoney(p.amount, inv.currency)} on {day(p.date)}{p.discount ? ` (discount ${exactMoney(p.discount, inv.currency)})` : ""}
-        {p.reference ? ` · ${p.reference}` : ""}{p.reason ? ` · ${p.reason}` : ""}</li>)}</ul>}
+        {p.reference ? ` · ${p.reference}` : ""}{p.bank_account ? ` · ${p.bank_account}` : ""}{p.reason ? ` · ${p.reason}` : ""}</li>)}</ul>}
+      {domestic && !!ds.carrier_bank_accounts?.length && <a href={href("buying", "owed")}>Supplier bank reconciliation</a>}
       {paymentPending && <Edits><button className="btn accent" disabled={busy} onClick={() => retryPayment(clearPayment)}>Retry payment</button></Edits>}
       {domestic && open && !live && <p className="small muted">Open a signed-in company to record a supplier payment.</p>}
       {(!domestic || live) && open && !blocked && <Edits><div className="row wrap" style={{ gap: 10, marginTop: 10 }}>
@@ -326,8 +338,12 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
           placeholder={String(due)} value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
         <label className="row small">Bank reference <input className="input" style={{ width: 120 }} value={ref} aria-label="Bank reference"
           maxLength={domestic ? 64 : undefined} onChange={(e) => setRef(e.target.value)} /></label>
-        <button className="btn accent" disabled={pending || (domestic && !ref.trim())}
-          onClick={() => run("pay_invoice", inv.id, { date: paymentDate, amount: amount === "" ? null : Number(amount), reference: ref },
+        {accounts.length > 0 && <label className="row small">Payment bank account <select className="input" value={selectedAccount}
+          onChange={(e) => setAccount(e.target.value)}><option value="">Choose an account</option>
+          {accounts.map((row) => <option key={row.id}>{row.id}</option>)}</select></label>}
+        <button className="btn accent" disabled={pending || (domestic && (!ref.trim() || (!!accounts.length && !selectedAccount)))}
+          onClick={() => run("pay_invoice", inv.id, { date: paymentDate, amount: amount === "" ? null : Number(amount), reference: ref,
+            ...(selectedAccount ? { bank_account: selectedAccount } : {}) },
             clearPayment)}>{isCredit(inv.kind) ? "Refund received" : domestic ? `Record payment (${exactMoney(amount === "" ? due : Number(amount), inv.currency)})`
               : `Pay ${exactMoney(amount === "" ? due : Number(amount), inv.currency)}`}</button>
         {discount > 0 && <span className="small faint">in time for the cash discount of {exactMoney(discount, inv.currency)}</span>}
@@ -341,9 +357,16 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
           onChange={(e) => setReverseOn(e.target.value)} /></label>
         <label className="row small">Reversal reason <input className="input" value={reason} maxLength={200}
           onChange={(e) => setReason(e.target.value)} /></label>
-        <button className="btn ghost" disabled={pending || !active.includes(reverseNumber) || !reason.trim() || reversalDate < latest}
-          onClick={() => run("reverse_invoice_payment", inv.id, { date: reversalDate, payment_number: reverseNumber, note: reason },
-            () => { setReverseNumber(0); setReason(""); })}>Reverse payment</button>
+        {!!reverseNumber && !originalAccount && returnAccounts.length > 0 && <label className="row small">Return bank account <select
+          className="input" value={selectedReturnAccount} onChange={(e) => setReturnAccount(e.target.value)}><option value="">Choose an account</option>
+          {returnAccounts.map((row) => <option key={row.id}>{row.id}</option>)}</select></label>}
+        {!!reverseNumber && selectedReturnAccount && <label className="row small">Bank return reference <input className="input"
+          maxLength={64} value={returnRef} onChange={(e) => setReturnRef(e.target.value)} /></label>}
+        <button className="btn ghost" disabled={pending || !active.includes(reverseNumber) || !reason.trim() || reversalDate < latest
+          || (!!returnAccounts.length && !selectedReturnAccount) || (!!selectedReturnAccount && !returnRef.trim())}
+          onClick={() => run("reverse_invoice_payment", inv.id, { date: reversalDate, payment_number: reverseNumber, note: reason,
+            ...(selectedReturnAccount ? { bank_account: selectedReturnAccount, reference: returnRef } : {}) },
+            () => { setReverseNumber(0); setReason(""); setReturnRef(""); })}>Reverse payment</button>
       </div></Edits>}
       {!domestic && inv.kind === "invoice" && inv.status !== "cancelled" && <PriceCorrection inv={inv} ds={ds} />}
     </Panel>
@@ -427,7 +450,9 @@ export function Owed({ res, ds }: { res: PurchasingView; ds: Dataset }) {
             bill={bill} currency={res.currency} ds={ds} />)}</tbody>
         </table></div>
       </Panel>}
-      {pay.carrier_bank && <CarrierBankWorklist bank={pay.carrier_bank} currency={res.currency} ds={ds} />}
+      {pay.carrier_bank && (moneyDigits(res.currency) === 2
+        ? <CarrierBankWorklist bank={pay.carrier_bank} currency={res.currency} ds={ds} />
+        : <SupplierBankWorklist bank={pay.carrier_bank} currency={res.currency} ds={ds} />)}
       <Reading formula="Open: invoices not yet paid, less credit memos not yet refunded. Received, not invoiced: goods in at the order price with no invoice for them yet."
         soWhat={<>Pay what is due on <a href={href("buying", "invoices")}>Supplier invoices</a>; a supplier's payment terms are on their <a href={href("data", "vendors")}>purchasing data</a>.
           {ds.vendors?.length ? "" : " No supplier has purchasing data yet, so every invoice is due 30 days after its date."}</>} />

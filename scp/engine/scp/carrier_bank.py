@@ -18,8 +18,10 @@ from .freight import BankPosting, CarrierBill, active_bank_matches, bank_return_
 from .model import Dataset
 from .model.carrier_bank import (CAMT_MAX_BYTES, CAMT_MAX_PAGES, BankAccountId, BankAccountOpening, BankCashRef, BankMatchEvent, BankStatementHeader,
                                  BankReturnAllocation, CamtAccountBinding, CamtSourceEvidence, CarrierBankAccount, CarrierBankLine,
-                                 CarrierBankPeriod)
+                                 CarrierBankPeriod, SupplierCashRef)
 from .model.common import Model, Out
+from .model.currency import MATERIAL_CURRENCIES, material_units
+from .model.purchasing import supplier_payment_reference
 from .model.transport import CarrierBankMatch, CarrierBankReversal
 
 
@@ -72,6 +74,13 @@ class MatchStatement(Model):
     version: int = Field(ge=0, strict=True)
 
 
+class MatchSupplierStatement(Model):
+    kind: Literal["match_supplier_payment"]
+    line: str = Field(min_length=1, max_length=64)
+    target: SupplierCashRef
+    version: int = Field(ge=0, strict=True)
+
+
 class ReleaseStatement(Model):
     kind: Literal["release"]
     line: str = Field(min_length=1, max_length=64)
@@ -90,12 +99,13 @@ class AllocateBankReturn(BankReturnAllocation):
     line: str = Field(min_length=1, max_length=64)
 
 
-BankOperation = Annotated[ImportStatement | MatchStatement | ReleaseStatement | ReverseBankCash | RegisterBankAccount | ImportBankPeriod
+BankOperation = Annotated[ImportStatement | MatchStatement | MatchSupplierStatement | ReleaseStatement | ReverseBankCash | RegisterBankAccount | ImportBankPeriod
                           | CamtFile | CamtFiles | AllocateBankReturn,
                           Field(discriminator="kind")]
 parse_operation = TypeAdapter(BankOperation)
 HEADER = ["line", "date", "reference", "amount", "currency"]
 AMOUNT = re.compile(r"[+-]?[0-9]{1,13}(?:\.[0-9]{1,2})?")
+THREE_DECIMALS = re.compile(r"[+-]?[0-9]{1,13}(?:\.[0-9]{1,3})?")
 
 
 def _line_id(key: tuple[str, str, str]) -> str:
@@ -122,6 +132,20 @@ class ReversibleCash(CarrierCash):
     source_trace_ids: list[str]
 
 
+class SupplierBankCash(Out):
+    invoice: str
+    payment_number: int
+    voucher: str
+    supplier: str
+    date: date
+    reference: str
+    amount_minor: int
+    bank_account: str | None
+
+    def posting(self) -> BankPosting:
+        return BankPosting(self.voucher, self.date, self.reference, self.amount_minor, self.bank_account)
+
+
 class CarrierBankView(Out):
     lines: list[CarrierBankLine]
     unmatched_cash: list[CarrierCash]
@@ -129,12 +153,27 @@ class CarrierBankView(Out):
     reversible_cash: list[ReversibleCash]
     locked_lines: list[str]
     timing: list[CarrierBankTiming]
+    unmatched_supplier_cash: list[SupplierBankCash] = Field(default_factory=list, exclude_if=lambda rows: not rows)
 
 
 def _cash(bill: CarrierBill, posting: BankPosting) -> CarrierCash:
     return CarrierCash(order=bill.order, company=bill.company, carrier=bill.name, voucher=posting.voucher,
                        date=posting.date, reference=posting.reference, amount_minor=posting.amount_minor,
                        bank_account=posting.bank_account)
+
+
+def supplier_bank_cash(ds: Dataset) -> dict[str, SupplierBankCash]:
+    if ds.settings.currency not in MATERIAL_CURRENCIES:
+        return {}
+    units = material_units(ds.settings.currency)
+    cash = {}
+    for invoice in ds.supplier_invoices:
+        for number, payment in enumerate(invoice.payments, 1):
+            voucher = f"{invoice.id}/{number}"
+            cash[voucher] = SupplierBankCash(invoice=invoice.id, payment_number=number, voucher=voucher,
+                supplier=invoice.supplier, date=payment.date, reference=payment.reference,
+                amount_minor=(1 if payment.reverses else -1) * units.minor(payment.amount), bank_account=payment.bank_account)
+    return cash
 
 
 def bank_view(ds: Dataset, bills: list[CarrierBill]) -> CarrierBankView:
@@ -178,9 +217,13 @@ def bank_view(ds: Dataset, bills: list[CarrierBill]) -> CarrierBankView:
                                                   full_return_eligible=len(original.active) == 1 and original.id not in locked,
                                                   source_trace_ids=original.trace_ids if len(original.active) == 1
                                                   and len(original.trace_ids) == 1 else []))
+    supplier_postings = supplier_bank_cash(ds)
+    posted.extend(item.posting() for item in supplier_postings.values())
+    matched = {line.active_supplier.voucher for line in ds.carrier_bank_lines if line.active_supplier}
+    suppliers = [item for voucher, item in supplier_postings.items() if item.bank_account and voucher not in matched]
     return CarrierBankView(lines=sorted(ds.carrier_bank_lines, key=lambda line: (line.date, line.id), reverse=True),
                            unmatched_cash=unmatched, periods=tie_out(ds, [*posted, *fees.values()], timing), reversible_cash=reversible,
-                           locked_lines=sorted(locked), timing=timing)
+                           locked_lines=sorted(locked), timing=timing, unmatched_supplier_cash=suppliers)
 
 
 def _locked_reversal_lines(bills: list[CarrierBill]) -> set[str]:
@@ -202,6 +245,8 @@ def _read_lines(company: str, account: str, currency_code: str, file: str) -> di
         raise ValueError("the statement CSV can contain at most 256000 bytes")
     source = csv.reader(io.StringIO(file.lstrip("\ufeff"), newline=""), strict=True)
     lines = {}
+    digits = material_units(currency_code).digits
+    pattern = THREE_DECIMALS if digits == 3 else AMOUNT
     try:
         if next(source, None) != HEADER:
             raise ValueError("use the exact CSV columns line,date,reference,amount,currency")
@@ -213,7 +258,10 @@ def _read_lines(company: str, account: str, currency_code: str, file: str) -> di
             if len(fields) != 5:
                 raise ValueError(f"CSV row {source.line_num} must contain exactly five fields")
             statement, day, reference, amount, currency = (field.strip() for field in fields)
-            if currency != currency_code or not AMOUNT.fullmatch(amount):
+            if currency != currency_code or not pattern.fullmatch(amount):
+                raise ValueError(f"CSV row {source.line_num} needs company currency and an exact signed amount")
+            minor = Decimal(amount).scaleb(digits)
+            if minor != int(minor):
                 raise ValueError(f"CSV row {source.line_num} needs company currency and an exact signed amount")
             try:
                 on = date.fromisoformat(day)
@@ -222,7 +270,7 @@ def _read_lines(company: str, account: str, currency_code: str, file: str) -> di
                 key = company, account.casefold(), statement.casefold()
                 line = CarrierBankLine(id=_line_id(key), company=company, account=account,
                                        statement_line=statement, date=on, reference=reference,
-                                       amount_minor=int(Decimal(amount) * 100), currency=currency)
+                                       amount_minor=int(minor), currency=currency)
             except (ValidationError, ValueError) as error:
                 raise ValueError(f"CSV row {source.line_num} has an invalid identifier, date, reference, or amount") from error
             if key in lines:
@@ -333,7 +381,8 @@ def _camt(ds: Dataset, request: CamtFile | CamtFiles, day: date) -> tuple[Datase
                             company=account.company, account=account.id, statement_line=entry.identifier, date=entry.date,
                             reference=entry.reference, amount_minor=entry.amount_minor, currency=account.currency,
                             reversal=entry.reversal, trace_ids=list(entry.trace_ids), return_source_checked=entry.reversal,
-                            included_fee_minor=entry.included_fee_minor, unresolved_charges=entry.unresolved_charges)
+                            included_fee_minor=entry.included_fee_minor, unresolved_charges=entry.unresolved_charges,
+                            requires_allocation=entry.requires_allocation)
             for entry in statement.entries]
     return _append_period(ds, account, statement.header, rows, statement.file_sha256, statement.source)
 
@@ -364,6 +413,50 @@ def _validate_match(line: CarrierBankLine, targets: list[BankCashRef], cash: dic
         total += leg.amount_minor
     if total != line.amount_minor:
         raise ValueError("the signed cash vouchers must add up exactly to the statement line")
+
+
+def _validate_supplier_match(line: CarrierBankLine, posting: SupplierBankCash | None, day: date,
+                             period: CarrierBankPeriod | None) -> None:
+    if (period is None or posting is None or posting.bank_account != period.account
+            or not period.starts_on <= posting.date <= period.ends_on):
+        raise ValueError("the supplier cash must belong to the statement's registered account and posting period")
+    if line.requires_allocation:
+        raise ValueError("grouped or fee-bearing bank cash requires a separate allocation")
+    if line.included_fee_minor or line.unresolved_charges or (line.reversal and posting.amount_minor < 0):
+        raise ValueError("resolve the return or its bank charges before matching the supplier cash")
+    if supplier_payment_reference(posting.reference) != supplier_payment_reference(line.reference):
+        raise ValueError("the supplier cash must share the statement's bank reference")
+    if posting.amount_minor != line.amount_minor:
+        raise ValueError("the signed supplier cash must equal the statement line exactly")
+    if posting.date > day:
+        raise ValueError("the reconciliation date cannot precede the supplier cash posting")
+
+
+def _supplier_match(ds: Dataset, request: MatchSupplierStatement | ReleaseStatement, line: CarrierBankLine,
+                    day: date) -> tuple[Dataset, str]:
+    if request.version != len(line.history):
+        raise ValueError("the statement match changed; review its current history")
+    if day < (line.history[-1].date if line.history else line.date):
+        raise ValueError("the reconciliation date cannot precede the statement or its last action")
+    if ds.finance.closed_through is not None and day <= ds.finance.closed_through:
+        raise ValueError("choose an open reconciliation date after the closed period")
+    period = statement_periods(ds).get(line.id)
+    if isinstance(request, MatchSupplierStatement):
+        if line.active_supplier:
+            raise ValueError("release the statement's current match first")
+        target = request.target
+        if any(row.active_supplier == target for row in ds.carrier_bank_lines):
+            raise ValueError("that supplier cash already belongs to another statement match")
+        _validate_supplier_match(line, supplier_bank_cash(ds).get(target.voucher), day, period)
+        message = f"Matched {line.statement_line} to supplier cash {target.voucher}."
+    else:
+        if not line.active_supplier:
+            raise ValueError("the statement has no active supplier match to release")
+        target = None
+        message = f"Released the supplier match for {line.statement_line}."
+    event = BankMatchEvent(date=day, targets=[], supplier_payment=target)
+    updated = line.model_copy(update={"history": [*line.history, event]})
+    return ds.model_copy(update={"carrier_bank_lines": [updated if row.id == line.id else row for row in ds.carrier_bank_lines]}), message
 
 
 def _check_return_source(line: CarrierBankLine, original: CarrierBankLine, period: CarrierBankPeriod | None) -> None:
@@ -482,17 +575,26 @@ def _record_allocation(ds: Dataset, request: AllocateBankReturn, line: CarrierBa
 
 
 def record_bank(ds: Dataset, request: BankOperation, day: date) -> tuple[Dataset, str]:
+    domestic = ds.settings.currency in MATERIAL_CURRENCIES
+    if domestic and isinstance(request, (ImportStatement, MatchStatement, ReverseBankCash, AllocateBankReturn)):
+        raise ValueError("use a registered account period and reconcile it to recorded domestic supplier cash")
+    if not domestic and isinstance(request, MatchSupplierStatement):
+        raise ValueError("supplier statement matching supports domestic JPY and KWD")
     if isinstance(request, ImportStatement):
         return _import(ds, request)
     if isinstance(request, RegisterBankAccount):
         return _register(ds, request)
     if isinstance(request, ImportBankPeriod):
+        if domestic and day < request.ends_on:
+            raise ValueError("the bank evidence date cannot precede the statement close")
         return _import_period(ds, request)
     if isinstance(request, (CamtFile, CamtFiles)):
         return _camt(ds, request, day)
     line = next((row for row in ds.carrier_bank_lines if row.id == request.line), None)
     if line is None:
         raise ValueError("select an imported statement line in this company")
+    if isinstance(request, MatchSupplierStatement) or (domestic and isinstance(request, ReleaseStatement)):
+        return _supplier_match(ds, request, line, day)
     if isinstance(request, ReverseBankCash):
         return _record_reversal(ds, request, line, day)
     if isinstance(request, AllocateBankReturn):
@@ -530,6 +632,8 @@ def protect_bank(old: Dataset, new: Dataset, command: bool) -> None:
         raise ValueError("statement lines are retained")
     keys: set[tuple[str, str, str]] = set()
     claimed: set[tuple[str, str]] = set()
+    supplier_claims: set[str] = set()
+    domestic = new.settings.currency in MATERIAL_CURRENCIES
     legacy = _legacy(new)
     cash: dict[tuple[str, str], CarrierCash] = {}
     posted = []
@@ -543,6 +647,8 @@ def protect_bank(old: Dataset, new: Dataset, command: bool) -> None:
         for voucher, event in bill.reversals():
             reversals[event.statement_line][bill.order, voucher] = ((bill.order, event.reverses), event)
     posted.extend((company, posting) for company, _, posting in bank_return_fees(new))
+    supplier_postings = supplier_bank_cash(new)
+    posted.extend(("", item.posting()) for item in supplier_postings.values())
     periods = protect_accounts(old, new, command, {line.id: line for line in new.carrier_bank_lines}, posted)
     accounts = BankAccounts(new).by_id
     lines = {row.id: row for row in new.carrier_bank_lines}
@@ -590,8 +696,11 @@ def protect_bank(old: Dataset, new: Dataset, command: bool) -> None:
         account = accounts.get(row.account.upper())
         if account and account.company == row.company and row.date >= account.starts_on and row.id not in periods:
             raise ValueError("a registered account's statement lines require their source period")
+        if ((domestic and (row.id not in periods or any(event.targets for event in row.history)))
+                or (not domestic and any(event.supplier_payment for event in row.history))):
+            raise ValueError("domestic supplier matches require a registered JPY or KWD account period")
         native = row.id in periods and periods[row.id].camt_source
-        if ((row.trace_ids and not native)
+        if (((row.trace_ids or row.requires_allocation) and not native)
                 or row.return_source_checked and not row.reversal
                 or (row.included_fee_minor is not None or row.unresolved_charges) and not row.return_source_checked
                 or row.reversal and (not native or (row.active and row.id not in reversals))
@@ -614,3 +723,11 @@ def protect_bank(old: Dataset, new: Dataset, command: bool) -> None:
             if active_keys & claimed:
                 raise ValueError("that cash voucher already belongs to another statement match")
             claimed.update(active_keys)
+        for event in row.history:
+            if event.supplier_payment:
+                _validate_supplier_match(row, supplier_postings.get(event.supplier_payment.voucher), event.date, periods.get(row.id))
+        if row.active_supplier:
+            voucher = row.active_supplier.voucher
+            if voucher in supplier_claims:
+                raise ValueError("that supplier cash already belongs to another statement match")
+            supplier_claims.add(voucher)

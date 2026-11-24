@@ -22,6 +22,7 @@ from unicodedata import normalize
 from pydantic import Field, field_validator, model_validator
 
 from .actuals import StockType
+from .carrier_bank import BankAccountId
 from .currency import CurrencyUnits, material_units
 from .common import Id, Model, Ref, Unit
 from .sales import Payment
@@ -187,6 +188,7 @@ class SupplierInvoiceLine(Model):
 
 
 class SupplierPayment(Payment):
+    bank_account: BankAccountId | None = Field(None, exclude_if=lambda value: value is None)
     reverses: int | None = Field(None, ge=1, strict=True, exclude_if=lambda value: value is None,
                                  description="Reverses this one-based payment number on the same invoice")
     reason: str | None = Field(None, min_length=1, max_length=200, exclude_if=lambda value: value is None)
@@ -292,9 +294,9 @@ class SupplierInvoice(Model):
             raise ValueError("an invoice cancellation is dated on or after the invoice and marks it cancelled")
         if self.cancelled_after is not None and self.cancelled_on is None:
             raise ValueError("a cancellation sequence requires a dated cancellation")
-        if material_units(self.currency or "").digits == 2 and any(p.reverses is not None or p.reason is not None
+        if material_units(self.currency or "").digits == 2 and any(p.reverses is not None or p.reason is not None or p.bank_account
                                                                    for p in self.payments):
-            raise ValueError("dated supplier payment reversals require a domestic JPY or KWD invoice")
+            raise ValueError("bank assignments and dated payment reversals require a domestic JPY or KWD invoice")
         return self
 
 

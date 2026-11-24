@@ -3771,6 +3771,7 @@ export interface components {
              */
             targets: components["schemas"]["BankCashRef"][];
             allocation?: components["schemas"]["BankReturnAllocation"] | null;
+            supplier_payment?: components["schemas"]["SupplierCashRef"] | null;
         };
         /** BankMatchInput */
         BankMatchInput: {
@@ -4472,6 +4473,12 @@ export interface components {
              * @default false
              */
             unresolved_charges: boolean;
+            /**
+             * Requires Allocation
+             * @description Native supplier cash includes multiple transactions or bank charges
+             * @default false
+             */
+            requires_allocation: boolean;
             /** History */
             history?: components["schemas"]["BankMatchEvent"][];
         };
@@ -4630,6 +4637,8 @@ export interface components {
             locked_lines: string[];
             /** Timing */
             timing: components["schemas"]["CarrierBankTiming"][];
+            /** Unmatched Supplier Cash */
+            unmatched_supplier_cash?: components["schemas"]["SupplierBankCash"][];
         };
         /** CarrierBill */
         CarrierBill: {
@@ -12653,6 +12662,8 @@ export interface components {
             amount?: number | null;
             /** Payment Number */
             payment_number?: number | null;
+            /** Bank Account */
+            bank_account?: string | null;
             stock_type?: components["schemas"]["StockType"] | null;
             /**
              * Replace
@@ -17790,6 +17801,35 @@ export interface components {
             id: string | null;
             view: components["schemas"]["SupplierView"];
         };
+        /** SupplierBankCash */
+        SupplierBankCash: {
+            /** Invoice */
+            invoice: string;
+            /** Payment Number */
+            payment_number: number;
+            /** Voucher */
+            voucher: string;
+            /** Supplier */
+            supplier: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Reference */
+            reference: string;
+            /** Amount Minor */
+            amount_minor: number;
+            /** Bank Account */
+            bank_account: string | null;
+        };
+        /** SupplierCashRef */
+        SupplierCashRef: {
+            /** Invoice */
+            invoice: string;
+            /** Payment Number */
+            payment_number: number;
+        };
         /** SupplierDispatch */
         SupplierDispatch: {
             /** Lines */
@@ -18053,6 +18093,8 @@ export interface components {
              * @description Company currency per invoice currency unit at settlement (supplier payments)
              */
             fx_rate?: number | null;
+            /** Bank Account */
+            bank_account?: string | null;
             /**
              * Reverses
              * @description Reverses this one-based payment number on the same invoice

@@ -22,7 +22,7 @@ class BankAccounts:
     def check_posting(self, company: str, on: date, account_id: str | None) -> None:
         if account_id is None:
             if company in self.starts_on and on >= self.starts_on[company]:
-                raise ValueError("choose a registered bank account for this carrier cash posting")
+                raise ValueError("choose a registered bank account for this cash posting")
             return
         account = self.by_id.get(account_id)
         if account is None or account.company != company or on < account.starts_on:
@@ -180,9 +180,9 @@ def tie_out(ds: Dataset, postings: Iterable[BankPosting], timing: list[CarrierBa
         timing_closing = timing_opening + sum(amount for _, amount, _ in in_period)
         closing_count = opening_count + sum(delta for _, _, delta in in_period)
         reconciliation[period.account] = timing_end, timing_closing, closing_count
-        matched = {target.voucher for key in period.line_ids for target in lines[key].active}
+        matched = {voucher for key in period.line_ids for voucher in lines[key].matched_vouchers()}
         matched.update(fee_vouchers[key] for key in period.line_ids if key in fee_vouchers)
-        missing_lines = [lines[key].statement_line for key in period.line_ids if not lines[key].active]
+        missing_lines = [lines[key].statement_line for key in period.line_ids if not lines[key].matched_vouchers()]
         missing_vouchers = [posting.voucher for posting in activity
                             if posting.voucher not in matched and (period.account, posting.voucher) not in timed_vouchers]
         results.append(CarrierBankTieOut(period=period, ledger_opening_minor=ledger_opening, ledger_closing_minor=ledger_closing,

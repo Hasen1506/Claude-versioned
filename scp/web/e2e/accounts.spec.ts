@@ -383,3 +383,81 @@ test("a one-fils supplier payment and its reversal both recover after a reload",
     expect(ids[1]).toBe(ids[0]);
   }
 });
+
+test("a KWD supplier statement ties to its posted bank voucher after a lost match response", async ({ page, request }) => {
+  const email = `supplier-bank-${Date.now()}@example.invalid`;
+  const password = "fixture-only-supplier-bank";
+  const session = await request.post("/api/auth/signup", { data: { email, password, name: "Bank clerk" } });
+  expect(session.ok(), await session.text()).toBe(true);
+  const headers = { Authorization: `Bearer ${(await session.json()).token}` };
+  const fixture = dinarInventory("Supplier bank fixture");
+  fixture.receipts[0].price = fixture.purchasing_sources[0].price = 0.001;
+  const created = await request.post("/api/companies", { headers, data: { dataset: fixture } });
+  expect(created.ok(), await created.text()).toBe(true);
+  const path = `/api/companies/${(await created.json()).id}`;
+  const issued = await request.post(`${path}/commands`, { headers, data: {
+    kind: "purchasing", action: "enter_invoice", id: "fixture-invoice", base_revision: 1, posting_date: "2026-01-06",
+    parameters: { reference: "ONE-FILS", lines: [{ order: "PO-LINE", qty: 1 }] },
+  } });
+  expect(issued.ok(), await issued.text()).toBe(true);
+  const opened = await request.post(`${path}/commands`, { headers, data: {
+    kind: "carrier_bank", action: "record", id: "fixture-bank", base_revision: 2, posting_date: "2026-01-08",
+    parameters: { event: { kind: "register_account", id: "KWD-A", company: "", starts_on: "2026-01-08", opening_minor: 1000 } },
+  } });
+  expect(opened.ok(), await opened.text()).toBe(true);
+
+  await page.goto("/#/account");
+  await page.getByRole("tab", { name: "Sign in", exact: true }).click();
+  await page.getByLabel("E-mail").fill(email);
+  await page.getByLabel(/^Password/).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: /Open Supplier bank fixture/ }).click();
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  await page.goto("/#/buying/invoices/SI-00001");
+  await page.getByLabel("Paid on").fill("2026-01-08");
+  await expect(page.getByLabel("Payment bank account")).toHaveValue("KWD-A");
+  await page.getByLabel("Bank reference").fill("DRAFT-TRANSFER-1");
+  await page.getByRole("button", { name: "Record payment (KWD 0.001)", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "recorded on SI-00001" })).toBeVisible();
+  await page.getByRole("link", { name: "Supplier bank reconciliation", exact: true }).click();
+  await page.getByText("Import account statement period", { exact: true }).click();
+  await page.getByLabel("Statement period account").selectOption("KWD-A");
+  await page.getByLabel("Statement number").fill("KWD-08");
+  await page.getByLabel("Statement period start").fill("2026-01-08");
+  await page.getByLabel("Statement period end").fill("2026-01-08");
+  await page.getByLabel("Statement period opening balance").fill("1.000");
+  await page.getByLabel("Statement period closing balance").fill("0.999");
+  await page.getByLabel("Source rows").fill("1");
+  await page.getByLabel("Statement period CSV").setInputFiles({ name: "kwd-period.csv", mimeType: "text/csv",
+    buffer: Buffer.from("line,date,reference,amount,currency\nKWD-ENTRY,2026-01-08,DRAFT-TRANSFER-1,-0.001,KWD\n") });
+  await page.getByRole("button", { name: "Import period", exact: true }).click();
+  const reconciliation = page.getByRole("table", { name: "Supplier bank account reconciliation", exact: true });
+  await expect(reconciliation).toContainText("Review differences");
+  await page.getByRole("button", { name: "KWD-ENTRY", exact: true }).click();
+  await page.getByLabel("Recorded supplier cash").selectOption("SI-00001/1");
+
+  const attempts: string[] = [];
+  await page.route("**/api/companies/*/commands", async (route) => {
+    const data = route.request().postDataJSON();
+    if (data.parameters?.event?.kind !== "match_supplier_payment") return route.continue();
+    attempts.push(data.id);
+    if (attempts.length > 1) return route.continue();
+    const committed = await route.fetch();
+    expect(committed.ok(), await committed.text()).toBe(true);
+    return route.abort("failed");
+  });
+  await page.getByRole("button", { name: "Match supplier cash", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(/confirmation is unavailable/i);
+  await page.reload();
+  await page.getByRole("button", { name: "Retry statement operation", exact: true }).click();
+  await expect(reconciliation).toContainText("Reconciled");
+  await expect(reconciliation.getByText("KWD 0.999", { exact: true })).toHaveCount(2);
+  expect(attempts).toHaveLength(2);
+  expect(attempts[1]).toBe(attempts[0]);
+  const company = await (await request.get(path, { headers })).json();
+  expect(company.meta.revision).toBe(6);
+  expect(company.dataset.supplier_invoices[0].payments).toMatchObject([{ amount: 0.001, bank_account: "KWD-A" }]);
+  expect(company.dataset.carrier_bank_lines[0].history).toMatchObject([
+    { targets: [], supplier_payment: { invoice: "SI-00001", payment_number: 1 } },
+  ]);
+});

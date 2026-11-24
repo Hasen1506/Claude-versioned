@@ -342,9 +342,11 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
                     if supplier_payment_action != action:
                         raise TransactionRefused("domestic supplier settlements require a signed-in company command")
                 if payment.reverses:
-                    working, _ = reverse_invoice_payment(working, iid, payment.reverses, payment.date, payment.reason or "")
+                    working, _ = reverse_invoice_payment(working, iid, payment.reverses, payment.date, payment.reason or "",
+                                                         reference=payment.reference, bank_account=payment.bank_account)
                 else:
-                    working, _ = pay_invoice(working, iid, payment.amount, payment.date, payment.reference)
+                    working, _ = pay_invoice(working, iid, payment.amount, payment.date, payment.reference,
+                                             bank_account=payment.bank_account)
                 if working.supplier_invoices[[i.id for i in working.supplier_invoices].index(iid)].payments[-1] != payment:
                     raise TransactionRefused(f"{iid}: the payment/discount does not match the amount due")
             if (target.cancelled, target.cancelled_on, target.cancelled_after) != (
