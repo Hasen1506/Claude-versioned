@@ -7,6 +7,7 @@ from hashlib import sha256
 from xml.etree import ElementTree as XML
 
 from .model.carrier_bank import CAMT_MAX_BYTES, CAMT_MAX_PAGES, BankStatementHeader, CamtOriginal, CamtSourceEvidence
+from .model.currency import MATERIAL_CURRENCIES, material_units
 
 NS = "urn:iso:std:iso:20022:tech:xsd:camt.053.001.08"
 XML_NS = {"": NS}
@@ -78,21 +79,23 @@ def _day(node: XML.Element, path: str) -> date:
     return date.fromisoformat(day) if day else _clock(clock).date()
 
 
-def _minor(amount: str) -> int:
+def _minor(amount: str, currency: str) -> int:
     if not MONEY.fullmatch(amount):
         raise ValueError("camt.053 amounts must be unsigned decimal values")
-    minor = Decimal(amount) * 100
+    digits = material_units(currency).digits
+    minor = Decimal(amount).scaleb(digits)
     if minor != int(minor):
-        raise ValueError("camt.053 amounts must be exact to the company currency's two decimals")
+        precision = "two decimals" if digits == 2 else f"{digits} decimal places"
+        raise ValueError(f"camt.053 amounts must be exact to the company currency's {precision}")
     return int(minor)
 
 
-def _signed(node: XML.Element, currency: str | None) -> int:
+def _signed(node: XML.Element, currency: str, *, optional_currency: bool = False) -> int:
     amount = _one(node, "Amt")
     assert amount is not None
-    if currency is not None and amount.get("Ccy") != currency:
+    if amount.get("Ccy") != currency and not (optional_currency and amount.get("Ccy") is None):
         raise ValueError("camt.053 booked currency must match the registered account")
-    minor = _minor(_text(node, "Amt"))
+    minor = _minor(_text(node, "Amt"), currency)
     direction = _text(node, "CdtDbtInd")
     if direction not in ("CRDT", "DBIT"):
         raise ValueError("camt.053 requires a credit or debit indicator")
@@ -152,20 +155,20 @@ def _balances(statement: XML.Element, currency: str, start: date, end: date) -> 
     return values
 
 
-def _summary(statement: XML.Element, amounts: list[int]) -> None:
+def _summary(statement: XML.Element, amounts: list[int], currency: str) -> None:
     def verify(node: XML.Element, selected: list[int], *, require_count: bool = False) -> None:
         count = _text(node, "NbOfNtries", required=require_count)
         total = _text(node, "Sum", required=False)
         if count and (not re.fullmatch(r"[0-9]{1,15}", count) or int(count) != len(selected)):
             raise ValueError("camt.053 reported entry count differs from the booked rows")
-        if total and _minor(total) != sum(abs(amount) for amount in selected):
+        if total and _minor(total, currency) != sum(abs(amount) for amount in selected):
             raise ValueError("camt.053 reported gross total differs from the booked rows")
 
     totals = _one(statement, "TxsSummry/TtlNtries")
     assert totals is not None
     verify(totals, amounts, require_count=True)
     net = _one(totals, "TtlNetNtry", required=False)
-    if net is not None and _signed(net, None) != sum(amounts):
+    if net is not None and _signed(net, currency, optional_currency=True) != sum(amounts):
         raise ValueError("camt.053 reported net total differs from the booked rows")
     for tag, selected in (("TtlCdtNtries", [a for a in amounts if a > 0]), ("TtlDbtNtries", [a for a in amounts if a < 0])):
         summary = _one(statement, f"TxsSummry/{tag}", required=False)
@@ -183,6 +186,7 @@ class CamtEntry:
     trace_ids: tuple[str, ...]
     included_fee_minor: int | None
     unresolved_charges: bool
+    requires_allocation: bool
 
 
 def _return_charges(node: XML.Element, currency: str) -> tuple[int | None, bool]:
@@ -202,14 +206,14 @@ def _return_charges(node: XML.Element, currency: str) -> tuple[int | None, bool]
         flag = _text(record, "ChrgInclInd", required=False)
         if amount.get("Ccy") != currency or flag not in ("true", "1", "false", "0"):
             return None, True
-        minor = _minor(_text(record, "Amt"))
+        minor = _minor(_text(record, "Amt"), currency)
         total += minor
         if flag in ("true", "1"):
             if _text(record, "CdtDbtInd", required=False) != "DBIT" or _one(record, "Tax", required=False) is not None:
                 return None, True
             included += minor
     summary = _one(charges, "TtlChrgsAndTaxAmt", required=False)
-    if summary is not None and (summary.get("Ccy") != currency or _minor(_text(charges, "TtlChrgsAndTaxAmt")) != total):
+    if summary is not None and (summary.get("Ccy") != currency or _minor(_text(charges, "TtlChrgsAndTaxAmt"), currency) != total):
         return None, True
     return included or None, False
 
@@ -239,7 +243,13 @@ def _entry(node: XML.Element, currency: str) -> CamtEntry:
         raise ValueError("camt.053 booked entries require a nonzero amount")
     reversal = indicator in ("true", "1")
     fee, unresolved = _return_charges(node, currency) if reversal else (None, False)
-    return CamtEntry(identifier, reference, _day(node, "BookgDt"), amount, reversal, tuple(sorted(trace_ids)), fee, unresolved)
+    requires_allocation = False
+    if currency in MATERIAL_CURRENCIES:
+        declared = [_text(part, "Btch/NbOfTxs", required=False) for part in node.findall("NtryDtls", XML_NS)]
+        requires_allocation = (len(details) > 1 or any(count and count.lstrip("0") != "1" for count in declared)
+                               or bool(node.findall("Chrgs", XML_NS) or node.findall("NtryDtls/TxDtls/Chrgs", XML_NS)))
+    return CamtEntry(identifier, reference, _day(node, "BookgDt"), amount, reversal, tuple(sorted(trace_ids)), fee, unresolved,
+                     requires_allocation)
 
 
 @dataclass(frozen=True)
@@ -357,7 +367,7 @@ def read_statement_files(files: list[str], account: str, currency: str) -> CamtS
         raise ValueError("one statement import can contain at most 500 booked entries")
     if len({entry.identifier.casefold() for entry in entries}) != len(entries):
         raise ValueError("camt.053 repeats a bank entry identifier")
-    _summary(first.node, [entry.amount_minor for entry in entries])
+    _summary(first.node, [entry.amount_minor for entry in entries], currency)
     opening, closing = _page_balances(pages)
     header = BankStatementHeader(account=account, number=first.statement, starts_on=first.first.date(), ends_on=first.last.date(),
                                  opening_minor=opening, closing_minor=closing, line_count=len(entries))

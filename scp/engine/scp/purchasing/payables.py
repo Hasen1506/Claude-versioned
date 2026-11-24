@@ -530,7 +530,7 @@ def release_invoice(ds: Dataset, iid: str, by: str = "", on: date | None = None,
 
 
 def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | None = None,
-                reference: str = "") -> tuple[Dataset, ActionReport]:
+                reference: str = "", *, bank_account: str | None = None) -> tuple[Dataset, ActionReport]:
     """Pay a supplier invoice (or record the refund of a credit memo). Paid in full by the discount date, the cash
     discount is taken."""
     inv = _invoice(ds, iid)
@@ -564,12 +564,14 @@ def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | N
         if not 0 < cash <= open_minor:
             raise PayablesError(f"enter a positive cash amount of up to {_money(inv.open, cur)}")
         payment = SupplierPayment(date=on, amount=units.major(cash),
-                                   discount=units.major(discount if cash == due_minor else 0),
-                                   reference=reference, fx_rate=1.0)
+                                  discount=units.major(discount if cash == due_minor else 0),
+                                  reference=reference, fx_rate=1.0, bank_account=bank_account)
         result = _append_domestic_payment(ds, inv, payment)
         left = _invoice(result, iid).open
         return result, ActionReport(ok=True, id=iid, message=f"{_money(payment.amount, cur)} recorded on {iid}. "
                                     f"{_money(left, cur)} remains open.")
+    if bank_account is not None:
+        raise PayablesError("registered bank assignments are supported for domestic JPY and KWD supplier payments")
     disc = 0.0
     if not inv.credit and inv.discount and inv.discount_date and on <= inv.discount_date and not inv.payments:
         disc = round(inv.total * inv.discount, 2)
@@ -598,7 +600,8 @@ def _append_domestic_payment(ds: Dataset, inv: SupplierInvoice, payment: Supplie
     return changed
 
 
-def reverse_invoice_payment(ds: Dataset, iid: str, number: int | None, on: date | None, reason: str) -> tuple[Dataset, ActionReport]:
+def reverse_invoice_payment(ds: Dataset, iid: str, number: int | None, on: date | None, reason: str, *,
+                            reference: str = "", bank_account: str | None = None) -> tuple[Dataset, ActionReport]:
     inv = _invoice(ds, iid)
     if ds.settings.currency not in MATERIAL_CURRENCIES or inv.currency != ds.settings.currency or inv.credit:
         raise PayablesError("this reversal is for an ordinary domestic JPY or KWD supplier payment")
@@ -612,7 +615,15 @@ def reverse_invoice_payment(ds: Dataset, iid: str, number: int | None, on: date 
     reason = reason.strip()
     if not reason or len(reason) > 200:
         raise PayablesError("enter a reversal reason of 1 to 200 characters")
-    reversal = original.model_copy(update={"date": on, "reverses": number, "reason": reason})
+    account = bank_account or original.bank_account
+    returned = reference.strip()
+    if account and (not returned or len(returned) > 64):
+        raise PayablesError("enter the bank return's own reference of 1 to 64 characters")
+    if not account and returned and returned != original.reference:
+        raise PayablesError("select a registered bank account to record a separate return reference")
+    reversal = SupplierPayment(date=on, amount=original.amount, discount=original.discount, fx_rate=1.0,
+                               bank_account=account, reference=returned if account else original.reference,
+                               reverses=number, reason=reason)
     return _append_domestic_payment(ds, inv, reversal), ActionReport(ok=True, id=iid,
         message=f"Payment {iid}/{number} reversed. Its liability is open again.")
 

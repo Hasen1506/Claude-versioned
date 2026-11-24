@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Dataset, PayablesView } from "../api/types";
 import { Badge, Edits } from "../components/ui";
-import { day, exactMoney } from "../lib/format";
+import { day, exactMoney, moneyDigits } from "../lib/format";
 import type { CarrierBankEvent } from "../state/settlement";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -12,26 +12,31 @@ export function carrierPostingAccounts(ds: Dataset, company: string, date: strin
   return (ds.carrier_bank_accounts ?? []).filter((account) => account.company === company && account.starts_on <= date);
 }
 
-export function minorUnits(input: string) {
+export function minorUnits(input: string, digits = 2) {
   const amount = input.trim();
-  if (!/^[+-]?\d{1,13}(\.\d{1,2})?$/.test(amount)) return undefined;
+  const format = digits === 3 ? /^[+-]?\d{1,13}(\.\d{1,3})?$/ : /^[+-]?\d{1,13}(\.\d{1,2})?$/;
+  if (!format.test(amount)) return undefined;
   const [whole, fraction = ""] = amount.replace(/^[+-]/, "").split(".");
-  const absolute = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  if (/[1-9]/.test(fraction.slice(digits))) return undefined;
+  const absolute = Number(whole) * 10 ** digits + Number(fraction.slice(0, digits).padEnd(digits, "0"));
+  if (absolute > 999_999_999_999_999) return undefined;
   return amount.startsWith("-") ? -absolute : absolute;
 }
 
-export function CarrierBankAccounts({ ds, currency, periods, live, editable, record }: {
+export function CarrierBankAccounts({ ds, currency, periods, live, editable, record, supplier = false }: {
   ds: Dataset; currency: string; periods: Periods; live: boolean; editable: boolean;
-  record: (event: CarrierBankEvent, date: string) => Promise<void>;
+  record: (event: CarrierBankEvent, date: string) => Promise<void>; supplier?: boolean;
 }) {
   const accounts = ds.carrier_bank_accounts ?? [];
   const [opening, setOpening] = useState({ id: "", company: "", start: today(), balance: "" });
   const [period, setPeriod] = useState({ account: "", number: "", start: "", end: "", opening: "", closing: "", count: "" });
   const [file, setFile] = useState<string>();
   const [fileError, setFileError] = useState("");
-  const openingMinor = minorUnits(opening.balance);
-  const from = minorUnits(period.opening);
-  const to = minorUnits(period.closing);
+  const digits = moneyDigits(currency);
+  const factor = 10 ** digits;
+  const openingMinor = minorUnits(opening.balance, digits);
+  const from = minorUnits(period.opening, digits);
+  const to = minorUnits(period.closing, digits);
   const count = /^\d{1,3}$/.test(period.count) ? Number(period.count) : undefined;
   const validOpening = /^[A-Z0-9][A-Z0-9_-]{0,31}$/.test(opening.id) && opening.start && openingMinor !== undefined;
   const validStatement = period.account && period.number.trim() && period.start && period.end >= period.start
@@ -39,7 +44,7 @@ export function CarrierBankAccounts({ ds, currency, periods, live, editable, rec
 
   return <>
     {live && <Edits>
-      <details><summary>Register carrier bank account</summary>
+      <details><summary>{supplier ? "Register supplier bank account" : "Register carrier bank account"}</summary>
         <p className="small">Use the approved opening balance immediately before the first statement date.</p>
         <div className="row wrap" style={{ gap: 8 }}>
           <label>Company <select className="input" value={opening.company} aria-label="Bank account company"
@@ -104,7 +109,7 @@ export function CarrierBankAccounts({ ds, currency, periods, live, editable, rec
         {fileError && <p className="small" role="alert">{fileError}</p>}
       </details>}
     </Edits>}
-    {!!periods.length && <div className="table-wrap"><table className="t" aria-label="Carrier bank account reconciliation">
+    {!!periods.length && <div className="table-wrap"><table className="t" aria-label={supplier ? "Supplier bank account reconciliation" : "Carrier bank account reconciliation"}>
       <thead><tr><th>Statement</th><th>Account</th><th>Dates</th><th className="num">Statement opening</th>
         <th className="num">Ledger opening</th><th className="num">Statement closing</th><th className="num">Ledger closing</th><th>Reconciliation</th></tr></thead>
       <tbody>{periods.map((row) => <tr key={row.period.id}>
@@ -118,12 +123,12 @@ export function CarrierBankAccounts({ ds, currency, periods, live, editable, rec
             : <><div>{row.period.camt_source.message_id}</div><code>{row.period.file_sha256}</code></>}
         </details>}</td><td>{row.period.account}</td><td>{day(row.period.starts_on)} – {day(row.period.ends_on)}</td>
         {[row.period.opening_minor, row.ledger_opening_minor, row.period.closing_minor, row.ledger_closing_minor]
-          .map((value, i) => <td className="num" key={i}>{exactMoney(value / 100, currency)}</td>)}
+          .map((value, i) => <td className="num" key={i}>{exactMoney(value / factor, currency)}</td>)}
         <td><Badge sev={row.reconciled ? "ok" : "warning"}>{row.reconciled ? (row.has_timing ? "Reconciled with timing" : "Reconciled") : "Review differences"}</Badge>
           {row.has_timing && <details className="small">
             <summary>Timing adjustments</summary>
-            <div>Opening {exactMoney(row.opening_timing_minor / 100, currency)}</div>
-            <div>Closing {exactMoney(row.closing_timing_minor / 100, currency)}</div>
+            <div>Opening {exactMoney(row.opening_timing_minor / factor, currency)}</div>
+            <div>Closing {exactMoney(row.closing_timing_minor / factor, currency)}</div>
           </details>}
           {(row.unmatched_lines.length > 0 || row.unmatched_vouchers.length > 0) && <details className="small">
             <summary>{row.unmatched_lines.length} statement lines · {row.unmatched_vouchers.length} cash vouchers</summary>

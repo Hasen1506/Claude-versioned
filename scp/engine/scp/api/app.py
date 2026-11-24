@@ -886,6 +886,7 @@ class PoActionRequest(Out):
     delivery_costs: float = Field(0.0, ge=0)        # enter_invoice: freight and other costs the order did not plan
     amount: float | None = None                     # pay_invoice (default: what is open, less the discount in time)
     payment_number: int | None = Field(None, ge=1, strict=True)   # original payment on reverse_invoice_payment
+    bank_account: BankAccountId | None = None                  # registered domestic supplier settlement account
     stock_type: StockType | None = None             # return_goods: where the goods are (default: blocked)
     replace: bool = False                           # return_goods: the supplier replaces them (else credits them)
 
@@ -914,7 +915,8 @@ def _apply_po_action(req: PoActionRequest, actor: str) -> PoActionResponse:
                                   location=req.location, product=req.product, valid_to=req.valid_to, qty=req.qty,
                                   tax=req.tax, kind=req.kind, return_id=req.return_id, amount=req.amount,
                                   stock_type=req.stock_type, replace=req.replace,
-                                  delivery_costs=req.delivery_costs, payment_number=req.payment_number)
+                                  delivery_costs=req.delivery_costs, payment_number=req.payment_number,
+                                  bank_account=req.bank_account)
     except (PurchasingError, CurrencyPrecisionError) as e:
         raise HTTPException(409, str(e)) from e
     if req.action == "receive":

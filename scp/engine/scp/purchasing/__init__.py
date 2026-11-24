@@ -735,9 +735,10 @@ def act(ds: Dataset, action: str, po_id: str = "", *, lines: list[dict] | None =
         if action == "release_invoice":
             return release_invoice(ds, po_id, by, on, note)
         if action == "pay_invoice":
-            return pay_invoice(ds, po_id, kw.get("amount"), on, reference)
+            return pay_invoice(ds, po_id, kw.get("amount"), on, reference, bank_account=kw.get("bank_account"))
         if action == "reverse_invoice_payment":
-            return reverse_invoice_payment(ds, po_id, kw.get("payment_number"), on, note)
+            return reverse_invoice_payment(ds, po_id, kw.get("payment_number"), on, note, reference=reference,
+                                           bank_account=kw.get("bank_account"))
         if action == "cancel_invoice":
             return cancel_invoice(ds, po_id, on)
         if action == "return_goods":

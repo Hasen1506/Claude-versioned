@@ -412,7 +412,7 @@ class _Journal:
                                f"{narration}, {payment.reference}",
                                [("PAYABLES", "", inv.supplier, sign * self.units.total((cash, discount)), "", ""),
                                 ("BANK", "", "", -sign * cash, "", ""),
-                                ("DISC_RECEIVED", "", "", -sign * discount, "", "")], "SUSPENSE")
+                                ("DISC_RECEIVED", "", "", -sign * discount, "", "")], "SUSPENSE", bank_account=payment.bank_account)
                 continue
             if not inv.active_at(day):
                 continue

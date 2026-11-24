@@ -24,6 +24,7 @@ export type CarrierBankEvent = { kind: "import"; company: string; account: strin
   | { kind: "import_period"; account: string; number: string; starts_on: string; ends_on: string;
       opening_minor: number; closing_minor: number; line_count: number; csv: string }
   | { kind: "match"; line: string; version: number; targets: { order: string; voucher: string }[] }
+  | { kind: "match_supplier_payment"; line: string; version: number; target: { invoice: string; payment_number: number } }
   | { kind: "reverse_cash"; line: string; original: { order: string; voucher: string }; late_reason?: string }
   | { kind: "allocate_return"; line: string; legs: { original: { order: string; voucher: string }; amount_minor: number }[];
       advice?: string; late_reason?: string }
@@ -156,7 +157,7 @@ export function useSettlement(kind: SettlementKind, document?: string, order?: s
     : credit
     ? { [config.document]: document, [config.reference]: reference, ...correction }
     : { [config.document]: document, [config.amount]: amount, [config.reference]: reference, ...(order ? { order } : {}),
-        ...(kind === "transportPayment" && bankAccount ? { bank_account: bankAccount } : {}) };
+        ...((kind === "transportPayment" || kind === "purchasing") && bankAccount ? { bank_account: bankAccount } : {}) };
 
   function remember(attempt: SettlementAttempt) {
     memory.current = attempt;

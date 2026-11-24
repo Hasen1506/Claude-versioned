@@ -1234,11 +1234,20 @@ class Companies:
                 for field in ("bill_payments", "bill_events") if isinstance(order.get(field), list)
                 for entry in order[field]
             )
-            if any(doc.get(field) for field in bank_fields) or has_posted_bank_account:
+            suppliers = doc.get("supplier_invoices")
+            supplier_bank_account = isinstance(suppliers, list) and any(
+                isinstance(payment, dict) and payment.get("bank_account") is not None
+                for invoice in suppliers if isinstance(invoice, dict) and isinstance(invoice.get("payments"), list)
+                for payment in invoice["payments"]
+            )
+            if any(doc.get(field) for field in bank_fields) or has_posted_bank_account or supplier_bank_account:
                 from ..carrier_bank import protect_bank
                 from ..model import Dataset
+                from ..model.currency import MATERIAL_CURRENCIES, require_material_ledger
                 try:
                     bank_doc = Dataset.model_validate(doc)
+                    if bank_doc.settings.currency in MATERIAL_CURRENCIES:
+                        require_material_ledger(bank_doc)
                     protect_bank(bank_doc, bank_doc, False)
                 except ValueError as error:
                     raise CompanyError(f"invalid bank statement evidence: {error}", 422) from None
