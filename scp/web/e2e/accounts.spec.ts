@@ -461,3 +461,62 @@ test("a KWD supplier statement ties to its posted bank voucher after a lost matc
     { targets: [], supplier_payment: { invoice: "SI-00001", payment_number: 1 } },
   ]);
 });
+
+test("one booked native debit clears two KWD invoices and reconciles the account", async ({ page, request }) => {
+  const email = `supplier-clearing-${Date.now()}@example.invalid`;
+  const password = "fixture-only-supplier-clearing";
+  const signed = await request.post("/api/auth/signup", { data: { email, password, name: "Bank clerk" } });
+  expect(signed.ok(), await signed.text()).toBe(true);
+  const headers = { Authorization: `Bearer ${(await signed.json()).token}` };
+  const fixture = dinarInventory("Supplier clearing fixture");
+  fixture.receipts[0].price = fixture.purchasing_sources[0].price = 0.001;
+  const grants = Object.fromEntries(["master_data", "billing", "payments"].map((grant) => [grant, [email]]));
+  const created = await request.post("/api/companies", { headers, data: { dataset: { ...fixture, finance: { control_roles: grants } } } });
+  expect(created.ok(), await created.text()).toBe(true);
+  const path = `/api/companies/${(await created.json()).id}`;
+  let revision = 1;
+  for (const reference of ["FILS-A", "FILS-B"]) {
+    const issued = await request.post(`${path}/commands`, { headers, data: {
+      kind: "purchasing", action: "enter_invoice", id: reference, base_revision: revision++, posting_date: "2026-01-06",
+      parameters: { reference, lines: [{ order: "PO-LINE", qty: 1 }] },
+    } });
+    expect(issued.ok(), await issued.text()).toBe(true);
+  }
+  const xml = readFileSync(new URL("../../engine/tests/fixtures/camt053-booked.xml", import.meta.url), "utf8")
+    .replaceAll("2026-03-03", "2026-01-08").replaceAll("2026-03-02", "2026-01-07").replaceAll("INR", "KWD")
+    .replace(">200.00</Amt>", ">1.000</Amt>").replace(">100.00</Amt>", ">0.998</Amt>").replaceAll(">100.00<", ">0.002<");
+  for (const event of [
+    { kind: "register_account", id: "KWD-A", company: "", starts_on: "2026-01-08", opening_minor: 1000 },
+    { kind: "link_camt_source", account: "KWD-A", xml },
+    { kind: "import_camt", account: "KWD-A", xml },
+  ]) {
+    const recorded = await request.post(`${path}/commands`, { headers, data: {
+      kind: "carrier_bank", action: "record", id: event.kind, base_revision: revision++, posting_date: "2026-01-08",
+      parameters: { event },
+    } });
+    expect(recorded.ok(), await recorded.text()).toBe(true);
+  }
+
+  await page.goto("/#/account");
+  await page.getByRole("tab", { name: "Sign in", exact: true }).click();
+  await page.getByLabel("E-mail").fill(email);
+  await page.getByLabel(/^Password/).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: /Open Supplier clearing fixture/ }).click();
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  await page.goto("/#/buying/owed");
+  await page.getByRole("button", { name: "SVCR-00001", exact: true }).click();
+  await page.getByText("Post and clear supplier invoices", { exact: true }).click();
+  const allocation = page.getByRole("combobox", { name: "Supplier invoice", exact: true });
+  await allocation.selectOption("SI-00001");
+  await allocation.selectOption("SI-00002");
+  await page.getByLabel("Allocation evidence", { exact: true }).fill("Reviewed both bank advice allocations");
+  await page.getByRole("button", { name: "Post supplier clearing", exact: true }).click();
+  await expect(page.getByRole("table", { name: "Supplier bank account reconciliation" })).toContainText("Reconciled");
+  await expect(page.getByRole("table", { name: "Supplier statement lines" })).toContainText("Posted and reconciled");
+  const company = await (await request.get(path, { headers })).json();
+  expect(company.meta.revision).toBe(revision + 1);
+  expect(company.dataset.supplier_invoices.map((invoice: { payments: unknown[] }) => invoice.payments)).toMatchObject([
+    [{ amount: 0.001, bank_account: "KWD-A" }], [{ amount: 0.001, bank_account: "KWD-A" }],
+  ]);
+});

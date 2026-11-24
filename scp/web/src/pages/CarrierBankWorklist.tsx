@@ -84,7 +84,8 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
   const [originalKey, setOriginalKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean }>();
-  const selected = bank.lines.find((line) => line.id === lineId);
+  const lines = bank.lines.filter((line) => !line.history?.[0]?.supplier_clearing);
+  const selected = lines.find((line) => line.id === lineId);
   const closed = ds.finance?.closed_through ?? "";
   const late = !!selected?.reversal && !!closed && selected.date <= closed;
   const reversalDate = late ? date : selected?.date ?? "";
@@ -136,7 +137,7 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
       setBusy(false);
     }
   };
-  if (!settlement.live && !bank.lines.length && !periods.length) return null;
+  if (!settlement.live && !lines.length && !periods.length) return null;
 
   return <Panel title="Carrier bank statements">
     <CarrierBankAccounts ds={ds} currency={currency} periods={periods} live={settlement.live} editable={editable} record={record} />
@@ -175,9 +176,9 @@ export function CarrierBankWorklist({ bank, ds, currency }: { bank: Worklist; ds
     {settlement.pending && <Edits><button className="btn sm accent" disabled={busy || (settlement.pendingBankFile && !nativeFiles?.length)}
       onClick={() => record()}>Retry bank statement operation</button></Edits>}
     {message && <p className="small" role={message.error ? "alert" : "status"}>{message.text}</p>}
-    {bank.lines.length ? <div className="table-wrap"><table className="t" aria-label="Imported bank statements">
+    {lines.length ? <div className="table-wrap"><table className="t" aria-label="Imported bank statements">
       <thead><tr><th>Line</th><th>Company</th><th>Account</th><th>Date</th><th>Reference</th><th className="num">Amount</th><th>Match</th></tr></thead>
-      <tbody>{bank.lines.map((line) => <tr key={line.id} className={line.id === lineId ? "selected" : ""}>
+      <tbody>{lines.map((line) => <tr key={line.id} className={line.id === lineId ? "selected" : ""}>
         <td><button className="btn sm ghost" onClick={() => choose(line)}>{line.statement_line}</button></td>
         <td>{companyName(line.company)}</td><td>{line.account}</td><td>{day(line.date)}</td><td>{line.reference}</td>
         <td className="num">{exactMoney(line.amount_minor / 100, currency)}</td>

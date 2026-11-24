@@ -29,7 +29,7 @@ from ..model import (
     Dataset, GoodsMovement, MovementType, ReceiptKind, StockType, SupplierInvoice,
     SupplierInvoiceLine, SupplierReturn,
 )
-from ..model.purchasing import SupplierPayment
+from ..model.purchasing import SupplierPayment, SupplierStatementCash
 from ..plan.costing import contract_for, fx
 from ..model.currency import (
     MATERIAL_CURRENCIES, CurrencyPrecisionError, CurrencyUnits, material_units, require_material_ledger,
@@ -82,7 +82,7 @@ class LineInfo:
         self.open_receipt, self.contract = open_receipt, contract
 
 
-def outside_lines(ds: Dataset) -> dict[str, tuple[LineInfo, float, date | None]]:
+def outside_lines(ds: Dataset, through: date | None = None) -> dict[str, tuple[LineInfo, float, date | None]]:
     """Lines bought without goods coming into our stock (Enterprise 7.1), each with what counts as received and
     when it last did: a third-party order (what the supplier dispatched to the customer), and a job-work challan
     with a job charge (the units processed and back)."""
@@ -92,8 +92,9 @@ def outside_lines(ds: Dataset) -> dict[str, tuple[LineInfo, float, date | None]]
     for t in ds.third_party_orders:
         if t.cancelled and not t.shipments:
             continue
+        shipped = [x for x in t.shipments if through is None or x.date <= through]
         out[t.id] = (LineInfo(t.id, t.supplier, t.product, t.customer, t.qty, t.cost, None, t.currency or co, False,
-                              None), t.shipped, max((x.date for x in t.shipments), default=None))
+                              None), round(sum(x.qty for x in shipped), 6), max((x.date for x in shipped), default=None))
     for c in ds.challans:
         if c.cancelled or c.charge <= 0:
             continue
@@ -104,7 +105,8 @@ def outside_lines(ds: Dataset) -> dict[str, tuple[LineInfo, float, date | None]]
         ordered = max(c.processed, (rc.ordered_qty or rc.qty) if rc else (done.ordered_qty if done else 0.0))
         cur = ds.vendor(c.job_worker).currency or co
         out[c.id] = (LineInfo(c.id, c.job_worker, product, c.ship_from, ordered, c.charge, None, cur, False, None),
-                     c.processed, max((r.date for r in back), default=None))
+                     round(sum(r.qty for r in back if through is None or r.date <= through), 6),
+                     max((r.date for r in back if through is None or r.date <= through), default=None))
     return out
 
 
@@ -138,14 +140,14 @@ def line_info(ds: Dataset, lid: str) -> LineInfo | None:
     return lines_index(ds, {lid}).get(lid)
 
 
-def received(ds: Dataset) -> dict[str, float]:
+def received(ds: Dataset, through: date | None = None) -> dict[str, float]:
     """Goods received per order line, less what went back to the supplier."""
     out: dict[str, float] = defaultdict(float)
     for m in ds.movements:
-        if m.reference and m.type in (MovementType.RECEIPT, MovementType.RETURN):
+        if m.reference and m.type in (MovementType.RECEIPT, MovementType.RETURN) and (through is None or m.date <= through):
             out[m.reference] += m.net if m.type is MovementType.RECEIPT else -m.net
     if ds.third_party_orders or ds.challans:
-        for k, (_, q, _) in outside_lines(ds).items():
+        for k, (_, q, _) in outside_lines(ds, through).items():
             if q > EPS:
                 out[k] += q
     return out
@@ -216,18 +218,20 @@ def _quantity_blocks(lines: list[SupplierInvoiceLine], got: dict[str, float],
     return out
 
 
-def still_blocked(ds: Dataset, inv: SupplierInvoice) -> list[str]:
+def still_blocked(ds: Dataset, inv: SupplierInvoice, through: date | None = None) -> list[str]:
     """What stands in the way of paying it now: its price blocks, and quantity blocks while the goods are still
     missing (counting every invoice entered before it)."""
-    if inv.credit or inv.cancelled or inv.released_on is not None or not inv.blocks:
+    released = inv.released_on is not None and (through is None or inv.released_on <= through)
+    if inv.credit or inv.cancelled or released or not inv.blocks:
         return []
     price = [b for b in inv.blocks if b.startswith("price:")]
     if inv.kind == "subsequent_debit":
         return price
-    got = received(ds)
+    got = received(ds, through)
     billed: dict[str, float] = defaultdict(float)
     for other in ds.supplier_invoices:
-        if other.cancelled or not other.bills_goods or other.id >= inv.id and other.kind == "invoice":
+        active = not other.cancelled if through is None else other.active_at(through)
+        if not active or not other.bills_goods or other.id >= inv.id and other.kind == "invoice":
             continue
         sign = -1.0 if other.kind == "credit_memo" else 1.0
         for ln in other.lines:
@@ -530,19 +534,32 @@ def release_invoice(ds: Dataset, iid: str, by: str = "", on: date | None = None,
 
 
 def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | None = None,
-                reference: str = "", *, bank_account: str | None = None) -> tuple[Dataset, ActionReport]:
+                reference: str = "", *, bank_account: str | None = None,
+                statement_cash: SupplierStatementCash | None = None, dated_review: bool = False) -> tuple[Dataset, ActionReport]:
     """Pay a supplier invoice (or record the refund of a credit memo). Paid in full by the discount date, the cash
     discount is taken."""
     inv = _invoice(ds, iid)
     on = on or ds.settings.planning_start
     cur = inv.currency or ds.settings.currency
+    for instruction in ds.supplier_payment_instructions:
+        if (instruction.reserved and any(leg.invoice == iid for leg in instruction.legs)
+                and (not statement_cash or statement_cash.instruction != instruction.id or not instruction.approved_on)):
+            raise PayablesError(f"{iid} is reserved by supplier payment instruction {instruction.id}")
+    if statement_cash:
+        units = material_units(cur)
+        if inv.credit or not bank_account or amount is None or not isfinite(amount) or units.amount(amount) != amount:
+            raise PayablesError("statement clearing requires an ordinary supplier invoice and exact payment amount")
+        if inv.payments and max(p.date for p in inv.payments) > on:
+            raise PayablesError("statement clearing cannot precede a recorded settlement on the invoice")
+        if cur == ds.settings.currency and units.minor(amount) != statement_cash.bank_minor:
+            raise PayablesError("local invoice cash must equal the allocated bank amount")
     if on < inv.date:
         raise PayablesError("a payment cannot be posted before its invoice")
     if inv.cancelled:
         raise PayablesError(f"{iid} is cancelled")
     if inv.open <= EPS:
         raise PayablesError(f"{iid} is already settled")
-    why = still_blocked(ds, inv)
+    why = still_blocked(ds, inv, on if statement_cash or dated_review else None)
     if why:
         raise PayablesError(f"{iid} is blocked for payment ({'; '.join(b.split(': ', 1)[1] for b in why)}): "
                             "release it first")
@@ -565,15 +582,15 @@ def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | N
             raise PayablesError(f"enter a positive cash amount of up to {_money(inv.open, cur)}")
         payment = SupplierPayment(date=on, amount=units.major(cash),
                                   discount=units.major(discount if cash == due_minor else 0),
-                                  reference=reference, fx_rate=1.0, bank_account=bank_account)
+                                  reference=reference, fx_rate=1.0, bank_account=bank_account, statement_cash=statement_cash)
         result = _append_domestic_payment(ds, inv, payment)
         left = _invoice(result, iid).open
         return result, ActionReport(ok=True, id=iid, message=f"{_money(payment.amount, cur)} recorded on {iid}. "
                                     f"{_money(left, cur)} remains open.")
-    if bank_account is not None:
+    if bank_account is not None and statement_cash is None:
         raise PayablesError("registered bank assignments are supported for domestic JPY and KWD supplier payments")
     disc = 0.0
-    if not inv.credit and inv.discount and inv.discount_date and on <= inv.discount_date and not inv.payments:
+    if not inv.credit and inv.discount and inv.discount_date and on <= inv.discount_date and not inv.active_payments():
         disc = round(inv.total * inv.discount, 2)
     due = round(inv.open - disc, 2)
     amt = due if amount is None else round(float(amount), 2)
@@ -583,8 +600,13 @@ def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | N
         raise PayablesError(f"{_money(amt, cur)} is more than the {_money(due, cur)} still open on {iid}")
     if amt < due - 0.005:
         disc = 0.0          # the discount is for paying in full in time
+    if statement_cash:
+        require_posting_currency(cur)
+        rate = material_units(ds.settings.currency).major(statement_cash.bank_minor) / amt
+    else:
+        rate = posting_rate(ds, inv.currency)
     new = inv.model_copy(update={"payments": [*inv.payments, SupplierPayment(date=on, amount=amt, discount=disc,
-                                 reference=reference[:64], fx_rate=posting_rate(ds, inv.currency))]})
+                                 reference=reference[:64], fx_rate=rate, bank_account=bank_account, statement_cash=statement_cash)]})
     verb = "refund received for" if inv.credit else "paid on"
     msg = (f"{_money(amt, cur)} {verb} {iid}" + (f", cash discount {_money(disc, cur)}" if disc else "")
            + ("; settled." if new.open <= 0.005 else f"; {_money(new.open, cur)} still open."))
@@ -601,16 +623,22 @@ def _append_domestic_payment(ds: Dataset, inv: SupplierInvoice, payment: Supplie
 
 
 def reverse_invoice_payment(ds: Dataset, iid: str, number: int | None, on: date | None, reason: str, *,
-                            reference: str = "", bank_account: str | None = None) -> tuple[Dataset, ActionReport]:
+                            reference: str = "", bank_account: str | None = None,
+                            statement_cash: SupplierStatementCash | None = None) -> tuple[Dataset, ActionReport]:
     inv = _invoice(ds, iid)
-    if ds.settings.currency not in MATERIAL_CURRENCIES or inv.currency != ds.settings.currency or inv.credit:
+    domestic = ds.settings.currency in MATERIAL_CURRENCIES and inv.currency == ds.settings.currency
+    if (not domestic and not statement_cash) or inv.credit:
         raise PayablesError("this reversal is for an ordinary domestic JPY or KWD supplier payment")
     if inv.cancelled:
         raise PayablesError(f"{iid} is cancelled")
     original = inv.active_payments().get(number) if number is not None else None
     if original is None:
         raise PayablesError("select an active supplier payment to reverse")
-    if on is None or on < inv.payments[-1].date:
+    if bool(original.statement_cash) != bool(statement_cash):
+        raise PayablesError("statement-cleared cash must be reversed against its native bank return")
+    if statement_cash and (original.bank_account != bank_account or original.statement_cash.bank_minor != statement_cash.bank_minor):
+        raise PayablesError("a bank return must keep the original supplier payment amount and account")
+    if on is None or on < max(p.date for p in inv.payments):
         raise PayablesError("date the reversal on or after the most recent settlement event")
     reason = reason.strip()
     if not reason or len(reason) > 200:
@@ -621,15 +649,19 @@ def reverse_invoice_payment(ds: Dataset, iid: str, number: int | None, on: date 
         raise PayablesError("enter the bank return's own reference of 1 to 64 characters")
     if not account and returned and returned != original.reference:
         raise PayablesError("select a registered bank account to record a separate return reference")
-    reversal = SupplierPayment(date=on, amount=original.amount, discount=original.discount, fx_rate=1.0,
+    reversal = SupplierPayment(date=on, amount=original.amount, discount=original.discount, fx_rate=original.fx_rate,
                                bank_account=account, reference=returned if account else original.reference,
-                               reverses=number, reason=reason)
-    return _append_domestic_payment(ds, inv, reversal), ActionReport(ok=True, id=iid,
+                               reverses=number, reason=reason, statement_cash=statement_cash)
+    changed = (_append_domestic_payment(ds, inv, reversal) if domestic else
+               _replace(ds, inv.model_copy(update={"payments": [*inv.payments, reversal]})))
+    return changed, ActionReport(ok=True, id=iid,
         message=f"Payment {iid}/{number} reversed. Its liability is open again.")
 
 
 def cancel_invoice(ds: Dataset, iid: str, on: date | None = None) -> tuple[Dataset, ActionReport]:
     inv = _invoice(ds, iid)
+    if any(row.reserved and any(leg.invoice == iid for leg in row.legs) for row in ds.supplier_payment_instructions):
+        raise PayablesError(f"{iid} is reserved by a supplier payment instruction")
     if inv.cancelled:
         raise PayablesError(f"{iid} is already cancelled")
     domestic = ds.settings.currency in MATERIAL_CURRENCIES

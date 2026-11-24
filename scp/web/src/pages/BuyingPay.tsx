@@ -450,9 +450,10 @@ export function Owed({ res, ds }: { res: PurchasingView; ds: Dataset }) {
             bill={bill} currency={res.currency} ds={ds} />)}</tbody>
         </table></div>
       </Panel>}
-      {pay.carrier_bank && (moneyDigits(res.currency) === 2
-        ? <CarrierBankWorklist bank={pay.carrier_bank} currency={res.currency} ds={ds} />
-        : <SupplierBankWorklist bank={pay.carrier_bank} currency={res.currency} ds={ds} />)}
+      {pay.carrier_bank && <>
+        {moneyDigits(res.currency) === 2 && <CarrierBankWorklist bank={pay.carrier_bank} currency={res.currency} ds={ds} />}
+        <SupplierBankWorklist bank={pay.carrier_bank} invoices={pay.invoices} currency={res.currency} ds={ds} />
+      </>}
       <Reading formula="Open: invoices not yet paid, less credit memos not yet refunded. Received, not invoiced: goods in at the order price with no invoice for them yet."
         soWhat={<>Pay what is due on <a href={href("buying", "invoices")}>Supplier invoices</a>; a supplier's payment terms are on their <a href={href("data", "vendors")}>purchasing data</a>.
           {ds.vendors?.length ? "" : " No supplier has purchasing data yet, so every invoice is due 30 days after its date."}</>} />

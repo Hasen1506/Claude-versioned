@@ -9,7 +9,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import Field, StringConstraints, TypeAdapter, ValidationError
+from pydantic import Field, StringConstraints, TypeAdapter, ValidationError, model_validator
 
 from .camt_statements import file_evidence, file_set_evidence, read_statement_files
 from .carrier_accounts import (BankAccounts, CarrierBankTieOut, CarrierBankTiming, check_window, last_period, next_start,
@@ -18,11 +18,13 @@ from .freight import BankPosting, CarrierBill, active_bank_matches, bank_return_
 from .model import Dataset
 from .model.carrier_bank import (CAMT_MAX_BYTES, CAMT_MAX_PAGES, BankAccountId, BankAccountOpening, BankCashRef, BankMatchEvent, BankStatementHeader,
                                  BankReturnAllocation, CamtAccountBinding, CamtSourceEvidence, CarrierBankAccount, CarrierBankLine,
-                                 CarrierBankPeriod, SupplierCashRef)
-from .model.common import Model, Out
+                                 CarrierBankPeriod, ReturnMinor, SupplierCashRef, SupplierClearing)
+from .model.common import Id, Model, Out
 from .model.currency import MATERIAL_CURRENCIES, material_units
-from .model.purchasing import supplier_payment_reference
+from .model.purchasing import SupplierStatementCash, supplier_payment_reference
 from .model.transport import CarrierBankMatch, CarrierBankReversal
+from .supplier_disbursement import (INSTRUCTION_CHANGES, ApproveSupplierPayment, CancelSupplierPayment, ProposeSupplierPayment,
+                                   RejectSupplierPayment, instruction_for, require_payment_grant)
 
 
 class ImportStatement(Model):
@@ -81,6 +83,34 @@ class MatchSupplierStatement(Model):
     version: int = Field(ge=0, strict=True)
 
 
+class SupplierInvoiceAllocation(Model):
+    invoice: Id
+    invoice_minor: ReturnMinor
+    bank_minor: ReturnMinor
+
+
+class ClearSupplierStatement(Model):
+    kind: Literal["clear_supplier_statement"]
+    line: Id
+    allocations: list[SupplierInvoiceAllocation] = Field(default_factory=list, max_length=100)
+    reason: str = Field(min_length=1, max_length=200)
+    instruction: Id | None = None
+
+    @model_validator(mode="after")
+    def allocation_basis(self) -> "ClearSupplierStatement":
+        if bool(self.instruction) == bool(self.allocations):
+            raise ValueError("select an approved instruction or supply invoice allocations")
+        return self
+
+
+class ReturnSupplierStatement(Model):
+    kind: Literal["return_supplier_statement"]
+    line: Id
+    original: Id
+    payments: list[SupplierCashRef] = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=1, max_length=200)
+
+
 class ReleaseStatement(Model):
     kind: Literal["release"]
     line: str = Field(min_length=1, max_length=64)
@@ -100,7 +130,8 @@ class AllocateBankReturn(BankReturnAllocation):
 
 
 BankOperation = Annotated[ImportStatement | MatchStatement | MatchSupplierStatement | ReleaseStatement | ReverseBankCash | RegisterBankAccount | ImportBankPeriod
-                          | CamtFile | CamtFiles | AllocateBankReturn,
+                          | CamtFile | CamtFiles | AllocateBankReturn | ClearSupplierStatement | ReturnSupplierStatement
+                          | ProposeSupplierPayment | ApproveSupplierPayment | CancelSupplierPayment | RejectSupplierPayment,
                           Field(discriminator="kind")]
 parse_operation = TypeAdapter(BankOperation)
 HEADER = ["line", "date", "reference", "amount", "currency"]
@@ -141,6 +172,7 @@ class SupplierBankCash(Out):
     reference: str
     amount_minor: int
     bank_account: str | None
+    company: str
 
     def posting(self) -> BankPosting:
         return BankPosting(self.voucher, self.date, self.reference, self.amount_minor, self.bank_account)
@@ -163,17 +195,28 @@ def _cash(bill: CarrierBill, posting: BankPosting) -> CarrierCash:
 
 
 def supplier_bank_cash(ds: Dataset) -> dict[str, SupplierBankCash]:
-    if ds.settings.currency not in MATERIAL_CURRENCIES:
-        return {}
+    from .purchasing.payables import invoice_entity
+
     units = material_units(ds.settings.currency)
     cash = {}
     for invoice in ds.supplier_invoices:
+        company = invoice.entity if invoice.entity is not None else invoice_entity(ds, invoice.lines)
         for number, payment in enumerate(invoice.payments, 1):
+            if units.digits == 2 and not payment.statement_cash:
+                continue
             voucher = f"{invoice.id}/{number}"
+            amount = payment.statement_cash.bank_minor if payment.statement_cash else units.minor(payment.amount)
             cash[voucher] = SupplierBankCash(invoice=invoice.id, payment_number=number, voucher=voucher,
                 supplier=invoice.supplier, date=payment.date, reference=payment.reference,
-                amount_minor=(1 if payment.reverses else -1) * units.minor(payment.amount), bank_account=payment.bank_account)
+                amount_minor=amount if payment.reverses else -amount, bank_account=payment.bank_account, company=company)
     return cash
+
+
+def supplier_statement_fees(ds: Dataset):
+    for line in ds.carrier_bank_lines:
+        if line.supplier_fee:
+            yield line.company, line.id, BankPosting(f"{line.id}/FEE", line.date, line.reference,
+                                                     -line.supplier_fee, line.account)
 
 
 def bank_view(ds: Dataset, bills: list[CarrierBill]) -> CarrierBankView:
@@ -219,7 +262,9 @@ def bank_view(ds: Dataset, bills: list[CarrierBill]) -> CarrierBankView:
                                                   and len(original.trace_ids) == 1 else []))
     supplier_postings = supplier_bank_cash(ds)
     posted.extend(item.posting() for item in supplier_postings.values())
-    matched = {line.active_supplier.voucher for line in ds.carrier_bank_lines if line.active_supplier}
+    matched = {voucher for line in ds.carrier_bank_lines for voucher in line.matched_vouchers()
+               if line.active_supplier or line.supplier_clearing}
+    posted.extend(posting for _, _, posting in supplier_statement_fees(ds))
     suppliers = [item for voucher, item in supplier_postings.items() if item.bank_account and voucher not in matched]
     return CarrierBankView(lines=sorted(ds.carrier_bank_lines, key=lambda line: (line.date, line.id), reverse=True),
                            unmatched_cash=unmatched, periods=tie_out(ds, [*posted, *fees.values()], timing), reversible_cash=reversible,
@@ -327,11 +372,16 @@ def _append_period(ds: Dataset, account: CarrierBankAccount, header: BankStateme
             refreshed = []
             for row in ds.carrier_bank_lines:
                 original = lines.get(row.id)
-                if original is not None and row.reversal and not row.return_source_checked and not row.history:
-                    row = _refresh_return(row, original)
+                if original is not None and not row.history:
+                    if row.reversal and not row.return_source_checked:
+                        row = _refresh_return(row, original)
+                    if row.supplier_debit is None and original.supplier_debit is not None:
+                        row = row.model_copy(update={"supplier_debit": original.supplier_debit})
                 refreshed.append(row)
             if refreshed != ds.carrier_bank_lines:
-                return ds.model_copy(update={"carrier_bank_lines": refreshed}), f"Verified return evidence for statement {period.number}."
+                evidence = "return" if any(a.return_source_checked != b.return_source_checked
+                                           for a, b in zip(refreshed, ds.carrier_bank_lines, strict=True)) else "bank"
+                return ds.model_copy(update={"carrier_bank_lines": refreshed}), f"Verified {evidence} evidence for statement {period.number}."
         return ds, f"Statement {period.number} is already recorded."
     if prior:
         raise ValueError("the offered file differs from the retained source statement")
@@ -382,7 +432,7 @@ def _camt(ds: Dataset, request: CamtFile | CamtFiles, day: date) -> tuple[Datase
                             reference=entry.reference, amount_minor=entry.amount_minor, currency=account.currency,
                             reversal=entry.reversal, trace_ids=list(entry.trace_ids), return_source_checked=entry.reversal,
                             included_fee_minor=entry.included_fee_minor, unresolved_charges=entry.unresolved_charges,
-                            requires_allocation=entry.requires_allocation)
+                            requires_allocation=entry.requires_allocation, supplier_debit=entry.supplier_debit)
             for entry in statement.entries]
     return _append_period(ds, account, statement.header, rows, statement.file_sha256, statement.source)
 
@@ -457,6 +507,112 @@ def _supplier_match(ds: Dataset, request: MatchSupplierStatement | ReleaseStatem
     event = BankMatchEvent(date=day, targets=[], supplier_payment=target)
     updated = line.model_copy(update={"history": [*line.history, event]})
     return ds.model_copy(update={"carrier_bank_lines": [updated if row.id == line.id else row for row in ds.carrier_bank_lines]}), message
+
+
+def _supplier_principal(line: CarrierBankLine, period: CarrierBankPeriod | None, day: date) -> int:
+    if (period is None or period.camt_source is None or line.supplier_debit is None
+            or line.amount_minor >= 0 or line.reversal):
+        raise ValueError("supplier clearing requires an original, verified camt.053 debit")
+    if line.supplier_debit.unresolved_charges:
+        raise ValueError("resolve ambiguous bank charges before clearing supplier invoices")
+    if day < line.date:
+        raise ValueError("the review cannot precede booking the statement movement")
+    return -line.amount_minor - (line.supplier_debit.included_fee_minor or 0)
+
+
+def _clear_supplier(ds: Dataset, request: ClearSupplierStatement, line: CarrierBankLine, day: date) -> tuple[Dataset, str]:
+    from .purchasing.payables import invoice_entity, pay_invoice
+
+    if line.history:
+        raise ValueError("select an untouched bank movement for supplier clearing")
+    if ds.finance.closed_through and line.date <= ds.finance.closed_through:
+        raise ValueError("the statement booking date is in a closed period")
+    principal = _supplier_principal(line, statement_periods(ds).get(line.id), day)
+    allocations = request.allocations
+    reference = supplier_payment_reference(line.reference)
+    if request.instruction:
+        instruction = instruction_for(ds, request.instruction)
+        if (not instruction.reserved or not instruction.approved_on or instruction.account != line.account
+                or line.date < instruction.execute_on or reference != supplier_payment_reference(instruction.id)):
+            raise ValueError("the bank booking must confirm the approved instruction's account, date and reference")
+        allocations = [SupplierInvoiceAllocation(invoice=leg.invoice, invoice_minor=leg.amount_minor,
+                                                 bank_minor=leg.amount_minor) for leg in instruction.legs]
+    elif any(reference == supplier_payment_reference(row.id) for row in ds.supplier_payment_instructions):
+        raise ValueError("clear this bank acknowledgement against its payment instruction")
+    if sum(leg.bank_minor for leg in allocations) != principal:
+        raise ValueError("allocations and verified fees must equal the booked bank debit")
+    if len({leg.invoice for leg in allocations}) != len(allocations):
+        raise ValueError("allocate a bank movement to each invoice only once")
+    invoices = {inv.id: inv for inv in ds.supplier_invoices}
+    if any(not p.statement_cash and p.reference and supplier_payment_reference(p.reference) == reference
+           and p.bank_account in (None, line.account)
+           for invoice in invoices.values() for p in invoice.active_payments().values()):
+        raise ValueError("cash with this bank reference is already recorded; review the existing payment")
+    postings = []
+    for ordinal, leg in enumerate(allocations, 1):
+        invoice = invoices.get(leg.invoice)
+        if invoice is None:
+            raise ValueError("select an existing supplier invoice")
+        company = invoice.entity if invoice.entity is not None else invoice_entity(ds, invoice.lines)
+        if company != line.company:
+            raise ValueError("the invoice belongs to a different paying entity")
+        amount = material_units(invoice.currency or line.currency).major(leg.invoice_minor)
+        ds, _ = pay_invoice(ds, invoice.id, amount, line.date, f"{line.id}/{ordinal}", bank_account=line.account,
+                            statement_cash=SupplierStatementCash(line=line.id, bank_minor=leg.bank_minor, instruction=request.instruction))
+        postings.append(SupplierCashRef(invoice=invoice.id, payment_number=len(invoice.payments) + 1))
+    event = BankMatchEvent(date=day, targets=[], supplier_clearing=SupplierClearing(postings=postings, reason=request.reason,
+                                                                                  instruction=request.instruction))
+    updated = line.model_copy(update={"history": [event]})
+    instructions = [row.model_copy(update={"statement_line": line.id}) if row.id == request.instruction else row
+                    for row in ds.supplier_payment_instructions]
+    return ds.model_copy(update={"carrier_bank_lines": [updated if row.id == line.id else row for row in ds.carrier_bank_lines],
+                                 "supplier_payment_instructions": instructions}), (
+        f"Posted and reconciled {len(postings)} supplier payments against {line.statement_line}.")
+
+
+def _supplier_return_principal(line: CarrierBankLine, original: CarrierBankLine | None,
+                               period: CarrierBankPeriod | None) -> int:
+    if (original is None or not original.supplier_clearing or original.supplier_clearing.return_of
+            or line.amount_minor <= 0 or not line.return_source_checked):
+        raise ValueError("select a verified bank credit and its original supplier clearing")
+    _check_return_source(line, original, period)
+    if (supplier_payment_reference(line.reference) != supplier_payment_reference(original.reference)
+            and not set(line.trace_ids).intersection(original.trace_ids)):
+        raise ValueError("the bank return must identify its original reference or bank trace")
+    return line.amount_minor + (line.included_fee_minor or 0)
+
+
+def _return_supplier(ds: Dataset, request: ReturnSupplierStatement, line: CarrierBankLine, day: date) -> tuple[Dataset, str]:
+    from .purchasing.payables import reverse_invoice_payment
+
+    if line.history or day < line.date or ds.finance.closed_through and line.date <= ds.finance.closed_through:
+        raise ValueError("select an untouched bank credit with an open booking date")
+    original = next((row for row in ds.carrier_bank_lines if row.id == request.original), None)
+    principal = _supplier_return_principal(line, original, statement_periods(ds).get(line.id))
+    requested = {target.voucher for target in request.payments}
+    if len(requested) != len(request.payments) or not requested <= set(original.matched_vouchers()):
+        raise ValueError("select each returned payment from the original clearing once")
+    invoices = {inv.id: inv for inv in ds.supplier_invoices}
+    postings = []
+    total = 0
+    for ordinal, target in enumerate(request.payments, 1):
+        invoice = invoices[target.invoice]
+        payment = invoice.active_payments().get(target.payment_number)
+        if payment is None or payment.statement_cash is None:
+            raise ValueError("select an active payment from the original clearing")
+        cash = payment.statement_cash.bank_minor
+        ds, _ = reverse_invoice_payment(ds, invoice.id, target.payment_number, line.date, request.reason,
+                                        reference=f"{line.id}/{ordinal}", bank_account=line.account,
+                                        statement_cash=SupplierStatementCash(line=line.id, bank_minor=cash))
+        total += cash
+        postings.append(SupplierCashRef(invoice=invoice.id, payment_number=len(invoice.payments) + 1))
+    if total != principal:
+        raise ValueError("the returned payments and verified fees must equal the booked bank credit")
+    event = BankMatchEvent(date=day, targets=[], supplier_clearing=SupplierClearing(postings=postings, reason=request.reason,
+                                                                                  return_of=original.id))
+    updated = line.model_copy(update={"history": [event]})
+    return ds.model_copy(update={"carrier_bank_lines": [updated if row.id == line.id else row for row in ds.carrier_bank_lines]}), (
+        f"Reopened {len(postings)} supplier invoices against {line.statement_line}.")
 
 
 def _check_return_source(line: CarrierBankLine, original: CarrierBankLine, period: CarrierBankPeriod | None) -> None:
@@ -574,7 +730,7 @@ def _record_allocation(ds: Dataset, request: AllocateBankReturn, line: CarrierBa
         f"Allocated bank return {line.statement_line} to {len(targets)} carrier cash vouchers.")
 
 
-def record_bank(ds: Dataset, request: BankOperation, day: date) -> tuple[Dataset, str]:
+def record_bank(ds: Dataset, request: BankOperation, day: date, actor: str = "") -> tuple[Dataset, str]:
     domestic = ds.settings.currency in MATERIAL_CURRENCIES
     if domestic and isinstance(request, (ImportStatement, MatchStatement, ReverseBankCash, AllocateBankReturn)):
         raise ValueError("use a registered account period and reconcile it to recorded domestic supplier cash")
@@ -590,9 +746,19 @@ def record_bank(ds: Dataset, request: BankOperation, day: date) -> tuple[Dataset
         return _import_period(ds, request)
     if isinstance(request, (CamtFile, CamtFiles)):
         return _camt(ds, request, day)
+    if isinstance(request, INSTRUCTION_CHANGES):
+        raise ValueError("supplier instructions require an identified company payment command")
     line = next((row for row in ds.carrier_bank_lines if row.id == request.line), None)
     if line is None:
         raise ValueError("select an imported statement line in this company")
+    if isinstance(request, (ClearSupplierStatement, ReturnSupplierStatement)):
+        require_payment_grant(ds, actor)
+    if isinstance(request, ClearSupplierStatement):
+        return _clear_supplier(ds, request, line, day)
+    if isinstance(request, ReturnSupplierStatement):
+        return _return_supplier(ds, request, line, day)
+    if line.supplier_clearing:
+        raise ValueError("retain this bank movement and its posted supplier clearing")
     if isinstance(request, MatchSupplierStatement) or (domestic and isinstance(request, ReleaseStatement)):
         return _supplier_match(ds, request, line, day)
     if isinstance(request, ReverseBankCash):
@@ -648,10 +814,12 @@ def protect_bank(old: Dataset, new: Dataset, command: bool) -> None:
             reversals[event.statement_line][bill.order, voucher] = ((bill.order, event.reverses), event)
     posted.extend((company, posting) for company, _, posting in bank_return_fees(new))
     supplier_postings = supplier_bank_cash(new)
-    posted.extend(("", item.posting()) for item in supplier_postings.values())
+    posted.extend((item.company, item.posting()) for item in supplier_postings.values())
+    posted.extend((company, posting) for company, _, posting in supplier_statement_fees(new))
     periods = protect_accounts(old, new, command, {line.id: line for line in new.carrier_bank_lines}, posted)
     accounts = BankAccounts(new).by_id
     lines = {row.id: row for row in new.carrier_bank_lines}
+    invoices = {inv.id: inv for inv in new.supplier_invoices}
     for line_id, corrections in reversals.items():
         reversal = lines.get(line_id)
         if reversal is None or len(reversal.history) != 1 or {target.key() for target in reversal.active} != corrections.keys():
@@ -700,7 +868,8 @@ def protect_bank(old: Dataset, new: Dataset, command: bool) -> None:
                 or (not domestic and any(event.supplier_payment for event in row.history))):
             raise ValueError("domestic supplier matches require a registered JPY or KWD account period")
         native = row.id in periods and periods[row.id].camt_source
-        if (((row.trace_ids or row.requires_allocation) and not native)
+        if (((row.trace_ids or row.requires_allocation or row.supplier_debit) and not native)
+                or row.supplier_debit and (row.reversal or row.amount_minor > 0)
                 or row.return_source_checked and not row.reversal
                 or (row.included_fee_minor is not None or row.unresolved_charges) and not row.return_source_checked
                 or row.reversal and (not native or (row.active and row.id not in reversals))
@@ -711,6 +880,9 @@ def protect_bank(old: Dataset, new: Dataset, command: bool) -> None:
         if (earlier is not None and command and native and earlier.reversal and not earlier.history
                 and not row.history and not earlier.return_source_checked and row.return_source_checked):
             earlier = _refresh_return(earlier, row)
+        if (earlier is not None and command and native and not earlier.history and not row.history
+                and earlier.supplier_debit is None and row.supplier_debit is not None):
+            earlier = earlier.model_copy(update={"supplier_debit": row.supplier_debit})
         if earlier is not None and (row.model_dump(exclude={"history"}) != earlier.model_dump(exclude={"history"})
                                     or row.history[:len(earlier.history)] != earlier.history
                                     or len(row.history) > len(earlier.history) + 1):
@@ -726,8 +898,37 @@ def protect_bank(old: Dataset, new: Dataset, command: bool) -> None:
         for event in row.history:
             if event.supplier_payment:
                 _validate_supplier_match(row, supplier_postings.get(event.supplier_payment.voucher), event.date, periods.get(row.id))
+        if row.supplier_clearing:
+            original_id = row.supplier_clearing.return_of
+            if original_id:
+                principal = _supplier_return_principal(row, lines.get(original_id), periods.get(row.id))
+            else:
+                principal = _supplier_principal(row, periods.get(row.id), row.history[0].date)
+            total = 0
+            for target in row.supplier_clearing.postings:
+                posting = supplier_postings.get(target.voucher)
+                if (not posting or posting.company != row.company or posting.bank_account != row.account
+                        or posting.date != row.date or target.voucher in supplier_claims):
+                    raise ValueError("supplier clearing must retain its unique payments in the original account and period")
+                payment = invoices[target.invoice].payments[target.payment_number - 1]
+                if (not payment.statement_cash or payment.statement_cash.line != row.id
+                        or payment.statement_cash.instruction != row.supplier_clearing.instruction):
+                    raise ValueError("supplier clearing must retain the originating bank line on each payment")
+                if bool(payment.reverses) != bool(original_id):
+                    raise ValueError("a bank debit settles a payment and a bank credit reverses it")
+                if original_id:
+                    original_payment = invoices[target.invoice].payments[payment.reverses - 1]
+                    if not original_payment.statement_cash or original_payment.statement_cash.line != original_id:
+                        raise ValueError("supplier returns must retain their original payment source")
+                supplier_claims.add(target.voucher)
+                total += posting.amount_minor if original_id else -posting.amount_minor
+            if total != principal:
+                raise ValueError("supplier clearing no longer balances against its source debit")
         if row.active_supplier:
             voucher = row.active_supplier.voucher
             if voucher in supplier_claims:
                 raise ValueError("that supplier cash already belongs to another statement match")
             supplier_claims.add(voucher)
+    if any(f"{inv.id}/{number}" not in supplier_claims for inv in new.supplier_invoices
+           for number, payment in enumerate(inv.payments, 1) if payment.statement_cash):
+        raise ValueError("statement payments must retain their originating clearing allocation")

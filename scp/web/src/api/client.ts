@@ -488,6 +488,10 @@ export const api = {
     `/api/companies/${encodeURIComponent(id)}/commands`, { method: "POST", body: JSON.stringify(command) }),
   companyCommandRecord: (id: string, command: string) => call<CompanyCommandRecord>(
     `/api/companies/${encodeURIComponent(id)}/commands?id=${encodeURIComponent(command)}`),
+  supplierPaymentFile: (id: string, instruction: string, routing: object) =>
+    call<{ filename: string; sha256: string; xml: string }>(
+      `/api/companies/${encodeURIComponent(id)}/supplier-payment-instructions/${encodeURIComponent(instruction)}/export`,
+      { method: "POST", body: JSON.stringify(routing) }),
   /** Save the working copy, whole (`dataset`) or as what changed since `baseRevision` (`patch`). */
   saveCompany: (id: string, what: { dataset: Dataset } | { patch: Patch }, baseRevision: number, note = "") =>
     call<SaveReport>(`/api/companies/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ ...what, base_revision: baseRevision, note }) }),

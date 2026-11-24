@@ -37,6 +37,7 @@ from pydantic import Field
 from ..actuals.transfer_price import destination, entity_of, party
 from ..actuals.valuation import EPS, run_books
 from ..freight import bank_return_fees, bills_for_order, carrier_bills, freight_company
+from ..carrier_bank import supplier_statement_fees
 from ..model import Dataset, FreightOrder, GoodsMovement, MovementType, SupplierInvoice
 from ..model.transport import CarrierBankMatch, CarrierBillAdjustment
 from ..model.common import Out
@@ -425,21 +426,25 @@ class _Journal:
                 if p.date > day:
                     break
                 settlement_rate = p.fx_rate if p.fx_rate is not None else rate
-                settled = _r(settled + p.amount + p.discount)
+                direction = -1 if p.reverses else 1
+                settled = _r(settled + direction * (p.amount + p.discount))
                 remaining = _r(_r(inv.total - settled) * rate)
                 clearing = _r(outstanding - remaining)
                 outstanding = remaining
                 individual = _r((p.amount + p.discount) * rate)
-                exchange = sign * (_r(p.amount * settlement_rate) - individual + _r(p.discount * rate))
-                rounding = sign * _r(individual - clearing)
-                self._post(p.date, f"{inv.id}/{k}", "Payment" if sign > 0 else "Receipt", inv.id,
-                           f"{'paid to' if sign > 0 else 'refund from'} {_name(ds, inv.supplier)} for "
+                bank_cash = (self.units.major(p.statement_cash.bank_minor) if p.statement_cash
+                             else _r(p.amount * settlement_rate))
+                exchange = sign * (bank_cash - individual + _r(p.discount * rate))
+                rounding = sign * _r(direction * individual - clearing)
+                verb = "returned by" if p.reverses else "paid to" if sign > 0 else "refund from"
+                self._post(p.date, f"{inv.id}/{k}", "Payment" if sign * direction > 0 else "Receipt", inv.id,
+                           f"{verb} {_name(ds, inv.supplier)} for "
                            f"{inv.reference or inv.id}" + (f", {p.reference}" if p.reference else ""),
                            [("PAYABLES", co, inv.supplier, sign * clearing, "", ""),
-                            ("BANK", co, "", -sign * p.amount * settlement_rate, "", ""),
-                            ("DISC_RECEIVED", co, "", -sign * p.discount * rate, "", ""),
-                            ("FX_LOSS" if exchange >= 0 else "FX_GAIN", co, "", exchange, "", ""),
-                            ("SETTLEMENT_ROUNDING", co, "", rounding, "", "")], "SUSPENSE")
+                            ("BANK", co, "", -sign * direction * bank_cash, "", ""),
+                            ("DISC_RECEIVED", co, "", -sign * direction * p.discount * rate, "", ""),
+                            ("FX_LOSS" if exchange >= 0 else "FX_GAIN", co, "", direction * exchange, "", ""),
+                            ("SETTLEMENT_ROUNDING", co, "", rounding, "", "")], "SUSPENSE", bank_account=p.bank_account)
         moves = {m.id: m for m in ds.movements}
         by_ret = {r.id: r for r in ds.returns}
         by_inv: dict[str, str] = {}
@@ -541,6 +546,12 @@ class _Journal:
             if posting.date <= day:
                 amount = posting.amount_minor / 100
                 self._post(posting.date, posting.voucher, "Payment", line, f"bank fee on carrier return {posting.reference}",
+                           [("BANK_FEES", company, "", -amount, "", ""), ("BANK", company, "", amount, "", "")],
+                           "SUSPENSE", bank_account=posting.bank_account)
+        for company, line, posting in supplier_statement_fees(ds):
+            if posting.date <= day:
+                amount = self.units.major(posting.amount_minor)
+                self._post(posting.date, posting.voucher, "Payment", line, f"bank fee on supplier debit {posting.reference}",
                            [("BANK_FEES", company, "", -amount, "", ""), ("BANK", company, "", amount, "", "")],
                            "SUSPENSE", bank_account=posting.bank_account)
 
@@ -749,7 +760,7 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
             if b.material is not None:
                 pay[""] = units.add(pay[""], units.total((inv.total, -inv.settled_at(day))))
             else:
-                left = inv.total - sum(p.amount + p.discount for p in inv.payments if p.date <= day)
+                left = inv.total - inv.settled_at(day)
                 rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
                 pay[j._company_of_supplier_invoice(inv)] += (-1 if inv.credit else 1) * _r(_r(left) * rate)
     for bill in carrier_bills(ds):
@@ -807,8 +818,10 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
         add(co, "Suppliers against the open invoices and freight bills", -bal(co, "PAYABLES"), pay.get(co, 0.0),
             "a supplier invoice, payment or freight bill without its voucher")
         if b.material is not None:
-            cash = sum((1 if p.reverses else -1) * units.minor(p.amount)
-                       for inv in ds.supplier_invoices for p in inv.payments if p.date <= day)
+            cash = (sum((1 if p.reverses else -1) * units.minor(p.amount)
+                        for inv in ds.supplier_invoices for p in inv.payments if p.date <= day)
+                    + sum(posting.amount_minor for company, _, posting in supplier_statement_fees(ds)
+                          if company == co and posting.date <= day))
             add(co, "Bank movements against supplier payments and reversals", bal(co, "BANK"), units.major(cash),
                 "a domestic supplier payment or reversal without its bank movement")
         add(co, "GR/IR against the goods received and not invoiced", bal(co, "GRIR"), grir.get(co, 0.0),

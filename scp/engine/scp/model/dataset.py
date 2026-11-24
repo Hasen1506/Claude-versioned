@@ -13,7 +13,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from .actuals import AccuracyRecord, Batch, ClosedOrder, ExecutionSettings, GoodsMovement, InventoryDoc, RolledWeek
-from .carrier_bank import CarrierBankAccount, CarrierBankLine, CarrierBankPeriod
+from .carrier_bank import CarrierBankAccount, CarrierBankLine, CarrierBankPeriod, SupplierPaymentInstruction
 from .common import LocationType, Model
 from .finance import FinanceSettings, ProductionCostPosting
 from .tower import TowerSettings
@@ -101,6 +101,7 @@ class Dataset(Model):
     carrier_bank_accounts: list[CarrierBankAccount] = Field(default_factory=list, exclude_if=lambda rows: not rows)
     carrier_bank_lines: list[CarrierBankLine] = Field(default_factory=list, exclude_if=lambda lines: not lines)
     carrier_bank_periods: list[CarrierBankPeriod] = Field(default_factory=list, exclude_if=lambda rows: not rows)
+    supplier_payment_instructions: list[SupplierPaymentInstruction] = Field(default_factory=list, exclude_if=lambda rows: not rows)
     transport: TransportSettings = Field(default_factory=TransportSettings)
     third_party_orders: list[ThirdPartyOrder] = Field(default_factory=list)
     challans: list[JobWorkChallan] = Field(default_factory=list)

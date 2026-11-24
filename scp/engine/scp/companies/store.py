@@ -1227,6 +1227,8 @@ class Companies:
             except ValueError as exc:
                 raise CompanyError(f"invalid inventory posting control: {exc}", 422) from None
             bank_fields = ("carrier_bank_accounts", "carrier_bank_lines", "carrier_bank_periods")
+            if doc.get("supplier_payment_instructions"):
+                raise CompanyError("restore supplier payment instructions through a company database backup", 422)
             freight = doc.get("freight_orders")
             has_posted_bank_account = isinstance(freight, list) and any(
                 isinstance(entry, dict) and entry.get("bank_account") is not None

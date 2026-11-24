@@ -22,7 +22,7 @@ from unicodedata import normalize
 from pydantic import Field, field_validator, model_validator
 
 from .actuals import StockType
-from .carrier_bank import BankAccountId
+from .carrier_bank import BankAccountId, ReturnMinor
 from .currency import CurrencyUnits, material_units
 from .common import Id, Model, Ref, Unit
 from .sales import Payment
@@ -187,11 +187,24 @@ class SupplierInvoiceLine(Model):
         return round(self.qty * self.price, 2)
 
 
+class SupplierStatementCash(Model):
+    line: Id
+    bank_minor: ReturnMinor
+    instruction: Id | None = Field(None, exclude_if=lambda value: value is None)
+
+
 class SupplierPayment(Payment):
     bank_account: BankAccountId | None = Field(None, exclude_if=lambda value: value is None)
+    statement_cash: SupplierStatementCash | None = Field(None, exclude_if=lambda value: value is None)
     reverses: int | None = Field(None, ge=1, strict=True, exclude_if=lambda value: value is None,
                                  description="Reverses this one-based payment number on the same invoice")
     reason: str | None = Field(None, min_length=1, max_length=200, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def _statement_account(self) -> SupplierPayment:
+        if self.statement_cash and (not self.bank_account or self.reverses and self.statement_cash.instruction):
+            raise ValueError("statement clearing requires its bank account and an invoice cash posting")
+        return self
 
 
 def supplier_payment_reference(value: str) -> str:
@@ -266,7 +279,7 @@ class SupplierInvoice(Model):
         units = material_units(self.currency or "")
         payments = (p for p in self.payments if on is None or p.date <= on)
         if units.digits == 2:
-            return round(sum(p.amount + p.discount for p in payments), 2)
+            return round(sum((-1 if p.reverses else 1) * (p.amount + p.discount) for p in payments), 2)
         return units.major(sum((-1 if p.reverses else 1) * (units.minor(p.amount) + units.minor(p.discount))
                                for p in payments))
 
@@ -294,9 +307,10 @@ class SupplierInvoice(Model):
             raise ValueError("an invoice cancellation is dated on or after the invoice and marks it cancelled")
         if self.cancelled_after is not None and self.cancelled_on is None:
             raise ValueError("a cancellation sequence requires a dated cancellation")
-        if material_units(self.currency or "").digits == 2 and any(p.reverses is not None or p.reason is not None or p.bank_account
-                                                                   for p in self.payments):
-            raise ValueError("bank assignments and dated payment reversals require a domestic JPY or KWD invoice")
+        if material_units(self.currency or "").digits == 2 and any(
+                (p.reverses is not None or p.reason is not None or p.bank_account) and not p.statement_cash
+                for p in self.payments):
+            raise ValueError("two-decimal supplier bank assignments and reversals require statement evidence")
         return self
 
 
