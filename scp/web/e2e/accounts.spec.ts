@@ -236,6 +236,7 @@ test("the dinar purchasing accrual, material trial balance and CSV keep three de
   await page.getByRole("button", { name: "Import a file", exact: true }).click();
   await (await chooser).setFiles({ name: "dinar-stock.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(data)) });
   await expect(page).toHaveURL(/#\/home$/);
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
   await page.goto("/#/buying/owed");
   const accrued = page.locator(".tile").filter({ hasText: "Received, not invoiced" });
   await expect(accrued.getByText("KWD 2.469", { exact: true })).toBeVisible();
@@ -266,6 +267,7 @@ test("a live dinar supplier invoice survives retry and reopens its exact accrual
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByRole("button", { name: /Open Dinar invoice fixture/ }).click();
   await expect(page).toHaveURL(/#\/home$/);
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
   await page.goto("/#/buying/invoices");
   const attempts: string[] = [];
   await page.route("**/api/companies/*/commands", async (route) => {
