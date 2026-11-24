@@ -189,8 +189,19 @@ def _protect_count_limits(old: Dataset, proposed: Dataset, additions: list[Goods
             raise ValueError("set inventory posting limits before reviewing an above-limit count")
         return
     receipt_refs = {r.id for r in [*proposed.receipts, *proposed.closed_orders, *proposed.returns]}
-    governed = {m.id: m for m in additions if m.type in (MovementType.ADJUSTMENT, MovementType.OPENING)
-                or (m.type is MovementType.RECEIPT and m.reference not in receipt_refs)}
+    governed = {}
+    setup_openings = Counter(_signature(m) for m in pending_openings(old))
+    for movement in additions:
+        if movement.type is MovementType.OPENING:
+            # Starting the first count can materialize a balance already saved in setup.
+            # Only one copy of each exact saved opening belongs to that baseline.
+            signature = _signature(movement)
+            if setup_openings[signature]:
+                setup_openings[signature] -= 1
+                continue
+        if (movement.type in (MovementType.ADJUSTMENT, MovementType.OPENING)
+                or movement.type is MovementType.RECEIPT and movement.reference not in receipt_refs):
+            governed[movement.id] = movement
     if not governed:
         if review_requested:
             raise ValueError("this count has no above-limit posting to review")

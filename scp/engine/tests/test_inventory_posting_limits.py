@@ -169,6 +169,17 @@ def test_split_rows_still_use_the_same_physical_line_limit():
     assert refused.status_code == 403 and "KWD 1.234" in refused.text, refused.text
 
 
+def test_first_count_materializes_the_saved_opening_without_treating_it_as_a_new_variance():
+    data = warehouse(item=0, document=0).model_copy(update={"movements": []})
+    owner, counter, cid = team(data)
+    args = open_count(counter, cid, counts(B=9))
+    live = client.get(f"/api/companies/{cid}", headers=h(owner)).json()
+    assert live["dataset"]["inventory_docs"][0]["items"][0]["book_qty"] == 10
+    assert any(move["type"] == "opening" for move in live["dataset"]["movements"])
+    rejected = command(counter, cid, "post", "stock", "count_post", 3, date=DAY, **args)
+    assert rejected.status_code == 403 and "exceeds inventory posting limits" in rejected.text
+
+
 def test_quick_count_observes_limits_and_commits_only_an_accepted_count():
     owner, counter, cid = team(warehouse())
     excessive = command(counter, cid, "quick", "stock", "count", 1, date=DAY, counts=counts(B=8))
