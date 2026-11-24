@@ -12597,7 +12597,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "approve" | "send" | "send_all" | "confirm" | "receive" | "change" | "cancel" | "create_agreement" | "enter_invoice" | "release_invoice" | "pay_invoice" | "cancel_invoice" | "return_goods";
+            action: "approve" | "send" | "send_all" | "confirm" | "receive" | "change" | "cancel" | "create_agreement" | "enter_invoice" | "release_invoice" | "pay_invoice" | "reverse_invoice_payment" | "cancel_invoice" | "return_goods";
             /**
              * Po
              * @default
@@ -12651,6 +12651,8 @@ export interface components {
             delivery_costs: number;
             /** Amount */
             amount?: number | null;
+            /** Payment Number */
+            payment_number?: number | null;
             stock_type?: components["schemas"]["StockType"] | null;
             /**
              * Replace
@@ -17896,7 +17898,7 @@ export interface components {
             /** Released On */
             released_on?: string | null;
             /** Payments */
-            payments?: components["schemas"]["Payment"][];
+            payments?: components["schemas"]["SupplierPayment"][];
             /**
              * Return Id
              * @description Credit memo: the return it credits
@@ -17996,7 +17998,7 @@ export interface components {
             /** Lines */
             lines: components["schemas"]["InvoiceLineView"][];
             /** Payments */
-            payments: components["schemas"]["Payment"][];
+            payments: components["schemas"]["SupplierPayment"][];
             /** Return Id */
             return_id: string | null;
             /**
@@ -18024,6 +18026,40 @@ export interface components {
             kind: "supplier_out";
             /** Supplier */
             supplier: string;
+        };
+        /** SupplierPayment */
+        SupplierPayment: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Amount */
+            amount: number;
+            /**
+             * Reference
+             * @description Bank reference
+             * @default
+             */
+            reference: string;
+            /**
+             * Discount
+             * @description Cash discount taken with this payment
+             * @default 0
+             */
+            discount: number;
+            /**
+             * Fx Rate
+             * @description Company currency per invoice currency unit at settlement (supplier payments)
+             */
+            fx_rate?: number | null;
+            /**
+             * Reverses
+             * @description Reverses this one-based payment number on the same invoice
+             */
+            reverses?: number | null;
+            /** Reason */
+            reason?: string | null;
         };
         /** SupplierPriceChip */
         "SupplierPriceChip-Input": {

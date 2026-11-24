@@ -400,6 +400,20 @@ class _Journal:
     def money(self, day: date) -> None:
         ds = self.ds
         for inv in ds.supplier_invoices:
+            if self.units.digits != 2:
+                for number, payment in enumerate(inv.payments, 1):
+                    if payment.date > day:
+                        break
+                    sign = -1 if payment.reverses else 1
+                    cash, discount = payment.amount, payment.discount
+                    narration = (f"reversed payment {inv.id}/{payment.reverses}: {payment.reason}"
+                                 if payment.reverses else f"paid to {_name(ds, inv.supplier)} for {inv.reference or inv.id}")
+                    self._post(payment.date, f"{inv.id}/{number}", "Receipt" if payment.reverses else "Payment", inv.id,
+                               f"{narration}, {payment.reference}",
+                               [("PAYABLES", "", inv.supplier, sign * self.units.total((cash, discount)), "", ""),
+                                ("BANK", "", "", -sign * cash, "", ""),
+                                ("DISC_RECEIVED", "", "", -sign * discount, "", "")], "SUSPENSE")
+                continue
             if not inv.active_at(day):
                 continue
             rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
@@ -733,7 +747,7 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
     for inv in ds.supplier_invoices:
         if inv.active_at(day):
             if b.material is not None:
-                pay[""] = units.add(pay[""], inv.total)
+                pay[""] = units.add(pay[""], units.total((inv.total, -inv.settled_at(day))))
             else:
                 left = inv.total - sum(p.amount + p.discount for p in inv.payments if p.date <= day)
                 rate = inv.fx_rate if inv.fx_rate is not None else fx(ds, inv.currency)
@@ -792,6 +806,11 @@ def _checks(ds: Dataset, day: date, b, totals, vs: list[Voucher]) -> list[Accoun
             "an invoice or payment without its voucher")
         add(co, "Suppliers against the open invoices and freight bills", -bal(co, "PAYABLES"), pay.get(co, 0.0),
             "a supplier invoice, payment or freight bill without its voucher")
+        if b.material is not None:
+            cash = sum((1 if p.reverses else -1) * units.minor(p.amount)
+                       for inv in ds.supplier_invoices for p in inv.payments if p.date <= day)
+            add(co, "Bank movements against supplier payments and reversals", bal(co, "BANK"), units.major(cash),
+                "a domestic supplier payment or reversal without its bank movement")
         add(co, "GR/IR against the goods received and not invoiced", bal(co, "GRIR"), grir.get(co, 0.0),
             "a receipt or invoice without its matching clearing value or voucher")
         if ds.entities:

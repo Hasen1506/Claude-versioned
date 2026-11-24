@@ -15,6 +15,7 @@ from ..model import GoodsMovement, MovementType, PurchaseOrder, SupplierInvoice
 from ..model.finance import validate_tally_bank_ledgers
 from ..purchasing.payables import (
     cancel_invoice, enter_invoice, invoice_entity, lines_index, pay_invoice, posting_rate, release_invoice,
+    reverse_invoice_payment,
 )
 from ..validate.lenient import lenient
 
@@ -37,7 +38,8 @@ def _rows(doc: dict, name: str) -> dict[str, dict]:
 
 
 def protect(before: dict, after: dict, email: str, *, allow_production_posting: bool = False,
-            freight_action: str = "", allow_carrier_bank: bool = False, count_command: CountCommand | None = None) -> dict:
+            freight_action: str = "", allow_carrier_bank: bool = False, count_command: CountCommand | None = None,
+            supplier_payment_action: str = "") -> dict:
     """Return a normalized document or refuse an invalid financial state transition."""
     try:
         validate_tally_bank_ledgers(after)
@@ -335,7 +337,14 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
                 raise TransactionRefused(f"{iid}: posted payments cannot be removed or changed")
             for payment in target.payments[len(prior.payments):]:
                 open_period(payment.date)
-                working, _ = pay_invoice(working, iid, payment.amount, payment.date, payment.reference)
+                if monetary.digits != 2:
+                    action = "reverse_invoice_payment" if payment.reverses else "pay_invoice"
+                    if supplier_payment_action != action:
+                        raise TransactionRefused("domestic supplier settlements require a signed-in company command")
+                if payment.reverses:
+                    working, _ = reverse_invoice_payment(working, iid, payment.reverses, payment.date, payment.reason or "")
+                else:
+                    working, _ = pay_invoice(working, iid, payment.amount, payment.date, payment.reference)
                 if working.supplier_invoices[[i.id for i in working.supplier_invoices].index(iid)].payments[-1] != payment:
                     raise TransactionRefused(f"{iid}: the payment/discount does not match the amount due")
             if (target.cancelled, target.cancelled_on, target.cancelled_after) != (

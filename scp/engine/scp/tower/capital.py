@@ -19,6 +19,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from ..model import Dataset, LocationType, MovementType
+from ..model.currency import material_units
 
 EPS = 1e-9
 BUCKETS = ("not yet due", "1–30 days overdue", "31–60 days overdue", "over 60 days overdue")
@@ -201,7 +202,10 @@ def capital_at(ds: Dataset, unit_value: dict[tuple[str, str], float], on_hand: d
             c.n_inv += 1
     c.ar = max(0.0, c.ar)
     # payables and purchases billed (company currency), with ageing
-    sdocs = [s for s in ds.supplier_invoices if not s.cancelled and s.date < as_of]
+    units = material_units(ds.settings.currency)
+    domestic = units.digits != 2
+    cutoff = as_of - dt.timedelta(days=1)
+    sdocs = [s for s in ds.supplier_invoices if (s.active_at(cutoff) if domestic else not s.cancelled and s.date < as_of)]
     c.ap_days = span(min((s.date for s in sdocs), default=None))
     for s in sdocs:
         fx = rate(s.currency)
@@ -209,13 +213,13 @@ def capital_at(ds: Dataset, unit_value: dict[tuple[str, str], float], on_hand: d
             c.foreign += 1
             continue
         sign = -1.0 if s.credit else 1.0
-        paid = sum(p.amount + p.discount for p in s.payments if p.date < as_of)
-        left = max(0.0, s.total - paid) * fx
-        c.ap += sign * left
-        c.ap_by[s.supplier][0] += sign * left
-        if left > 0.005:
+        paid = s.settled_at(cutoff) if domestic else sum(p.amount + p.discount for p in s.payments if p.date < as_of)
+        left = max(0.0, units.total((s.total, -paid)) if domestic else s.total - paid) * fx
+        c.ap = units.add(c.ap, sign * left)
+        c.ap_by[s.supplier][0] = units.add(c.ap_by[s.supplier][0], sign * left)
+        if (units.minor(left) > 0 if domestic else left > 0.005):
             row = c.ap_age[CREDIT if sign < 0 else bucket(as_of, s.due_date)]
-            row[0] += sign * left
+            row[0] = units.add(row[0], sign * left)
             row[1] += 1
         if s.date >= since:
             c.bought += sign * s.total * fx

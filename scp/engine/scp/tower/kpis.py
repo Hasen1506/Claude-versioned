@@ -13,6 +13,7 @@ from ..actuals.stock import accuracy_report
 from ..finance.result import ServeRow
 from ..model import Dataset, LocationType, MovementType
 from ..model.actuals import ClosedOrder
+from ..model.currency import material_units
 from ..plan.result import PlanResult
 from .capital import BUCKETS, CREDIT, Capital, capital_at, stocking_on_hand
 from .result import Kpi, KpiPoint, KpiRow, WorkItem
@@ -382,7 +383,8 @@ class Kpis:
             return [KpiPoint(as_of=x.as_of, value=None if (v := get(x)) is None else round(v, 4)) for x in past]
 
         def ageing(age: dict[str, list[float]]) -> list[KpiRow]:
-            return [KpiRow(label=b, value=round(age[b][0], 2), numerator=age[b][1]) for b in (*BUCKETS, CREDIT)
+            units = material_units(cur)
+            return [KpiRow(label=b, value=units.amount(age[b][0]), numerator=age[b][1]) for b in (*BUCKETS, CREDIT)
                     if b in age]
 
         def short(what: str, days: int, total: float) -> str:

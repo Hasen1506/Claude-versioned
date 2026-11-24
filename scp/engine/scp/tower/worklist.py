@@ -15,6 +15,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from ..model import Dataset
+from ..model.currency import material_units
 from ..plan.result import PlanResult
 from ..promise.result import PromiseResult
 from ..actuals.result import AccuracyReport
@@ -131,14 +132,15 @@ def _money(ds: Dataset, add) -> None:
     start = ds.settings.planning_start
     cur = ds.settings.currency
     for inv in ds.supplier_invoices:
-        if inv.cancelled or inv.credit or inv.open <= 0.005:
+        digits = material_units(inv.currency or cur).digits
+        if inv.cancelled or inv.credit or inv.open <= (0.005 if digits == 2 else 0):
             continue
         if why := still_blocked(ds, inv):
             add(Raw("INVOICE_BLOCKED", "warning", f"Supplier invoice {inv.id} from {inv.supplier} is blocked for payment: "
                     + "; ".join(b.split(": ", 1)[1] for b in why), order_id=inv.id, date=inv.date, qty=inv.open))
         elif inv.due_date < start:
             add(Raw("PAYABLE_OVERDUE", "warning", f"Supplier invoice {inv.id} from {inv.supplier} was due "
-                    f"{inv.due_date.isoformat()}: {inv.open:,.2f} {inv.currency or cur} unpaid", order_id=inv.id,
+                    f"{inv.due_date.isoformat()}: {inv.open:,.{digits}f} {inv.currency or cur} unpaid", order_id=inv.id,
                     date=inv.due_date, qty=inv.open))
     open_orders = {d.order for d in ds.demand if d.order and d.qty > 0}
     for so in ds.sales_orders:

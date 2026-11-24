@@ -35,6 +35,7 @@ from ..actuals.post import delivered, ordered_now
 from ..freight import carrier_bills
 from ..model import Dataset
 from ..model.common import Out
+from ..model.currency import material_units
 from ..model.transport import CarrierBillAdjustment
 from ..plan import PlanResult
 from ..plan.costing import fx
@@ -75,6 +76,8 @@ def cash_view(ds: Dataset, plan: PlanResult, weeks: int | None = None) -> CashVi
     n = weeks or max(1, math.ceil(ds.settings.horizon_days / 7))
     end = start + timedelta(weeks=n)
     view = CashView(currency=ds.settings.currency, start=start)
+    units = material_units(view.currency)
+    domestic = units.digits != 2
     flows: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
     def add(kind: str, day: date, amount: float) -> None:
@@ -127,8 +130,12 @@ def cash_view(ds: Dataset, plan: PlanResult, weeks: int | None = None) -> CashVi
     for si in ds.supplier_invoices:
         if si.cancelled:
             continue
-        left = si.total - sum(p.amount + p.discount for p in si.payments)
-        add("supplier_invoices", si.due_date, (-1 if si.credit else 1) * left * fx(ds, si.currency))
+        if domestic and si.currency == view.currency and si.kind == "invoice":
+            last_reversal = max((p.date for p in si.payments if p.reverses), default=si.due_date)
+            add("supplier_invoices", max(si.due_date, last_reversal), si.open)
+        else:
+            left = si.total - sum(p.amount + p.discount for p in si.payments)
+            add("supplier_invoices", si.due_date, (-1 if si.credit else 1) * left * fx(ds, si.currency))
     from ..purchasing import purchase_orders
     for po in purchase_orders(ds, start):
         if not po.supplier:
@@ -166,18 +173,18 @@ def cash_view(ds: Dataset, plan: PlanResult, weeks: int | None = None) -> CashVi
 
     cum = 0.0
     for i in range(n):
-        by = {k: round(v, 2) for k, v in flows[i].items() if abs(v) > 0.005}
-        rec = round(sum(v for k, v in by.items() if k in IN), 2)
-        pay = round(-sum(v for k, v in by.items() if k in OUT), 2)
-        cum = round(cum + rec - pay, 2)
-        view.weeks.append(CashWeek(start=start + timedelta(weeks=i), receipts=rec, payments=pay, net=round(rec - pay, 2),
+        by = {k: units.amount(v) for k, v in flows[i].items() if (units.minor(v) != 0 if domestic else abs(v) > 0.005)}
+        rec = units.total(v for k, v in by.items() if k in IN)
+        pay = units.total(-v for k, v in by.items() if k in OUT)
+        cum = units.total((cum, rec, -pay))
+        view.weeks.append(CashWeek(start=start + timedelta(weeks=i), receipts=rec, payments=pay, net=units.total((rec, -pay)),
                                    cumulative=cum, by=by))
-        if cum < view.lowest - 0.005:
+        if (units.minor(cum) < units.minor(view.lowest) if domestic else cum < view.lowest - 0.005):
             view.lowest, view.lowest_week = cum, start + timedelta(weeks=i)
-    view.receipts = round(sum(w.receipts for w in view.weeks), 2)
-    view.payments = round(sum(w.payments for w in view.weeks), 2)
+    view.receipts = units.total(w.receipts for w in view.weeks)
+    view.payments = units.total(w.payments for w in view.weeks)
     for f in ("overdue_in", "overdue_out", "later_in", "later_out"):
-        setattr(view, f, round(getattr(view, f), 2))
+        setattr(view, f, units.amount(getattr(view, f)))
     if view.unpriced:
         one = view.unpriced == 1
         view.notes.append(f"{view.unpriced} sale{'' if one else 's'} of the plan {'has' if one else 'have'} no price "

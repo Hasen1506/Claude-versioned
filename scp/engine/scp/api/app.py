@@ -866,7 +866,7 @@ class PoActionRequest(Out):
     model_config = ConfigDict(allow_inf_nan=False)
     dataset: PlanData
     action: Literal["approve", "send", "send_all", "confirm", "receive", "change", "cancel", "create_agreement",
-                    "enter_invoice", "release_invoice", "pay_invoice", "cancel_invoice", "return_goods"]
+                    "enter_invoice", "release_invoice", "pay_invoice", "reverse_invoice_payment", "cancel_invoice", "return_goods"]
     po: str = ""                                    # the order; for the invoice actions the invoice (enter: the order
                                                     # whose receipts it bills, when no lines are given)
     lines: list[PoLineInput] | None = None          # None = every open line, as ordered
@@ -885,6 +885,7 @@ class PoActionRequest(Out):
     return_id: str | None = None                    # enter_invoice: the return a credit memo credits
     delivery_costs: float = Field(0.0, ge=0)        # enter_invoice: freight and other costs the order did not plan
     amount: float | None = None                     # pay_invoice (default: what is open, less the discount in time)
+    payment_number: int | None = Field(None, ge=1, strict=True)   # original payment on reverse_invoice_payment
     stock_type: StockType | None = None             # return_goods: where the goods are (default: blocked)
     replace: bool = False                           # return_goods: the supplier replaces them (else credits them)
 
@@ -897,6 +898,9 @@ class PoActionResponse(Out):
 
 @app.post("/api/purchasing/act", response_model=PoActionResponse)
 def post_po_action(req: PoActionRequest) -> PoActionResponse:
+    from ..model.currency import MATERIAL_CURRENCIES
+    if req.dataset.settings.currency in MATERIAL_CURRENCIES and req.action in ("pay_invoice", "reverse_invoice_payment"):
+        raise HTTPException(422, "domestic supplier settlements require a signed-in company command")
     return _apply_po_action(req, who_asks() or req.by)
 
 
@@ -910,7 +914,7 @@ def _apply_po_action(req: PoActionRequest, actor: str) -> PoActionResponse:
                                   location=req.location, product=req.product, valid_to=req.valid_to, qty=req.qty,
                                   tax=req.tax, kind=req.kind, return_id=req.return_id, amount=req.amount,
                                   stock_type=req.stock_type, replace=req.replace,
-                                  delivery_costs=req.delivery_costs)
+                                  delivery_costs=req.delivery_costs, payment_number=req.payment_number)
     except (PurchasingError, CurrencyPrecisionError) as e:
         raise HTTPException(409, str(e)) from e
     if req.action == "receive":

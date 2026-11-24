@@ -7,8 +7,9 @@ from pydantic import Field
 
 from ..carrier_bank import CarrierBankView
 from ..freight import CarrierBill
-from ..model import Approval, Payment, PriceScale, ConfirmedDelivery
+from ..model import Approval, PriceScale, ConfirmedDelivery
 from ..model.common import Out
+from ..model.purchasing import SupplierPayment
 from .spread import LeadTimeSpread
 from .spend import SpendView
 
@@ -254,7 +255,7 @@ class SupplierInvoiceView(Out):
     released_on: dt.date | None
     days_overdue: int
     lines: list[InvoiceLineView]
-    payments: list[Payment]
+    payments: list[SupplierPayment]
     return_id: str | None = None
     note: str = ""
 
