@@ -83,6 +83,67 @@ test("a live physical count retains unsaved edits and can confirm one posted dif
   expect(saved.dataset.location_products[0].on_hand).toBe(94);
 });
 
+test("a different reviewer can post a saved above-limit stock count", async ({ page, request }) => {
+  const stamp = Date.now();
+  const ownerEmail = `reviewer-${stamp}@example.invalid`;
+  const counterEmail = `counter-${stamp}@example.invalid`;
+  const password = "fixture-only-autumn-rowan";
+  const date = "2026-01-04";
+  const signup = async (email: string) => {
+    const response = await request.post("/api/auth/signup", { data: { email, password, name: email.split("@")[0] } });
+    expect(response.ok(), await response.text()).toBe(true);
+    return { Authorization: `Bearer ${(await response.json()).token}` };
+  };
+  const owner = await signup(ownerEmail);
+  const counter = await signup(counterEmail);
+  const company = await request.post("/api/companies", { headers: owner, data: { dataset: {
+    settings: { company_name: "Count review fixture", currency: "KWD", planning_start: "2026-01-05",
+      horizon_days: 28, default_calendar: "CAL" },
+    calendars: [{ id: "CAL", workdays: [0, 1, 2, 3, 4, 5, 6] }],
+    locations: [{ id: "P", type: "plant" }],
+    products: [{ id: "A", type: "FG", standard_cost: 1.234 }],
+    location_products: [{ location: "P", product: "A", on_hand: 100 }],
+    movements: [{ id: "GM-00001", type: "opening", date, location: "P", product: "A", qty: 100,
+      standard_price: 1.234, opening_standards: { P: { A: 1.234 } } }],
+    finance: { inventory_count_limits: { item_minor: 1000, document_minor: 1000, reviewers: [ownerEmail] },
+      control_roles: { warehouse: [ownerEmail, counterEmail], inventory_adjustment: [ownerEmail, counterEmail] } },
+    inventory_docs: [{ id: "PI-00001", date, items: [{ location: "P", product: "A", book_qty: 100 }] }],
+  } } });
+  expect(company.ok(), await company.text()).toBe(true);
+  const path = `/api/companies/${(await company.json()).id}`;
+  const members = await request.post(`${path}/members`, { headers: owner, data: { email: counterEmail, role: "planner" } });
+  expect(members.ok(), await members.text()).toBe(true);
+  const rows = await members.json() as { email: string; invite_link?: string }[];
+  const token = rows.find((member) => member.email === counterEmail)?.invite_link?.split("/").at(-1);
+  expect(token).toBeTruthy();
+  const joined = await request.post("/api/auth/invites/accept", { headers: counter, data: { token } });
+  expect(joined.ok(), await joined.text()).toBe(true);
+  const count = await request.post(`${path}/commands`, { headers: counter, data: {
+    id: "review-fixture-entry", base_revision: 1, kind: "stock", action: "count_enter", posting_date: date,
+    parameters: { doc: "PI-00001", counts: [{ location: "P", product: "A", qty: 99 }] },
+  } });
+  expect(count.ok(), await count.text()).toBe(true);
+
+  await page.goto("/#/account");
+  await page.getByRole("tab", { name: "Sign in", exact: true }).click();
+  await page.getByLabel("E-mail").fill(ownerEmail);
+  await page.getByLabel(/^Password/).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: /Open Count review fixture/ }).click();
+  await expect(page).toHaveURL(/#\/home$/);
+  await page.goto("/#/execution/count");
+  await page.getByRole("button", { name: "Post differences", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("KWD 1.234 exceeds inventory posting limits");
+  await page.getByLabel("Reason for above-limit posting").fill("Independently confirmed at the warehouse");
+  await page.getByRole("button", { name: "Review and post above limit" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "PI-00001 posted" })).toContainText("1 difference");
+  const stored = await request.get(path, { headers: owner });
+  expect(stored.ok(), await stored.text()).toBe(true);
+  const saved = await stored.json();
+  expect(saved.meta.revision).toBe(3);
+  expect(saved.dataset.movements.filter((m: { type: string }) => m.type === "adjustment")).toMatchObject([{ qty: -1, date }]);
+});
+
 test("stock in the books at a moving average: a receipt at landed cost, a dearer invoice moves it", async ({ page }) => {
   test.setTimeout(180_000);
   await openKaveri(page);

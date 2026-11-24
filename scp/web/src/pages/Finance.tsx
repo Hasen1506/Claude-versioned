@@ -439,7 +439,7 @@ function OptionsEditor({ ds }: { ds: Dataset }) {
   return (
     <div className="grid-2" style={{ alignItems: "start" }}>
       <Panel title="Capacity options & discount rate">
-        <SchemaForm defName="FinanceSettings" value={(ds.finance ?? {}) as unknown as Obj}
+        <SchemaForm defName="FinanceSettings" hide={["inventory_count_limits"]} value={(ds.finance ?? {}) as unknown as Obj}
           onChange={(next) => store.update((d) => { d.finance = next as unknown as Dataset["finance"]; })} />
       </Panel>
       <Reading formula="An option adds regular hours to one resource in every S&OP bucket (added hours per week × bucket days ÷ 7). Discount rate empty = the company WACC."

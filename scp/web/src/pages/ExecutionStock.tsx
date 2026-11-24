@@ -12,6 +12,19 @@ import { store, useStore } from "../state/store";
 
 /** Post through the engine, keep the new dataset, re-read the journal; the message in names and the whole report. */
 export async function postAct(ds: Dataset, action: PostAction, extra: PostExtra = {}): Promise<{ text: string; report: ActionReport }> {
+  const company = store.get().company;
+  if (company?.live && ds.finance?.inventory_count_limits && (action === "count" || action === "reverse")) {
+    const start = ds.settings.planning_start;
+    const movement = ds.movements?.find((m) => m.id === extra.movement);
+    const prior = new Date(Date.parse(start) - 86_400_000).toISOString().slice(0, 10);
+    const date = extra.date ?? (action === "count" ? prior : movement && movement.date > start ? movement.date : start);
+    const { date: _date, ...parameters } = extra;
+    const reply = await store.postCompanyCommand(company.id, { id: crypto.randomUUID(), kind: "stock", action,
+      posting_date: date, parameters });
+    const { report } = reply.result as { report: ActionReport };
+    await store.run("actuals");
+    return { text: namesOf(store.get().dataset ?? ds).text(report.message), report };
+  }
   const out = await api.postActual(ds, action, extra);
   store.replace(out.dataset, ds);
   await store.run("actuals");
@@ -195,6 +208,11 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const companyId = useStore((s) => s.company?.live ? s.company.id : null);
+  const owner = useStore((s) => s.company?.role === "owner");
+  const actor = useStore((s) => s.session?.user);
+  const limits = ds.finance?.inventory_count_limits;
+  const canReview = !!companyId && !!actor
+    && (limits?.reviewers ?? []).some((email) => email.toLowerCase() === actor.email.trim().toLowerCase());
   const docs = (ds.inventory_docs ?? []);
   const open = docs.filter((d) => (d.status ?? "open") === "open");
   const latestPosting = docs.slice(-3).reverse().find((d) => d.status === "posted");
@@ -213,7 +231,8 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
         const id = action === "count_post" ? countPostingId(target.id) : action === "count_book"
           ? `inventory-count:book:${target.id}` : crypto.randomUUID();
         const reply = await store.postCompanyCommand(companyId, { id, kind: "stock", action,
-          posting_date: extra.date ?? target.counted_on ?? target.date, parameters: { doc: target.id, counts } });
+          posting_date: extra.date ?? target.counted_on ?? target.date,
+          parameters: { doc: target.id, counts, ...(extra.review_reason ? { review_reason: extra.review_reason } : {}) } });
         await Promise.allSettled([store.run("actuals")]);
         setMsg(nm.text((reply.result as { report: ActionReport }).report.message));
       } else {
@@ -240,6 +259,7 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
   };
   return (
     <Panel title="Physical inventory">
+      {companyId && owner && <InventoryPostingPolicy key={JSON.stringify([companyId, limits])} ds={ds} />}
       <Edits><div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
         <select className="input" style={{ width: 220 }} value={place} onChange={(e) => setPlace(e.target.value)} aria-label="Place to count">
           <option value="">Choose a place…</option>
@@ -263,7 +283,8 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
       {msg && <div className="banner info" role="status" style={{ marginTop: 10 }}><Badge sev="ok">Done</Badge><span>{msg}</span><span className="spacer" />
         <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
       {err && <div className="banner error" role="alert" style={{ marginTop: 10 }}><span>{err}</span></div>}
-      {open.map((d) => <CountSheet key={d.id} d={d} busy={busy} run={run} />)}
+      {open.map((d) => <CountSheet key={d.id} d={d} busy={busy} run={run}
+        controlled={!!companyId && !!limits} reviewer={canReview ? actor?.id : undefined} />)}
       {!open.length && <p className="small muted" style={{ marginTop: 10 }}>No count is under way.
         {docs.length > 0 && <> Last: {docs.slice(-3).reverse().map((d) => `${d.id} (${d.status}, ${day(d.counted_on ?? d.date)})`).join(", ")}.</>}</p>}
       {companyId && latestPosting && <button className="btn sm" disabled={busy}
@@ -272,14 +293,47 @@ export function PhysicalInventory({ ds, nodes }: { ds: Dataset; nodes: [string, 
   );
 }
 
-function CountSheet({ d, busy, run }: { d: InventoryDoc; busy: boolean; run: (a: PostAction, e: PostExtra) => Promise<boolean> }) {
+function InventoryPostingPolicy({ ds }: { ds: Dataset }) {
+  const limits = ds.finance?.inventory_count_limits;
+  const [item, setItem] = useState(limits?.item_minor?.toString() ?? "");
+  const [document, setDocument] = useState(limits?.document_minor?.toString() ?? "");
+  const [reviewers, setReviewers] = useState((limits?.reviewers ?? []).join(", "));
+  const valid = (x: string) => /^\d+$/.test(x.trim()) && Number.isSafeInteger(Number(x));
+  const write = (next: NonNullable<Dataset["finance"]>["inventory_count_limits"]) => store.update((d) => {
+    d.finance = { ...d.finance, inventory_count_limits: next } as Dataset["finance"];
+  });
+  return <details style={{ marginBottom: 10 }}>
+    <summary>Inventory posting limits {limits ? "· active" : ""}</summary>
+    <Edits><div className="row wrap" style={{ marginTop: 8 }}>
+      <label className="field-inline">Per line ({ds.settings.currency} minor units)
+        <input className="input sm" inputMode="numeric" value={item} onChange={(e) => setItem(e.target.value)} /></label>
+      <label className="field-inline">Per document ({ds.settings.currency} minor units)
+        <input className="input sm" inputMode="numeric" value={document} onChange={(e) => setDocument(e.target.value)} /></label>
+      <label className="field-inline">Reviewer emails
+        <input className="input sm" value={reviewers} onChange={(e) => setReviewers(e.target.value)} placeholder="Comma separated" /></label>
+      <button className="btn sm" disabled={!valid(item) || !valid(document)}
+        onClick={() => write({ item_minor: Number(item), document_minor: Number(document),
+          reviewers: reviewers.split(",").map((email) => email.trim()).filter(Boolean) })}>Save posting limits</button>
+      {limits && <button className="btn sm ghost" onClick={() => write(null)}>Remove posting limits</button>}
+    </div></Edits>
+  </details>;
+}
+
+function CountSheet({ d, busy, run, controlled, reviewer }: {
+  d: InventoryDoc; busy: boolean; run: (a: PostAction, e: PostExtra) => Promise<boolean>;
+  controlled: boolean; reviewer?: string;
+}) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [book, setBook] = useState(false);
   const [countDate, setCountDate] = useState(d.date);
+  const [reason, setReason] = useState("");
   const needsBook = d.book_basis === "at_count" && !d.counted_on;
   const key = (i: CountItem) => `${i.location}|${i.product}|${i.batch ?? ""}|${i.stock_type ?? "unrestricted"}`;
   const items = d.items ?? [];
   const counted = items.filter((i) => i.counted !== null && i.counted !== undefined).length;
+  const unattributed = items.filter((i) => i.counted != null && !i.counted_by);
+  const independentReviewer = !!reviewer && items.length > 0
+    && items.every((i) => i.counted_by && i.counted_by !== reviewer);
   const changed = Object.entries(edits).filter(([, v]) => v.trim() !== "" && Number.isFinite(Number(v)) && Number(v) >= 0);
   const dirty = Object.keys(edits).length;
   const save = () => run("count_enter", { doc: d.id, counts: changed.map(([k, v]) => {
@@ -303,6 +357,17 @@ function CountSheet({ d, busy, run }: { d: InventoryDoc; busy: boolean; run: (a:
           <button className="btn sm ghost" disabled={busy} onClick={() => run("count_cancel", { doc: d.id })}>Cancel the count</button>
         </></Edits>
       </div>
+      {!needsBook && controlled && !dirty && unattributed.length > 0 && <Edits>
+        <button className="btn sm" disabled={busy} onClick={() => run("count_enter", { doc: d.id,
+          counts: unattributed.map((i) => ({ location: i.location, product: i.product, batch: i.batch ?? null,
+            stock_type: i.stock_type, qty: i.counted ?? null })) })}>Confirm unattributed quantities as my count</button>
+      </Edits>}
+      {!needsBook && independentReviewer && <Edits><div className="row wrap">
+        <label className="field-inline">Reason for above-limit posting
+          <input className="input sm" value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} /></label>
+        <button className="btn sm" disabled={busy || dirty > 0 || counted !== items.length || !reason.trim()}
+          onClick={() => run("count_post", { doc: d.id, review_reason: reason.trim() })}>Review and post above limit</button>
+      </div></Edits>}
       {!needsBook && <Edits><div className="table-wrap" style={{ maxHeight: 420 }}>
         <table className="t">
           <thead><tr><th>Product</th><th>Batch</th><th>Stock</th>{book && <th className="num">Book quantity</th>}<th className="num">Counted</th>

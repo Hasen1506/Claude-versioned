@@ -464,7 +464,7 @@ def post(ds: Dataset, action: str, *, order: str | None = None, qty: float | Non
          product: str | None = None, to_type: StockType | None = None, movement: str | None = None,
          doc: str | None = None, nodes: list[tuple[str, str]] | None = None, block: bool = True,
          uncounted_zero: bool = False, classes: list[str] | None = None,
-         book_basis: CountBookBasis = "frozen") -> tuple[Dataset, ActionReport]:
+         book_basis: CountBookBasis = "frozen", count_actor: str | None = None) -> tuple[Dataset, ActionReport]:
     lot = lot or {}
     if qty is not None and action in {"receive", "deliver", "ship", "move", "scrap"}:
         qty = round(float(qty), 6)
@@ -488,7 +488,7 @@ def post(ds: Dataset, action: str, *, order: str | None = None, qty: float | Non
         if action == "count_book":
             return capture_count_book(ds, doc or "", on)
         if action == "count_enter":
-            return enter_counts(ds, doc or "", counts or [])
+            return enter_counts(ds, doc or "", counts or [], actor=count_actor)
         if action == "count_post":
             return post_counts(ds, doc or "", uncounted_zero)
         if action == "count_cancel":

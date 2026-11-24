@@ -19,6 +19,7 @@ from ..model import Dataset
 from ..model.common import Model, Out
 from ..transactions import atomic
 from .store import CAN_EDIT, Companies, CompanyDoc, CompanyError, User, _canonical, _iso, _now
+from .materials import CountCommand
 from .patch import keys_of
 
 _MISSING = object()
@@ -148,11 +149,17 @@ def execute(c: Companies, user: User, cid: str, req: CommandRequest,
             freight_action = (req.action if req.kind == "transport" else
                               {"reverse_cash": "reverse_bank_cash", "allocate_return": "allocate_return"}.get(req.action, "")
                               if req.kind == "carrier_bank" else "")
+            count_command = None
+            if req.kind == "stock" and req.action in ("count_enter", "count_post") and not c.is_key(user):
+                count_command = CountCommand(req.action, req.parameters.get("doc") or "",
+                                             req.parameters.get("counts") or [],
+                                             (req.parameters.get("review_reason") or "").strip(), user.id)
             saved = c.save(user, cid, document, req.base_revision, action="posted",
                            allow_production_posting=req.kind == "production_cost",
-                           count_projection=req.kind == "stock" and req.action == "count_post",
+                           count_projection=req.kind == "stock" and (req.action == "count_post" or
+                               req.action == "count" and ds.finance.inventory_count_limits is not None),
                            allow_carrier_bank=req.kind == "carrier_bank",
-                           freight_action=freight_action)
+                           freight_action=freight_action, count_command=count_command)
             if saved.held is not None:
                 raise CompanyError("this command needs a master-data change that has not been approved; approve it "
                                    "before posting the transaction", 409)

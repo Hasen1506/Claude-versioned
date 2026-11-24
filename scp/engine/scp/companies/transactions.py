@@ -7,6 +7,7 @@ This applies to whole saves, patches, merges and restores alike.
 from __future__ import annotations
 
 from datetime import date
+from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
@@ -16,6 +17,9 @@ from ..purchasing.payables import (
     cancel_invoice, enter_invoice, invoice_entity, lines_index, pay_invoice, posting_rate, release_invoice,
 )
 from ..validate.lenient import lenient
+
+if TYPE_CHECKING:
+    from .materials import CountCommand
 
 
 class TransactionRefused(ValueError):
@@ -33,7 +37,7 @@ def _rows(doc: dict, name: str) -> dict[str, dict]:
 
 
 def protect(before: dict, after: dict, email: str, *, allow_production_posting: bool = False,
-            freight_action: str = "", allow_carrier_bank: bool = False) -> dict:
+            freight_action: str = "", allow_carrier_bank: bool = False, count_command: CountCommand | None = None) -> dict:
     """Return a normalized document or refuse an invalid financial state transition."""
     try:
         validate_tally_bank_ledgers(after)
@@ -343,7 +347,7 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         from .outside import protect_outside
         protect_outside(old_ds, ds, open_period)
         from .materials import protect_materials
-        protect_materials(old_ds, ds, open_period)
+        protect_materials(old_ds, ds, open_period, email.strip().lower(), count_command)
         from ..accounting.production import protect_orders
         protect_orders(old_ds, ds)
         books = None

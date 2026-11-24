@@ -5706,6 +5706,11 @@ export interface components {
              * @description What was found; empty until counted
              */
             counted?: number | null;
+            /**
+             * Counted By
+             * @description Stable account ID recorded by the server when entering the count
+             */
+            counted_by?: string | null;
         };
         /** CreatePoRequest */
         CreatePoRequest: {
@@ -7433,6 +7438,8 @@ export interface components {
              * @default false
              */
             separate_payments: boolean;
+            /** @description Optional physical inventory posting limits */
+            inventory_count_limits?: components["schemas"]["InventoryCountLimits"] | null;
             /** Capacity Options */
             capacity_options?: components["schemas"]["CapacityOption"][];
             /**
@@ -8750,6 +8757,27 @@ export interface components {
              * @default []
              */
             notes: string[];
+        };
+        /**
+         * InventoryCountLimits
+         * @description Physical inventory posting limits in company-currency minor units.
+         */
+        InventoryCountLimits: {
+            /**
+             * Item Minor
+             * @description Maximum absolute value per count line, in minor units
+             */
+            item_minor: number;
+            /**
+             * Document Minor
+             * @description Maximum sum of absolute line values per document, in minor units
+             */
+            document_minor: number;
+            /**
+             * Reviewers
+             * @description Accounts permitted to review and post above-limit counts
+             */
+            reviewers?: string[];
         };
         /**
          * InventoryDoc
@@ -13232,6 +13260,11 @@ export interface components {
              * @default false
              */
             uncounted_zero: boolean;
+            /**
+             * Review Reason
+             * @default
+             */
+            review_reason: string;
             /** Classes */
             classes?: ("A" | "B" | "C")[] | null;
         };
