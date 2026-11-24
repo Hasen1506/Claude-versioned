@@ -65,10 +65,18 @@ function readAttempt(key: string): SettlementAttempt | null {
 }
 
 type SupplierInvoiceCommand = {
-  action: "enter_invoice" | "cancel_invoice";
+  action: "enter_invoice" | "cancel_invoice" | "reverse_invoice_payment";
   posting_date: string;
   parameters: Omit<PoActionInput, "date"> & { po: string };
 };
+
+function readInvoiceCommand(attempt: SettlementAttempt | null): SupplierInvoiceCommand | null {
+  try {
+    return attempt ? JSON.parse(attempt.details) as SupplierInvoiceCommand : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Keep the original instruction available even if reloading shows that its effects were committed. */
 export function useSupplierInvoicePosting(enabled: boolean, invoice?: string) {
@@ -115,14 +123,17 @@ export function useSupplierInvoicePosting(enabled: boolean, invoice?: string) {
   async function retry() {
     const attempt = pending();
     if (!attempt) throw new Error("There is no unconfirmed supplier invoice instruction.");
-    const command = JSON.parse(attempt.details) as SupplierInvoiceCommand;
+    const command = readInvoiceCommand(attempt);
     if (!command?.posting_date || (invoice
-      ? (command.action !== "cancel_invoice" || command.parameters?.po !== invoice)
+      ? ((command.action !== "cancel_invoice" && command.action !== "reverse_invoice_payment") || command.parameters?.po !== invoice)
       : command.action !== "enter_invoice")) throw new Error("The saved supplier invoice instruction could not be verified.");
     return send(attempt, command, true);
   }
 
-  return { pending: !!pending(), post, retry };
+  const attempt = pending();
+  const retryLabel = !invoice ? "Retry invoice" : readInvoiceCommand(attempt)?.action === "reverse_invoice_payment"
+    ? "Retry payment reversal" : "Retry cancellation";
+  return { pending: !!attempt, retryLabel, post, retry };
 }
 
 /** A tab can resubmit the original financial operation even after the document shows as settled. */

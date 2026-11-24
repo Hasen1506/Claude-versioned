@@ -33,7 +33,7 @@ from ..plan import PlanResult
 from ..plan.costing import fx
 from ..plan.leadtime import schedule_buy
 from .payables import (
-    PayablesError, cancel_invoice, contract_for, enter_invoice, invoiced, pay_invoice, payables_view,
+    PayablesError, cancel_invoice, contract_for, enter_invoice, invoiced, pay_invoice, payables_view, reverse_invoice_payment,
     release_invoice, return_goods,
 )
 from .payables import received as _received_net
@@ -715,7 +715,7 @@ def cancel(ds: Dataset, po_id: str, lines: list[dict] | None) -> tuple[Dataset, 
 
 
 ACTIONS = {"approve", "send", "send_all", "confirm", "receive", "change", "cancel", "create_agreement",
-           "enter_invoice", "release_invoice", "pay_invoice", "cancel_invoice", "return_goods"}
+           "enter_invoice", "release_invoice", "pay_invoice", "reverse_invoice_payment", "cancel_invoice", "return_goods"}
 
 
 def act(ds: Dataset, action: str, po_id: str = "", *, lines: list[dict] | None = None, on: date | None = None,
@@ -736,6 +736,8 @@ def act(ds: Dataset, action: str, po_id: str = "", *, lines: list[dict] | None =
             return release_invoice(ds, po_id, by, on, note)
         if action == "pay_invoice":
             return pay_invoice(ds, po_id, kw.get("amount"), on, reference)
+        if action == "reverse_invoice_payment":
+            return reverse_invoice_payment(ds, po_id, kw.get("payment_number"), on, note)
         if action == "cancel_invoice":
             return cancel_invoice(ds, po_id, on)
         if action == "return_goods":

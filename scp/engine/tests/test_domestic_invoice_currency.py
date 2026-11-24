@@ -22,7 +22,7 @@ from .test_enterprise_integrity import client, team
 ORDER = "PO-1-10"
 
 
-def business(currency, price):
+def business(currency, price, **options):
     raw = base()
     raw["settings"]["currency"] = currency
     raw["execution"] = {"price_control": "moving_average"}
@@ -30,7 +30,7 @@ def business(currency, price):
     raw["purchase_orders"] = [{"id": "PO-1", "supplier": "S", "location": "P", "order_date": "2026-01-05"}]
     raw["receipts"] = [{"id": ORDER, "po": "PO-1", "kind": "purchase", "product": "B", "location": "P",
                         "qty": 2, "price": price, "due_date": "2026-01-06", "source": "PIR-B"}]
-    return team(Dataset.model_validate(raw))
+    return team(Dataset.model_validate({**raw, **options}))
 
 
 def receive(user, cid, revision, day, qty):
@@ -85,7 +85,7 @@ def test_partial_invoices_exact_cancellation_and_same_day_replacement(currency, 
     assert balances(replacement, "2026-01-08")["GRIR"] == 0
     payment = command(owner, cid, "attempt-settlement", "purchasing", "pay_invoice", 6,
                       date="2026-01-09", po="SI-00003", amount=float(net))
-    assert payment.status_code == 409 and "two-decimal currency" in payment.text
+    assert payment.status_code == 409 and "bank reference" in payment.text
     reversed_receipt = command(owner, cid, "attempt-reversal", "stock", "reverse", 6,
                                date="2026-01-09", movement=replacement.movements[0].id)
     assert reversed_receipt.status_code == 409 and "before reversing billed stock" in reversed_receipt.text

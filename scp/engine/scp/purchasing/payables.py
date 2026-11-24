@@ -26,9 +26,10 @@ from datetime import date, timedelta
 from ..carrier_bank import bank_view
 from ..freight import carrier_bills
 from ..model import (
-    Dataset, GoodsMovement, MovementType, Payment, ReceiptKind, StockType, SupplierInvoice,
+    Dataset, GoodsMovement, MovementType, ReceiptKind, StockType, SupplierInvoice,
     SupplierInvoiceLine, SupplierReturn,
 )
+from ..model.purchasing import SupplierPayment
 from ..plan.costing import contract_for, fx
 from ..model.currency import (
     MATERIAL_CURRENCIES, CurrencyPrecisionError, CurrencyUnits, material_units, require_material_ledger,
@@ -533,8 +534,6 @@ def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | N
     """Pay a supplier invoice (or record the refund of a credit memo). Paid in full by the discount date, the cash
     discount is taken."""
     inv = _invoice(ds, iid)
-    if ds.settings.currency in MATERIAL_CURRENCIES:
-        raise PayablesError(f"{ds.settings.currency} supplier settlement requires a two-decimal currency")
     on = on or ds.settings.planning_start
     cur = inv.currency or ds.settings.currency
     if on < inv.date:
@@ -547,6 +546,30 @@ def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | N
     if why:
         raise PayablesError(f"{iid} is blocked for payment ({'; '.join(b.split(': ', 1)[1] for b in why)}): "
                             "release it first")
+    if ds.settings.currency in MATERIAL_CURRENCIES:
+        units = material_units(cur)
+        if inv.currency != ds.settings.currency or inv.credit:
+            raise PayablesError("record a domestic payment against an ordinary local supplier invoice")
+        if inv.payments and inv.payments[-1].date > on:
+            raise PayablesError("a payment cannot precede the latest settlement event on the invoice")
+        if amount is not None and (not isfinite(amount) or units.amount(amount) != amount):
+            raise PayablesError(f"enter the cash amount in exact {cur} minor units")
+        reference = reference.strip()
+        if not reference or len(reference) > 64:
+            raise PayablesError("enter a bank reference of 1 to 64 characters")
+        open_minor = units.minor(inv.open)
+        discount = inv.discount_minor(units, on, open_minor, bool(inv.active_payments()))
+        due_minor = open_minor - discount
+        cash = due_minor if amount is None else units.minor(amount)
+        if not 0 < cash <= open_minor:
+            raise PayablesError(f"enter a positive cash amount of up to {_money(inv.open, cur)}")
+        payment = SupplierPayment(date=on, amount=units.major(cash),
+                                   discount=units.major(discount if cash == due_minor else 0),
+                                   reference=reference, fx_rate=1.0)
+        result = _append_domestic_payment(ds, inv, payment)
+        left = _invoice(result, iid).open
+        return result, ActionReport(ok=True, id=iid, message=f"{_money(payment.amount, cur)} recorded on {iid}. "
+                                    f"{_money(left, cur)} remains open.")
     disc = 0.0
     if not inv.credit and inv.discount and inv.discount_date and on <= inv.discount_date and not inv.payments:
         disc = round(inv.total * inv.discount, 2)
@@ -558,25 +581,55 @@ def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | N
         raise PayablesError(f"{_money(amt, cur)} is more than the {_money(due, cur)} still open on {iid}")
     if amt < due - 0.005:
         disc = 0.0          # the discount is for paying in full in time
-    new = inv.model_copy(update={"payments": [*inv.payments, Payment(date=on, amount=amt, discount=disc,
-                                                                     reference=reference[:64], fx_rate=posting_rate(ds, inv.currency))]})
+    new = inv.model_copy(update={"payments": [*inv.payments, SupplierPayment(date=on, amount=amt, discount=disc,
+                                 reference=reference[:64], fx_rate=posting_rate(ds, inv.currency))]})
     verb = "refund received for" if inv.credit else "paid on"
     msg = (f"{_money(amt, cur)} {verb} {iid}" + (f", cash discount {_money(disc, cur)}" if disc else "")
            + ("; settled." if new.open <= 0.005 else f"; {_money(new.open, cur)} still open."))
     return _replace(ds, new), ActionReport(ok=True, message=msg, id=iid)
 
 
+def _append_domestic_payment(ds: Dataset, inv: SupplierInvoice, payment: SupplierPayment) -> Dataset:
+    changed = _replace(ds, inv.model_copy(update={"payments": [*inv.payments, payment]}))
+    try:
+        require_material_ledger(changed)
+    except CurrencyPrecisionError as exc:
+        raise PayablesError(str(exc)) from None
+    return changed
+
+
+def reverse_invoice_payment(ds: Dataset, iid: str, number: int | None, on: date | None, reason: str) -> tuple[Dataset, ActionReport]:
+    inv = _invoice(ds, iid)
+    if ds.settings.currency not in MATERIAL_CURRENCIES or inv.currency != ds.settings.currency or inv.credit:
+        raise PayablesError("this reversal is for an ordinary domestic JPY or KWD supplier payment")
+    if inv.cancelled:
+        raise PayablesError(f"{iid} is cancelled")
+    original = inv.active_payments().get(number) if number is not None else None
+    if original is None:
+        raise PayablesError("select an active supplier payment to reverse")
+    if on is None or on < inv.payments[-1].date:
+        raise PayablesError("date the reversal on or after the most recent settlement event")
+    reason = reason.strip()
+    if not reason or len(reason) > 200:
+        raise PayablesError("enter a reversal reason of 1 to 200 characters")
+    reversal = original.model_copy(update={"date": on, "reverses": number, "reason": reason})
+    return _append_domestic_payment(ds, inv, reversal), ActionReport(ok=True, id=iid,
+        message=f"Payment {iid}/{number} reversed. Its liability is open again.")
+
+
 def cancel_invoice(ds: Dataset, iid: str, on: date | None = None) -> tuple[Dataset, ActionReport]:
     inv = _invoice(ds, iid)
     if inv.cancelled:
         raise PayablesError(f"{iid} is already cancelled")
-    if inv.payments:
+    domestic = ds.settings.currency in MATERIAL_CURRENCIES
+    if inv.payments and (not domestic or inv.active_payments()):
         raise PayablesError(f"{iid} has payments against it and cannot be cancelled")
     on = on or max(ds.settings.planning_start, inv.date)
     if on < inv.date:
         raise PayablesError("an invoice cannot be cancelled before its posting date")
+    if inv.payments and on < inv.payments[-1].date:
+        raise PayablesError("an invoice cannot be cancelled before its payment reversals")
     rets = [r.model_copy(update={"credit_memo": None}) if r.credit_memo == iid else r for r in ds.supplier_returns]
-    domestic = ds.settings.currency in MATERIAL_CURRENCIES
     cancelled = inv.model_copy(update={"cancelled": True, "cancelled_on": on,
                                        "cancelled_after": len(ds.supplier_invoices) if domestic else None})
     new = _replace(ds, cancelled).model_copy(update={"supplier_returns": rets})
@@ -851,5 +904,6 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
 __all__ = [
     "PayablesError", "cancel_invoice", "contract_for", "contract_views", "enter_invoice", "invoiced", "line_info",
     "outside_lines",
-    "pay_invoice", "payables_view", "received", "release_invoice", "return_goods", "still_blocked", "to_invoice",
+    "pay_invoice", "payables_view", "received", "release_invoice", "return_goods", "reverse_invoice_payment",
+    "still_blocked", "to_invoice",
 ]

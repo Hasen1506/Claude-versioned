@@ -1303,7 +1303,7 @@ class Companies:
     def save(self, user: User, cid: str, doc: dict | None, base_revision: int, action: str = "saved",
              note: str = "", patch: dict | None = None, client: str = "", *, allow_production_posting: bool = False,
              count_projection: bool = False, freight_action: str = "", allow_carrier_bank: bool = False,
-             count_command: CountCommand | None = None) -> SaveReport:
+             count_command: CountCommand | None = None, supplier_payment_action: str = "") -> SaveReport:
         """Save the working copy (``doc``, or ``patch`` applied to revision ``base_revision``) over revision
         ``base_revision``; refused when the company has moved on, unless only this window's own saves moved it."""
         with self.lock.scoped("company", cid):
@@ -1367,7 +1367,7 @@ class Companies:
             try:
                 guarded = protect(current, guarded, user.email, allow_production_posting=allow_production_posting,
                                   freight_action=freight_action, allow_carrier_bank=allow_carrier_bank,
-                                  count_command=count_command)
+                                  count_command=count_command, supplier_payment_action=supplier_payment_action)
             except TransactionRefused as e:
                 raise CompanyError(str(e), 403) from None
             doc = guarded

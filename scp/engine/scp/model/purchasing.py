@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import datetime as dt
 from typing import Literal
+from unicodedata import normalize
 
 from pydantic import Field, field_validator, model_validator
 
 from .actuals import StockType
-from .currency import material_units
+from .currency import CurrencyUnits, material_units
 from .common import Id, Model, Ref, Unit
 from .sales import Payment
 from .transactional import ScheduledReceipt
@@ -185,6 +186,16 @@ class SupplierInvoiceLine(Model):
         return round(self.qty * self.price, 2)
 
 
+class SupplierPayment(Payment):
+    reverses: int | None = Field(None, ge=1, strict=True, exclude_if=lambda value: value is None,
+                                 description="Reverses this one-based payment number on the same invoice")
+    reason: str | None = Field(None, min_length=1, max_length=200, exclude_if=lambda value: value is None)
+
+
+def supplier_payment_reference(value: str) -> str:
+    return normalize("NFKC", value).strip().casefold()
+
+
 class SupplierInvoice(Model):
     """A supplier's invoice or credit memo (≈ MIRO). Checked when entered against the order's price and the goods
     received (three-way match); a difference beyond tolerance blocks it for payment until someone releases it, or
@@ -211,7 +222,7 @@ class SupplierInvoice(Model):
     released_by: str = Field("", max_length=200)
     entered_by: str = Field("", max_length=200, description="Signed-in entrant, recorded by the company save boundary")
     released_on: dt.date | None = None
-    payments: list[Payment] = Field(default_factory=list)
+    payments: list[SupplierPayment] = Field(default_factory=list)
     return_id: str | None = Field(None, max_length=64, description="Credit memo: the return it credits")
     cancelled: bool = False
     cancelled_on: dt.date | None = None
@@ -247,7 +258,24 @@ class SupplierInvoice(Model):
 
     @property
     def settled(self) -> float:
-        return round(sum(p.amount + p.discount for p in self.payments), 2)
+        return self.settled_at()
+
+    def settled_at(self, on: dt.date | None = None) -> float:
+        units = material_units(self.currency or "")
+        payments = (p for p in self.payments if on is None or p.date <= on)
+        if units.digits == 2:
+            return round(sum(p.amount + p.discount for p in payments), 2)
+        return units.major(sum((-1 if p.reverses else 1) * (units.minor(p.amount) + units.minor(p.discount))
+                               for p in payments))
+
+    def active_payments(self) -> dict[int, SupplierPayment]:
+        reversed_ = {p.reverses for p in self.payments if p.reverses is not None}
+        return {i: p for i, p in enumerate(self.payments, 1) if p.reverses is None and i not in reversed_}
+
+    def discount_minor(self, units: CurrencyUnits, on: dt.date, open_minor: int, has_payment: bool) -> int:
+        if has_payment or not self.discount_date or on > self.discount_date:
+            return 0
+        return min(units.minor(units.product(self.total, self.discount)), max(0, open_minor - 1))
 
     @property
     def open(self) -> float:
@@ -264,6 +292,9 @@ class SupplierInvoice(Model):
             raise ValueError("an invoice cancellation is dated on or after the invoice and marks it cancelled")
         if self.cancelled_after is not None and self.cancelled_on is None:
             raise ValueError("a cancellation sequence requires a dated cancellation")
+        if material_units(self.currency or "").digits == 2 and any(p.reverses is not None or p.reason is not None
+                                                                   for p in self.payments):
+            raise ValueError("dated supplier payment reversals require a domestic JPY or KWD invoice")
         return self
 
 

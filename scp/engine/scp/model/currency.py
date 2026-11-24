@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .dataset import Dataset
+    from .purchasing import SupplierInvoice
 
 NON_TWO_DECIMAL = {
     **dict.fromkeys("BIF CLP DJF GNF ISK JPY KMF KRW PYG RWF UGX VND VUV XAF XOF XPF".split(), 0),
@@ -65,8 +66,43 @@ def require_posting_currency(currency: str) -> None:
         raise CurrencyPrecisionError(f"{currency} uses {digits} decimal places; this operation supports two-decimal currencies only")
 
 
+def _check_supplier_payments(invoice: SupplierInvoice, units: CurrencyUnits, references: set[str]) -> None:
+    from .purchasing import SupplierPayment, supplier_payment_reference
+
+    active: dict[int, SupplierPayment] = {}
+    open_minor = units.minor(invoice.total)
+    previous = invoice.date
+    for number, payment in enumerate(invoice.payments, 1):
+        cash, discount = units.minor(payment.amount), units.minor(payment.discount)
+        if (payment.date < previous or invoice.cancelled_on is not None and payment.date > invoice.cancelled_on
+                or payment.fx_rate != 1 or cash <= 0 or discount < 0
+                or units.major(cash) != payment.amount or units.major(discount) != payment.discount):
+            raise CurrencyPrecisionError(f"{invoice.id}: supplier settlements require dated, exact local currency amounts")
+        previous = payment.date
+        if payment.reverses is not None:
+            original = active.pop(payment.reverses, None)
+            if (original is None or not (payment.reason or "").strip()
+                    or (payment.amount, payment.discount, payment.reference) !=
+                       (original.amount, original.discount, original.reference)):
+                raise CurrencyPrecisionError(f"{invoice.id}: a reversal requires a reason and the exact original active payment")
+            open_minor += cash + discount
+        else:
+            ref = supplier_payment_reference(payment.reference)
+            if not ref or ref in references or payment.reason is not None:
+                raise CurrencyPrecisionError(f"{invoice.id}: a supplier payment requires an unused bank reference")
+            references.add(ref)
+            earned = invoice.discount_minor(units, payment.date, open_minor, bool(active))
+            expected = earned if cash == open_minor - earned else 0
+            if cash > open_minor or discount != expected:
+                raise CurrencyPrecisionError(f"{invoice.id}: the payment or discount exceeds or disagrees with the open amount")
+            open_minor -= cash + discount
+            active[number] = payment
+    if invoice.cancelled and active:
+        raise CurrencyPrecisionError(f"{invoice.id}: reverse active supplier payments before cancelling the invoice")
+
+
 def require_material_ledger(ds: Dataset) -> CurrencyUnits:
-    """Accept the tested domestic material and receipt-matched supplier invoices."""
+    """Accept the domestic material and receipt-matched supplier settlement scope."""
     currency = ds.settings.currency
     if currency not in MATERIAL_CURRENCIES:
         require_posting_currency(currency)
@@ -78,8 +114,8 @@ def require_material_ledger(ds: Dataset) -> CurrencyUnits:
             or ds.third_party_orders or ds.challans or ds.carrier_bank_accounts or ds.carrier_bank_lines
             or ds.carrier_bank_periods or any(f.settled_on or f.bill_credits or f.bill_events or f.bill_payments
                                             for f in ds.freight_orders)):
-        raise CurrencyPrecisionError(f"{currency} currently supports the material ledger only; "
-                                     "sales, cash, manufacturing and group books require a two-decimal currency")
+        raise CurrencyPrecisionError(f"{currency} supports material and domestic supplier settlement; "
+                                     "sales, bank feeds, manufacturing and group books require a two-decimal currency")
     if any((po.currency and po.currency != currency) or po.fx_rate not in (None, 1.0) for po in ds.purchase_orders):
         raise CurrencyPrecisionError(f"{currency} material postings require purchase orders in the company currency at rate 1")
     if any(basis.currency != currency for basis in ds.purchase_valuation):
@@ -87,14 +123,15 @@ def require_material_ledger(ds: Dataset) -> CurrencyUnits:
 
     units = material_units(currency)
     lines = lines_index(ds, outside=False)
+    payment_references: set[str] = set()
     for sequence, invoice in enumerate(ds.supplier_invoices, 1):
         if (invoice.kind != "invoice" or invoice.currency != currency or invoice.fx_rate != 1
-                or invoice.entity not in ("", None) or invoice.delivery_costs or invoice.payments or invoice.return_id
+                or invoice.entity not in ("", None) or invoice.delivery_costs or invoice.return_id
                 or invoice.tax < 0 or units.amount(invoice.tax) != invoice.tax
                 or invoice.cancelled and (invoice.cancelled_on is None or invoice.cancelled_after is None
                     or not sequence <= invoice.cancelled_after <= len(ds.supplier_invoices))):
             raise CurrencyPrecisionError(f"{invoice.id}: {currency} supports domestic supplier invoices without extra "
-                                         "delivery charges or payments; other postings require a two-decimal currency")
+                                         "delivery charges; other postings require a two-decimal currency")
         for ln in invoice.lines:
             order = lines.get(ln.order)
             basis = ds.purchase_valuation_by_id.get(ln.order)
@@ -103,6 +140,8 @@ def require_material_ledger(ds: Dataset) -> CurrencyUnits:
                     or basis is not None and basis.base != ln.price):
                 raise CurrencyPrecisionError(f"{invoice.id}: match each supplier invoice line to a local order "
                                              "at its saved price")
+        if invoice.payments:
+            _check_supplier_payments(invoice, units, payment_references)
     movements = {move.id: move for move in ds.movements}
     ordinary = {MovementType.OPENING, MovementType.RECEIPT, MovementType.ADJUSTMENT, MovementType.SCRAP,
                 MovementType.STATUS}

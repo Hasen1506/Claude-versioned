@@ -158,6 +158,7 @@ def execute(c: Companies, user: User, cid: str, req: CommandRequest,
                            allow_production_posting=req.kind == "production_cost",
                            count_projection=req.kind == "stock" and (req.action == "count_post" or
                                req.action == "count" and ds.finance.inventory_count_limits is not None),
+                           supplier_payment_action=req.action if req.kind == "purchasing" else "",
                            allow_carrier_bank=req.kind == "carrier_bank",
                            freight_action=freight_action, count_command=count_command)
             if saved.held is not None:

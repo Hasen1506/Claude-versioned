@@ -70,7 +70,7 @@ export function usePoAction(invoice?: string, afterEntry?: () => void) {
       return refreshPosting(settlement.post(extra.date, extra.amount ?? null, extra.reference));
     const { company, dataset } = store.get();
     if (dataset && company?.live && moneyDigits(dataset.settings.currency) !== 2
-        && ((action === "enter_invoice" && afterEntry) || (action === "cancel_invoice" && invoice))) {
+        && ((action === "enter_invoice" && afterEntry) || ((action === "cancel_invoice" || action === "reverse_invoice_payment") && invoice))) {
       const { date, ...extraParameters } = extra;
       const posting_date = date ?? dataset.settings.planning_start;
       return refreshPosting(invoicePosting.post({ action, posting_date, parameters: { po, ...extraParameters } }));
@@ -84,11 +84,12 @@ export function usePoAction(invoice?: string, afterEntry?: () => void) {
     {invoicePosting.pending && <div className="banner warning" role="alert"><Badge sev="warning">Unconfirmed</Badge>
       <span>{err || "Retry the original instruction to check or finish the posting."}</span><span className="spacer" />
       <button className="btn accent" disabled={busy} onClick={() => execute(() => refreshPosting(invoicePosting.retry()), afterEntry)}>
-        {invoice ? "Retry cancellation" : "Retry invoice"}</button></div>}
+        {invoicePosting.retryLabel}</button></div>}
     {err && !invoicePosting.pending && <div className="banner error" role="alert"><Badge sev="error">{settlement.pending ? "Unconfirmed" : "Not done"}</Badge><span>{err}</span><span className="spacer" />
       <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setErr(null)}>✕</button></div>}
   </>;
-  return { busy, run, banners, retryPayment, paymentPending: settlement.pending, invoicePending: invoicePosting.pending };
+  return { busy, run, banners, retryPayment, live: settlement.live,
+    paymentPending: settlement.pending, invoicePending: invoicePosting.pending };
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -243,14 +244,29 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
 function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
   const today = ds.settings.planning_start;
   const [on, setOn] = useState(today);
-  const domestic = moneyDigits(ds.settings.currency) !== 2;
+  const digits = moneyDigits(ds.settings.currency);
+  const domestic = digits !== 2;
+  const latest = inv.payments.at(-1)?.date ?? inv.date;
+  const paymentDate = domestic && on < latest ? latest : on;
   const [cancelOn, setCancelOn] = useState(inv.date > today ? inv.date : today);
-  const inTime = !isCredit(inv.kind) && !!inv.discount_date && on <= inv.discount_date && inv.payments.length === 0 && inv.discount > 0;
-  const due = round2(inv.open - (inTime ? round2(inv.total * inv.discount) : 0));
+  const cancellationDate = domestic && cancelOn && cancelOn < latest ? latest : cancelOn;
+  const reversed = new Set(inv.payments.map((p) => p.reverses));
+  const active = inv.payments.flatMap((p, i) => !p.reverses && !reversed.has(i + 1) ? [i + 1] : []);
+  const inTime = !isCredit(inv.kind) && !!inv.discount_date && paymentDate <= inv.discount_date && !active.length && inv.discount > 0;
+  const factor = 10 ** digits;
+  const openMinor = Math.round(inv.open * factor);
+  const discountMinor = inTime ? Math.min(Number(roundedMinorProduct(inv.total, inv.discount, digits)), Math.max(0, openMinor - 1)) : 0;
+  const discount = domestic ? discountMinor / factor : inTime ? round2(inv.total * inv.discount) : 0;
+  const due = domestic ? (openMinor - discountMinor) / factor : round2(inv.open - discount);
   const [amount, setAmount] = useState("");
   const [ref, setRef] = useState("");
-  const { busy, run, banners, retryPayment, paymentPending, invoicePending } = usePoAction(inv.id);
+  const [reverseNumber, setReverseNumber] = useState(0);
+  const [reverseOn, setReverseOn] = useState("");
+  const [reason, setReason] = useState("");
+  const reversalDate = reverseOn || (latest > today ? latest : today);
+  const { busy, run, banners, retryPayment, paymentPending, invoicePending, live } = usePoAction(inv.id);
   const clearPayment = () => { setAmount(""); setRef(""); };
+  const pending = busy || paymentPending || invoicePending;
   const blocked = inv.status === "blocked";
   const open = hasMoney(inv.open, inv.currency) && inv.status !== "cancelled";
   return (
@@ -258,17 +274,17 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
       <Badge sev={INV_SEV[inv.status]}>{inv.status}</Badge></h3>}
       actions={<Edits>
         {blocked && <button className="btn accent" disabled={busy} onClick={() => run("release_invoice", inv.id, { date: today })}>Release for payment</button>}
-        {inv.status !== "cancelled" && inv.payments.length === 0 && <>
-          {domestic && <label className="row small">Cancellation date <input className="input" type="date" value={cancelOn}
+        {inv.status !== "cancelled" && active.length === 0 && <>
+          {domestic && <label className="row small">Cancellation date <input className="input" type="date" value={cancellationDate} min={latest}
             onChange={(e) => setCancelOn(e.target.value)} /></label>}
-          <button className="btn ghost" disabled={busy || invoicePending || (domestic && !cancelOn)}
-            onClick={() => run("cancel_invoice", inv.id, domestic ? { date: cancelOn } : {})}>Cancel it</button>
+          <button className="btn ghost" disabled={pending || (domestic && !cancellationDate)}
+            onClick={() => run("cancel_invoice", inv.id, domestic ? { date: cancellationDate } : {})}>Cancel it</button>
         </>}
       </Edits>}>
       <div className="row wrap small muted" style={{ gap: 16, marginBottom: 10 }}>
         {inv.reference && <span>Their no. {inv.reference}</span>}<span>Dated {day(inv.date)}</span>
         {!isCredit(inv.kind) && <span>Due {day(inv.due_date)}</span>}
-        {!domestic && inv.discount_date && <span>{Math.round(inv.discount * 1000) / 10} % off if paid by {day(inv.discount_date)}</span>}
+        {inv.discount_date && <span>{Math.round(inv.discount * 1000) / 10} % off if paid by {day(inv.discount_date)}</span>}
         <span>Net {exactMoney(inv.net, inv.currency)}{inv.delivery_costs ? ` (of which delivery costs ${exactMoney(inv.delivery_costs, inv.currency)})` : ""} · tax {exactMoney(inv.tax, inv.currency)} · total {exactMoney(inv.total, inv.currency)}</span>
         {inv.released_on && <span>Released {day(inv.released_on)}{inv.released_by ? ` by ${inv.released_by}` : ""}</span>}
       </div>
@@ -295,19 +311,39 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
           </tbody>
         </table>
       </div>
-      {inv.payments.length > 0 && <p className="small" style={{ marginTop: 8 }}>{inv.payments.map((p, i) => <span key={i}>{i > 0 && "; "}
-        {exactMoney(p.amount, inv.currency)} on {day(p.date)}{p.discount ? ` (discount ${exactMoney(p.discount, inv.currency)})` : ""}{p.reference ? `, ${p.reference}` : ""}</span>)}</p>}
+      {inv.payments.length > 0 && <ul className="small">{inv.payments.map((p, i) => <li key={i}>
+        {p.reverses ? `Reversal of payment ${p.reverses} · ` : domestic ? `Payment ${i + 1} · ` : ""}
+        {exactMoney(p.amount, inv.currency)} on {day(p.date)}{p.discount ? ` (discount ${exactMoney(p.discount, inv.currency)})` : ""}
+        {p.reference ? ` · ${p.reference}` : ""}{p.reason ? ` · ${p.reason}` : ""}</li>)}</ul>}
       {paymentPending && <Edits><button className="btn accent" disabled={busy} onClick={() => retryPayment(clearPayment)}>Retry payment</button></Edits>}
-      {domestic && open && <p className="small muted">Settlement recording currently supports two-decimal currencies.</p>}
-      {!domestic && open && !blocked && <Edits><div className="row wrap" style={{ gap: 10, marginTop: 10 }}>
-        <label className="row small">{isCredit(inv.kind) ? "Refund received on" : "Paid on"} <input type="date" className="input" value={on} aria-label="Paid on"
+      {domestic && open && !live && <p className="small muted">Open a signed-in company to record a supplier payment.</p>}
+      {(!domestic || live) && open && !blocked && <Edits><div className="row wrap" style={{ gap: 10, marginTop: 10 }}>
+        <label className="row small">{isCredit(inv.kind) ? "Refund received on" : "Paid on"} <input type="date" className="input" value={paymentDate}
+          min={domestic ? latest : undefined} aria-label="Paid on"
           onChange={(e) => setOn(e.target.value || today)} /></label>
-        <label className="row small">Amount <input className="input num" style={{ width: 110 }} type="number" min={0} step="any" aria-label="Amount paid"
+        <label className="row small">Amount <input className="input num" style={{ width: 110 }} type="number" min={domestic ? 1 / factor : 0}
+          step={domestic ? 1 / factor : "any"} aria-label="Amount paid"
           placeholder={String(due)} value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
-        <label className="row small">Bank reference <input className="input" style={{ width: 120 }} value={ref} aria-label="Bank reference" onChange={(e) => setRef(e.target.value)} /></label>
-        <button className="btn accent" disabled={busy} onClick={() => run("pay_invoice", inv.id, { date: on, amount: amount === "" ? null : Number(amount), reference: ref },
-          clearPayment)}>{isCredit(inv.kind) ? "Refund received" : `Pay ${exactMoney(amount === "" ? due : Number(amount), inv.currency)}`}</button>
-        {inTime && <span className="small faint">in time for the cash discount of {exactMoney(round2(inv.total * inv.discount), inv.currency)}</span>}
+        <label className="row small">Bank reference <input className="input" style={{ width: 120 }} value={ref} aria-label="Bank reference"
+          maxLength={domestic ? 64 : undefined} onChange={(e) => setRef(e.target.value)} /></label>
+        <button className="btn accent" disabled={pending || (domestic && !ref.trim())}
+          onClick={() => run("pay_invoice", inv.id, { date: paymentDate, amount: amount === "" ? null : Number(amount), reference: ref },
+            clearPayment)}>{isCredit(inv.kind) ? "Refund received" : domestic ? `Record payment (${exactMoney(amount === "" ? due : Number(amount), inv.currency)})`
+              : `Pay ${exactMoney(amount === "" ? due : Number(amount), inv.currency)}`}</button>
+        {discount > 0 && <span className="small faint">in time for the cash discount of {exactMoney(discount, inv.currency)}</span>}
+      </div></Edits>}
+      {domestic && live && active.length > 0 && <Edits><div className="row wrap" style={{ gap: 10 }}>
+        <label className="row small">Payment to reverse <select className="input" value={reverseNumber} onChange={(e) => setReverseNumber(Number(e.target.value))}>
+          <option value={0}>Choose a payment</option>
+          {active.map((number) => <option key={number} value={number}>{number} · {inv.payments[number - 1].reference}</option>)}
+        </select></label>
+        <label className="row small">Reversal date <input className="input" type="date" min={latest} value={reversalDate}
+          onChange={(e) => setReverseOn(e.target.value)} /></label>
+        <label className="row small">Reversal reason <input className="input" value={reason} maxLength={200}
+          onChange={(e) => setReason(e.target.value)} /></label>
+        <button className="btn ghost" disabled={pending || !active.includes(reverseNumber) || !reason.trim() || reversalDate < latest}
+          onClick={() => run("reverse_invoice_payment", inv.id, { date: reversalDate, payment_number: reverseNumber, note: reason },
+            () => { setReverseNumber(0); setReason(""); })}>Reverse payment</button>
       </div></Edits>}
       {!domestic && inv.kind === "invoice" && inv.status !== "cancelled" && <PriceCorrection inv={inv} ds={ds} />}
     </Panel>

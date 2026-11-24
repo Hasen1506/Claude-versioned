@@ -298,7 +298,7 @@ test("a live dinar supplier invoice survives retry and reopens its exact accrual
   const accrued = page.locator(".tile").filter({ hasText: "Received, not invoiced" });
   await expect(accrued).toContainText("KWD 1.234");
   await page.getByRole("row", { name: /SI-00001.*KWD-SUPPLIER-1/ }).click();
-  await expect(page.getByText("Settlement recording currently supports two-decimal currencies.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Record payment (KWD 1.236)" })).toBeVisible();
   await page.getByLabel("Cancellation date").fill("2026-01-07");
   await page.getByRole("button", { name: "Cancel it", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Confirmation is unavailable");
@@ -312,4 +312,74 @@ test("a live dinar supplier invoice survives retry and reopens its exact accrual
   expect(saved.meta.revision).toBe(3);
   expect(saved.dataset.supplier_invoices).toMatchObject([{ id: "SI-00001", currency: "KWD",
     cancelled_on: "2026-01-07", cancelled_after: 1 }]);
+});
+
+test("a one-fils supplier payment and its reversal both recover after a reload", async ({ page, request }) => {
+  const email = `dinar-payment-${Date.now()}@example.invalid`;
+  const password = "fixture-only-dinar-payment";
+  const session = await request.post("/api/auth/signup", { data: { email, password, name: "Treasury clerk" } });
+  expect(session.ok(), await session.text()).toBe(true);
+  const headers = { Authorization: `Bearer ${(await session.json()).token}` };
+  const fixture = dinarInventory("Dinar payment fixture");
+  fixture.receipts[0].price = fixture.purchasing_sources[0].price = 0.001;
+  const created = await request.post("/api/companies", { headers, data: { dataset: fixture } });
+  expect(created.ok(), await created.text()).toBe(true);
+  const company = `/api/companies/${(await created.json()).id}`;
+  const issued = await request.post(`${company}/commands`, { headers, data: {
+    kind: "purchasing", action: "enter_invoice", id: "fixture-invoice", base_revision: 1, posting_date: "2026-01-06",
+    parameters: { reference: "ONE-FILS", lines: [{ order: "PO-LINE", qty: 1 }] },
+  } });
+  expect(issued.ok(), await issued.text()).toBe(true);
+  await page.goto("/#/account");
+  await page.getByRole("tab", { name: "Sign in", exact: true }).click();
+  await page.getByLabel("E-mail").fill(email);
+  await page.getByLabel(/^Password/).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: /Open Dinar payment fixture/ }).click();
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  await page.goto("/#/buying/invoices/SI-00001");
+
+  const attempts: Record<string, string[]> = { pay_invoice: [], reverse_invoice_payment: [] };
+  await page.route("**/api/companies/*/commands", async (route) => {
+    const body = route.request().postDataJSON();
+    const ids = attempts[body.action];
+    if (!ids) return route.continue();
+    ids.push(body.id);
+    if (ids.length > 1) return route.continue();
+    const committed = await route.fetch();
+    expect(committed.ok(), await committed.text()).toBe(true);
+    return route.abort("failed");
+  });
+
+  await page.getByLabel("Bank reference").fill("WIRE-001");
+  await page.getByLabel("Paid on").fill("2026-01-07");
+  await page.getByRole("button", { name: "Record payment (KWD 0.001)", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(/confirmation is unavailable/i);
+  await page.reload();
+  await page.getByRole("button", { name: "Retry payment", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("KWD 0.001 recorded");
+  await expect(page.getByText(/Payment 1 · KWD 0.001/)).toBeVisible();
+
+  await page.getByLabel("Payment to reverse").selectOption("1");
+  await page.getByLabel("Reversal date").fill("2026-01-08");
+  await page.getByLabel("Reversal reason").fill("Transfer returned");
+  await page.getByRole("button", { name: "Reverse payment", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Confirmation is unavailable");
+  await page.reload();
+  await page.getByRole("button", { name: "Retry payment reversal", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("reversed");
+  await expect(page.getByText(/Reversal of payment 1 · KWD 0.001/)).toBeVisible();
+  const owed = page.locator(".tile").filter({ hasText: "We owe" });
+  await expect(owed).toContainText("KWD 0.001");
+
+  const stored = await (await request.get(company, { headers })).json();
+  expect(stored.meta.revision).toBe(4);
+  expect(stored.dataset.supplier_invoices[0].payments).toMatchObject([
+    { date: "2026-01-07", amount: 0.001, reference: "WIRE-001" },
+    { date: "2026-01-08", amount: 0.001, reverses: 1, reason: "Transfer returned" },
+  ]);
+  for (const ids of Object.values(attempts)) {
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+  }
 });
