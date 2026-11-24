@@ -15,7 +15,7 @@ DEPARTMENTS = {
     "challans": "manufacturing", "movements": "warehouse", "batches": "warehouse", "inventory_docs": "warehouse",
     "warehouse_tasks": "warehouse", "waves": "warehouse", "freight_orders": "transport",
     "production_cost_postings": "production_cost", "carrier_bank_accounts": "master_data",
-    "carrier_bank_lines": "payments", "carrier_bank_periods": "payments",
+    "carrier_bank_lines": "payments", "carrier_bank_periods": "payments", "supplier_payment_instructions": "payments",
     "history": "planning", "accuracy": "planning", "rolled_weeks": "planning", "closed_orders": "planning",
     "confirmations": "planning", "allocations": "planning", "forecast_snapshots": "planning",
     "events": "planning", "overrides": "planning", "family_overrides": "planning", "stock_targets": "planning",

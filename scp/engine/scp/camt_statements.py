@@ -6,7 +6,7 @@ from decimal import Decimal
 from hashlib import sha256
 from xml.etree import ElementTree as XML
 
-from .model.carrier_bank import CAMT_MAX_BYTES, CAMT_MAX_PAGES, BankStatementHeader, CamtOriginal, CamtSourceEvidence
+from .model.carrier_bank import CAMT_MAX_BYTES, CAMT_MAX_PAGES, BankStatementHeader, CamtOriginal, CamtSourceEvidence, SupplierDebitSource
 from .model.currency import MATERIAL_CURRENCIES, material_units
 
 NS = "urn:iso:std:iso:20022:tech:xsd:camt.053.001.08"
@@ -102,6 +102,21 @@ def _signed(node: XML.Element, currency: str, *, optional_currency: bool = False
     return minor if direction == "CRDT" else -minor
 
 
+def bank_account_hash(*, iban: str = "", bic: str = "", local: str = "") -> str:
+    if iban:
+        if not re.fullmatch(r"[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}", iban):
+            raise ValueError("the bank account has an invalid IBAN")
+        numeric = "".join(char if char.isdigit() else str(ord(char) - 55) for char in iban[4:] + iban[:4])
+        if int(numeric) % 97 != 1:
+            raise ValueError("the bank account has an invalid IBAN checksum")
+        identity = f"iso20022:iban:{iban}"
+    else:
+        if not re.fullmatch(r"[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?", bic):
+            raise ValueError("local account identifiers require a valid servicing bank BIC")
+        identity = f"iso20022:other:{bic}:{local}"
+    return sha256(identity.encode()).hexdigest()
+
+
 def _account_hash(account: XML.Element) -> str:
     identifier = _one(account, "Id")
     assert identifier is not None
@@ -109,19 +124,8 @@ def _account_hash(account: XML.Element) -> str:
     if len(identifier) != 1:
         raise ValueError("camt.053 requires one bank account identifier")
     if iban:
-        if not re.fullmatch(r"[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}", iban):
-            raise ValueError("camt.053 contains an invalid IBAN")
-        numeric = "".join(char if char.isdigit() else str(ord(char) - 55) for char in iban[4:] + iban[:4])
-        if int(numeric) % 97 != 1:
-            raise ValueError("camt.053 contains an invalid IBAN checksum")
-        identity = f"iso20022:iban:{iban}"
-    else:
-        local = _text(identifier, "Othr/Id")
-        bic = _text(account, "Svcr/FinInstnId/BICFI").upper()
-        if not re.fullmatch(r"[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?", bic):
-            raise ValueError("camt.053 local account identifiers require a valid servicing bank BIC")
-        identity = f"iso20022:other:{bic}:{local}"
-    return sha256(identity.encode()).hexdigest()
+        return bank_account_hash(iban=iban)
+    return bank_account_hash(local=_text(identifier, "Othr/Id"), bic=_text(account, "Svcr/FinInstnId/BICFI").upper())
 
 
 def _pagination(node: XML.Element, path: str) -> tuple[int, bool] | None:
@@ -187,10 +191,11 @@ class CamtEntry:
     included_fee_minor: int | None
     unresolved_charges: bool
     requires_allocation: bool
+    supplier_debit: SupplierDebitSource | None
 
 
 def _return_charges(node: XML.Element, currency: str) -> tuple[int | None, bool]:
-    """Only entry-level, explicitly included bank debits can lower a return's booked net."""
+    """Only entry-level, explicitly included bank debits affect the booked net."""
     charges = _one(node, "Chrgs", required=False)
     if node.findall("NtryDtls/TxDtls/Chrgs", XML_NS):
         return None, True
@@ -248,8 +253,12 @@ def _entry(node: XML.Element, currency: str) -> CamtEntry:
         declared = [_text(part, "Btch/NbOfTxs", required=False) for part in node.findall("NtryDtls", XML_NS)]
         requires_allocation = (len(details) > 1 or any(count and count.lstrip("0") != "1" for count in declared)
                                or bool(node.findall("Chrgs", XML_NS) or node.findall("NtryDtls/TxDtls/Chrgs", XML_NS)))
+    supplier_debit = None
+    if not reversal and amount < 0:
+        debit_fee, ambiguous = _return_charges(node, currency)
+        supplier_debit = SupplierDebitSource(included_fee_minor=debit_fee, unresolved_charges=ambiguous)
     return CamtEntry(identifier, reference, _day(node, "BookgDt"), amount, reversal, tuple(sorted(trace_ids)), fee, unresolved,
-                     requires_allocation)
+                     requires_allocation, supplier_debit)
 
 
 @dataclass(frozen=True)

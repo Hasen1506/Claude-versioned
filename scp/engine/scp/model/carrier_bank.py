@@ -126,11 +126,63 @@ class SupplierCashRef(Model):
         return f"{self.invoice}/{self.payment_number}"
 
 
+class SupplierDebitSource(Model):
+    included_fee_minor: ReturnMinor | None = None
+    unresolved_charges: bool = False
+
+
+class SupplierClearing(Model):
+    postings: list[SupplierCashRef] = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=1, max_length=200)
+    instruction: Id | None = Field(None, exclude_if=lambda value: value is None)
+    return_of: Id | None = Field(None, exclude_if=lambda value: value is None)
+
+
+class SupplierInstructionLeg(Model):
+    invoice: Id
+    amount_minor: ReturnMinor
+
+
+class SupplierInstructionRejection(Model):
+    date: date
+    by: str
+    message: str = Field(min_length=1, max_length=35)
+    reason: str = Field(pattern=r"^[A-Z0-9]{1,4}$")
+    file_sha256: BankDigest
+
+
+class SupplierPaymentInstruction(Model):
+    id: Annotated[str, Field(pattern=r"^SP-[a-f0-9]{28}$")]
+    account: BankAccountId
+    supplier: Id
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+    execute_on: date
+    proposed_on: date
+    proposed_by: str = Field(min_length=1, max_length=254)
+    routing_sha256: BankDigest
+    legs: list[SupplierInstructionLeg] = Field(min_length=1, max_length=100)
+    approved_on: date | None = None
+    approved_by: str = ""
+    cancelled_on: date | None = None
+    cancelled_by: str = ""
+    statement_line: Id | None = None
+    rejection: SupplierInstructionRejection | None = Field(None, exclude_if=lambda value: value is None)
+
+    @property
+    def reserved(self) -> bool:
+        return self.cancelled_on is None and self.statement_line is None and self.rejection is None
+
+    @property
+    def amount_minor(self) -> int:
+        return sum(leg.amount_minor for leg in self.legs)
+
+
 class BankMatchEvent(Model):
     date: date
     targets: list[BankCashRef] = Field(max_length=100, description="Empty releases the preceding match")
     allocation: BankReturnAllocation | None = Field(None, exclude_if=lambda value: value is None)
     supplier_payment: SupplierCashRef | None = Field(None, exclude_if=lambda value: value is None)
+    supplier_clearing: SupplierClearing | None = Field(None, exclude_if=lambda value: value is None)
 
 
 class CarrierBankLine(Model):
@@ -149,6 +201,7 @@ class CarrierBankLine(Model):
     unresolved_charges: bool = Field(False, strict=True, exclude_if=lambda value: not value)
     requires_allocation: bool = Field(False, strict=True, exclude_if=lambda value: not value,
                                       description="Native supplier cash includes multiple transactions or bank charges")
+    supplier_debit: SupplierDebitSource | None = Field(None, exclude_if=lambda value: value is None)
     history: list[BankMatchEvent] = Field(default_factory=list)
 
     def source_key(self) -> tuple[str, str, str]:
@@ -162,7 +215,24 @@ class CarrierBankLine(Model):
     def active_supplier(self) -> SupplierCashRef | None:
         return self.history[-1].supplier_payment if self.history else None
 
+    @property
+    def supplier_clearing(self) -> SupplierClearing | None:
+        return self.history[0].supplier_clearing if self.history else None
+
+    @property
+    def supplier_fee(self) -> int:
+        if not self.supplier_clearing:
+            return 0
+        if self.supplier_clearing.return_of:
+            return self.included_fee_minor or 0
+        return (self.supplier_debit.included_fee_minor or 0) if self.supplier_debit else 0
+
     def matched_vouchers(self) -> list[str]:
+        if self.supplier_clearing:
+            vouchers = [target.voucher for target in self.supplier_clearing.postings]
+            if self.supplier_fee:
+                vouchers.append(f"{self.id}/FEE")
+            return vouchers
         return [self.active_supplier.voucher] if self.active_supplier else [target.voucher for target in self.active]
 
     @model_validator(mode="after")
@@ -171,8 +241,13 @@ class CarrierBankLine(Model):
             raise ValueError("a bank statement movement must have a nonzero signed amount")
         date_ = self.date
         for index, entry in enumerate(self.history):
-            if entry.date < date_ or bool(entry.targets or entry.supplier_payment) != (index % 2 == 0):
+            if entry.date < date_ or bool(entry.targets or entry.supplier_payment or entry.supplier_clearing) != (index % 2 == 0):
                 raise ValueError("a match and its release must follow the statement date in order")
+            if entry.supplier_clearing and (len(self.history) != 1 or entry.targets or entry.supplier_payment or entry.allocation):
+                raise ValueError("a posted supplier clearing retains its original statement and vouchers")
+            if entry.supplier_clearing and (self.reversal != bool(entry.supplier_clearing.return_of)
+                    or entry.supplier_clearing.return_of and entry.supplier_clearing.instruction):
+                raise ValueError("supplier returns preserve the originating debit")
             if entry.supplier_payment and (entry.targets or entry.allocation):
                 raise ValueError("a supplier match identifies exactly one payment or its reversal")
             if len({r.key() for r in entry.targets}) != len(entry.targets):

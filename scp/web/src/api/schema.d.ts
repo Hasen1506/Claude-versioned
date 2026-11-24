@@ -2639,6 +2639,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/companies/{cid}/supplier-payment-instructions/{instruction}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Export Supplier Payment File */
+        post: operations["export_supplier_payment_file_api_companies__cid__supplier_payment_instructions__instruction__export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/accounting/export": {
         parameters: {
             query?: never;
@@ -3772,6 +3789,7 @@ export interface components {
             targets: components["schemas"]["BankCashRef"][];
             allocation?: components["schemas"]["BankReturnAllocation"] | null;
             supplier_payment?: components["schemas"]["SupplierCashRef"] | null;
+            supplier_clearing?: components["schemas"]["SupplierClearing"] | null;
         };
         /** BankMatchInput */
         BankMatchInput: {
@@ -3792,6 +3810,23 @@ export interface components {
             amount_minor: number;
             /** Currency */
             currency: string;
+        };
+        /** BankParty */
+        BankParty: {
+            /** Name */
+            name: string;
+            /** Bic */
+            bic: string;
+            /**
+             * Iban
+             * @default
+             */
+            iban: string;
+            /**
+             * Local Account
+             * @default
+             */
+            local_account: string;
         };
         /** BankReturnAllocation */
         BankReturnAllocation: {
@@ -4479,6 +4514,7 @@ export interface components {
              * @default false
              */
             requires_allocation: boolean;
+            supplier_debit?: components["schemas"]["SupplierDebitSource"] | null;
             /** History */
             history?: components["schemas"]["BankMatchEvent"][];
         };
@@ -6290,6 +6326,8 @@ export interface components {
             carrier_bank_lines?: components["schemas"]["CarrierBankLine"][];
             /** Carrier Bank Periods */
             carrier_bank_periods?: components["schemas"]["CarrierBankPeriod"][];
+            /** Supplier Payment Instructions */
+            supplier_payment_instructions?: components["schemas"]["SupplierPaymentInstruction"][];
             transport?: components["schemas"]["TransportSettings"];
             /** Third Party Orders */
             third_party_orders?: components["schemas"]["ThirdPartyOrder"][];
@@ -12224,6 +12262,11 @@ export interface components {
              */
             fx_rate?: number | null;
         };
+        /** PaymentRouting */
+        PaymentRouting: {
+            debtor: components["schemas"]["BankParty"];
+            creditor: components["schemas"]["BankParty"];
+        };
         /**
          * PaymentTerms
          * @description When an invoice is due, and the cash discount for paying early (e.g. 2 % within 10 days, net 30).
@@ -17822,6 +17865,8 @@ export interface components {
             amount_minor: number;
             /** Bank Account */
             bank_account: string | null;
+            /** Company */
+            company: string;
         };
         /** SupplierCashRef */
         SupplierCashRef: {
@@ -17829,6 +17874,27 @@ export interface components {
             invoice: string;
             /** Payment Number */
             payment_number: number;
+        };
+        /** SupplierClearing */
+        SupplierClearing: {
+            /** Postings */
+            postings: components["schemas"]["SupplierCashRef"][];
+            /** Reason */
+            reason: string;
+            /** Instruction */
+            instruction?: string | null;
+            /** Return Of */
+            return_of?: string | null;
+        };
+        /** SupplierDebitSource */
+        SupplierDebitSource: {
+            /** Included Fee Minor */
+            included_fee_minor?: number | null;
+            /**
+             * Unresolved Charges
+             * @default false
+             */
+            unresolved_charges: boolean;
         };
         /** SupplierDispatch */
         SupplierDispatch: {
@@ -17848,6 +17914,29 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** SupplierInstructionLeg */
+        SupplierInstructionLeg: {
+            /** Invoice */
+            invoice: string;
+            /** Amount Minor */
+            amount_minor: number;
+        };
+        /** SupplierInstructionRejection */
+        SupplierInstructionRejection: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** By */
+            by: string;
+            /** Message */
+            message: string;
+            /** Reason */
+            reason: string;
+            /** File Sha256 */
+            file_sha256: string;
         };
         /**
          * SupplierInvoice
@@ -18095,6 +18184,7 @@ export interface components {
             fx_rate?: number | null;
             /** Bank Account */
             bank_account?: string | null;
+            statement_cash?: components["schemas"]["SupplierStatementCash"] | null;
             /**
              * Reverses
              * @description Reverses this one-based payment number on the same invoice
@@ -18102,6 +18192,59 @@ export interface components {
             reverses?: number | null;
             /** Reason */
             reason?: string | null;
+        };
+        /** SupplierPaymentFile */
+        SupplierPaymentFile: {
+            /** Filename */
+            filename: string;
+            /** Sha256 */
+            sha256: string;
+            /** Xml */
+            xml: string;
+        };
+        /** SupplierPaymentInstruction */
+        SupplierPaymentInstruction: {
+            /** Id */
+            id: string;
+            /** Account */
+            account: string;
+            /** Supplier */
+            supplier: string;
+            /** Currency */
+            currency: string;
+            /**
+             * Execute On
+             * Format: date
+             */
+            execute_on: string;
+            /**
+             * Proposed On
+             * Format: date
+             */
+            proposed_on: string;
+            /** Proposed By */
+            proposed_by: string;
+            /** Routing Sha256 */
+            routing_sha256: string;
+            /** Legs */
+            legs: components["schemas"]["SupplierInstructionLeg"][];
+            /** Approved On */
+            approved_on?: string | null;
+            /**
+             * Approved By
+             * @default
+             */
+            approved_by: string;
+            /** Cancelled On */
+            cancelled_on?: string | null;
+            /**
+             * Cancelled By
+             * @default
+             */
+            cancelled_by: string;
+            /** Statement Line */
+            statement_line?: string | null;
+            rejection?: components["schemas"]["SupplierInstructionRejection"] | null;
         };
         /** SupplierPriceChip */
         "SupplierPriceChip-Input": {
@@ -18256,6 +18399,15 @@ export interface components {
             sole_for: number;
             /** On Time */
             on_time: number | null;
+        };
+        /** SupplierStatementCash */
+        SupplierStatementCash: {
+            /** Line */
+            line: string;
+            /** Bank Minor */
+            bank_minor: number;
+            /** Instruction */
+            instruction?: string | null;
         };
         /** SupplierView */
         SupplierView: {
@@ -24827,6 +24979,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CommandResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_supplier_payment_file_api_companies__cid__supplier_payment_instructions__instruction__export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                instruction: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaymentRouting"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierPaymentFile"];
                 };
             };
             /** @description Validation Error */

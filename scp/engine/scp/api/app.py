@@ -92,6 +92,8 @@ from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, canoni
 from ..versions import publication
 from ..companies import CompanyError, get_companies
 from ..companies.commands import CommandRecord, CommandRequest, CommandResult, execute as execute_command, record as command_record
+from ..companies.store import CAN_EDIT
+from ..supplier_disbursement import PaymentRouting, SupplierPaymentFile
 from .connect import router as connect_router
 from .cycle import router as cycle_router
 from .portal import router as portal_router
@@ -1483,7 +1485,11 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
     if req.kind == "scenario_publication":
         raise HTTPException(422, "publish a reviewed scenario through its publication endpoint")
     if req.kind == "carrier_bank":
-        from ..carrier_bank import AllocateBankReturn, CamtFile, CamtFiles, ReverseBankCash, parse_operation, record_bank
+        from hashlib import sha256
+        from ..carrier_bank import (AllocateBankReturn, CamtFile, CamtFiles, ClearSupplierStatement, ReturnSupplierStatement,
+                                    ReverseBankCash, parse_operation, record_bank)
+        from ..supplier_disbursement import (ApproveSupplierPayment, INSTRUCTION_CHANGES, ProposeSupplierPayment,
+                                             RejectSupplierPayment, record_instruction)
         if set(req.parameters) != {"event"}:
             raise HTTPException(422, "carrier bank commands require a single event")
         try:
@@ -1492,25 +1498,39 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
             problems = [f"{'.'.join(map(str, error['loc']))}: {error['msg']}"
                         for error in exc.errors(include_input=False, include_url=False, include_context=False)]
             raise HTTPException(422, "invalid carrier bank event: " + "; ".join(problems)) from None
-        if req.action != (event.kind if isinstance(event, (ReverseBankCash, AllocateBankReturn)) else "record"):
+        explicit = (ReverseBankCash, AllocateBankReturn, ClearSupplierStatement, ReturnSupplierStatement, *INSTRUCTION_CHANGES)
+        if req.action != (event.kind if isinstance(event, explicit) else "record"):
             raise HTTPException(422, "carrier bank action must match the requested event")
+        companies = get_companies()
+        if (isinstance(event, INSTRUCTION_CHANGES) or isinstance(event, ClearSupplierStatement) and event.instruction) and companies.is_key(user):
+            raise HTTPException(403, "supplier payment instructions require a signed-in person")
         try:
-            receipt = {"event": event.receipt_event()} if isinstance(event, CamtFile) else None
+            receipt = {"event": event.receipt_event()} if isinstance(event, (CamtFile, RejectSupplierPayment)) else None
             if isinstance(event, CamtFiles):
                 canonical, metadata = event.canonical_events()
                 req = req.model_copy(update={"parameters": {"event": canonical}})
                 receipt = {"event": metadata}
+            if isinstance(event, (ProposeSupplierPayment, ApproveSupplierPayment)):
+                receipt = {"event": {**event.model_dump(mode="json", exclude={"routing"}),
+                                     "routing_sha256": event.routing.digest()}}
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from None
 
         def post_bank(ds: Dataset):
             try:
-                changed, message = record_bank(ds, event, req.posting_date)
+                actor = user.email.strip().lower()
+                if isinstance(event, INSTRUCTION_CHANGES):
+                    instruction_id = "SP-" + sha256(f"{cid}:{req.id}".encode()).hexdigest()[:28]
+                    changed, message = record_instruction(ds, event, req.posting_date, actor, instruction_id)
+                else:
+                    changed, message = record_bank(ds, event, req.posting_date, actor)
+            except PermissionError as exc:
+                raise HTTPException(403, str(exc)) from None
             except ValueError as exc:
                 raise HTTPException(409, str(exc)) from None
             return changed, {"report": {"message": message}}
 
-        return execute_command(get_companies(), user, cid, req, post_bank, receipt_parameters=receipt)
+        return execute_command(companies, user, cid, req, post_bank, receipt_parameters=receipt)
     if req.kind == "production_cost":
         from uuid import NAMESPACE_URL, uuid5
         from ..accounting.production import post
@@ -1581,6 +1601,24 @@ def post_company_command(cid: str, req: CommandRequest, user: Signed) -> Command
 def get_company_command(cid: str, id: str, user: Signed) -> CommandRecord:  # noqa: A002
     """Reconcile a completed operation after a lost response without issuing another mutation."""
     return command_record(get_companies(), user, cid, id)
+
+
+@app.post("/api/companies/{cid}/supplier-payment-instructions/{instruction}/export", response_model=SupplierPaymentFile)
+def export_supplier_payment_file(cid: str, instruction: Id, routing: PaymentRouting, user: Signed) -> Response:
+    from ..supplier_disbursement import payment_file
+
+    companies = get_companies()
+    companies._need(user, cid, *CAN_EDIT)
+    if companies.is_key(user):
+        raise HTTPException(403, "payment file export requires a signed-in person")
+    try:
+        ds = Dataset.model_validate(companies.open(user, cid).dataset)
+        artifact = payment_file(ds, instruction, routing, user.email.strip().lower())
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    return JSONResponse(artifact.model_dump(), headers={"Cache-Control": "no-store"})
 
 
 class AccountingExport(Out):

@@ -47,7 +47,7 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         raise TransactionRefused(f"invalid Tally bank ledger mapping: {exc}") from None
     names = ("supplier_invoices", "movements", "purchase_orders", "invoices", "intercompany_invoices", "freight_orders",
              "inventory_docs", "challans", "third_party_orders", "purchase_valuation", "production_cost_postings",
-             "carrier_bank_accounts", "carrier_bank_lines", "carrier_bank_periods")
+             "carrier_bank_accounts", "carrier_bank_lines", "carrier_bank_periods", "supplier_payment_instructions")
     # No financial records means incomplete master data can still be edited freely.
     if not any(before.get(n) or after.get(n) for n in names):
         return after
@@ -95,12 +95,12 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         from ..model.actuals import InventoryDoc
         from ..model.outside import JobWorkChallan, ThirdPartyOrder
         from ..model.purchasing import PurchaseValuationBasis
-        from ..model.carrier_bank import CarrierBankAccount, CarrierBankLine, CarrierBankPeriod
+        from ..model.carrier_bank import CarrierBankAccount, CarrierBankLine, CarrierBankPeriod, SupplierPaymentInstruction
         for name, model in (("invoices", Invoice), ("intercompany_invoices", IntercompanyInvoice), ("freight_orders", FreightOrder),
                             ("inventory_docs", InventoryDoc), ("challans", JobWorkChallan),
                             ("third_party_orders", ThirdPartyOrder), ("purchase_valuation", PurchaseValuationBasis),
                             ("carrier_bank_accounts", CarrierBankAccount), ("carrier_bank_lines", CarrierBankLine),
-                            ("carrier_bank_periods", CarrierBankPeriod)):
+                            ("carrier_bank_periods", CarrierBankPeriod), ("supplier_payment_instructions", SupplierPaymentInstruction)):
             for raw in [*_rows(before, name).values(), *_rows(after, name).values()]:
                 model.model_validate(raw)
         old_inv, new_inv = _rows(before, "supplier_invoices"), _rows(after, "supplier_invoices")
@@ -299,7 +299,7 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         # Use normalized facts, but no newly proposed invoices, as the replay base.
         ds = lenient(result)[0]
         existing = [SupplierInvoice.model_validate(new_inv[i]) for i in new_inv if i in old_inv]
-        working = ds.model_copy(update={"supplier_invoices": existing})
+        working = ds.model_copy(update={"supplier_invoices": existing, "supplier_payment_instructions": old_ds.supplier_payment_instructions})
         lifecycle = {"payments", "released_by", "released_on", "cancelled", "cancelled_on", "cancelled_after", "note"}
         for iid, raw in new_inv.items():
             target = SupplierInvoice.model_validate(raw)
@@ -337,16 +337,21 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
                 raise TransactionRefused(f"{iid}: posted payments cannot be removed or changed")
             for payment in target.payments[len(prior.payments):]:
                 open_period(payment.date)
-                if monetary.digits != 2:
+                if payment.statement_cash:
+                    action = "return_supplier_statement" if payment.reverses else "clear_supplier_statement"
+                    if supplier_payment_action != action or not allow_carrier_bank:
+                        raise TransactionRefused("statement cash requires the supplier clearing command")
+                elif monetary.digits != 2:
                     action = "reverse_invoice_payment" if payment.reverses else "pay_invoice"
                     if supplier_payment_action != action:
                         raise TransactionRefused("domestic supplier settlements require a signed-in company command")
                 if payment.reverses:
                     working, _ = reverse_invoice_payment(working, iid, payment.reverses, payment.date, payment.reason or "",
-                                                         reference=payment.reference, bank_account=payment.bank_account)
+                                                         reference=payment.reference, bank_account=payment.bank_account,
+                                                         statement_cash=payment.statement_cash)
                 else:
                     working, _ = pay_invoice(working, iid, payment.amount, payment.date, payment.reference,
-                                             bank_account=payment.bank_account)
+                                             bank_account=payment.bank_account, statement_cash=payment.statement_cash)
                 if working.supplier_invoices[[i.id for i in working.supplier_invoices].index(iid)].payments[-1] != payment:
                     raise TransactionRefused(f"{iid}: the payment/discount does not match the amount due")
             if (target.cancelled, target.cancelled_on, target.cancelled_after) != (
@@ -362,6 +367,8 @@ def protect(before: dict, after: dict, email: str, *, allow_production_posting: 
         protect_commercial(old_ds, ds, open_period, freight_action=freight_action)
         from ..carrier_bank import protect_bank
         protect_bank(old_ds, ds, allow_carrier_bank)
+        from ..supplier_disbursement import protect_instructions
+        protect_instructions(old_ds, ds, supplier_payment_action if allow_carrier_bank else "", email)
         from .outside import protect_outside
         protect_outside(old_ds, ds, open_period)
         from .materials import protect_materials
