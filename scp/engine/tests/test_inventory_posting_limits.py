@@ -177,3 +177,21 @@ def test_quick_count_observes_limits_and_commits_only_an_accepted_count():
     assert accepted.status_code == 200 and accepted.json()["revision"] == 2, accepted.text
     saved = client.get(f"/api/companies/{cid}", headers=h(owner)).json()
     assert [m["qty"] for m in saved["dataset"]["movements"] if m["type"] == "adjustment"] == [-1]
+
+
+def test_imported_open_counts_require_new_attribution_for_above_limit_posting():
+    data = warehouse(item=1233).model_dump(mode="json")
+    data["inventory_docs"] = [{"id": "PI-00001", "date": DAY, "items": [
+        {"location": "P", "product": "B", "book_qty": 10, "counted": 9, "counted_by": "SOME-OTHER-COMPANY"},
+    ]}]
+    owner, counter, cid = team(Dataset.model_validate(data))
+    saved = client.get(f"/api/companies/{cid}", headers=h(owner)).json()["dataset"]
+    assert "counted_by" not in saved["inventory_docs"][0]["items"][0]
+    args = {"doc": "PI-00001", "counts": counts(B=9)}
+    review = {**args, "review_reason": "Count checked independently"}
+    missing = command(owner, cid, "post", "stock", "count_post", 1, date=DAY, **review)
+    assert missing.status_code == 403 and "record every quantity" in missing.text
+    entered = command(counter, cid, "entry", "stock", "count_enter", 1, date=DAY, **args)
+    assert entered.status_code == 200 and entered.json()["revision"] == 2
+    posted = command(owner, cid, "post", "stock", "count_post", 2, date=DAY, **review)
+    assert posted.status_code == 200 and posted.json()["revision"] == 3
