@@ -154,16 +154,7 @@ export function SupplierBankWorklist({ bank, ds, currency, invoices }: {
 
   if (!settlement.live && !lines.length && !periods.length) return null;
 
-  return <Panel title="Supplier bank statements">
-    {domestic && <CarrierBankAccounts ds={ds} currency={currency} periods={periods} live={settlement.live} editable={editable}
-      supplier record={record} />}
-    {domestic && settlement.live && <CamtStatementImport ds={ds} editable={editable} pending={settlement.pendingBankFile}
-      originals={originals} setOriginals={setOriginals} record={record} />}
-    <SupplierPaymentInstructions ds={ds} invoices={invoices} currency={currency} />
-    {message && <div className={`banner ${message.error ? "error" : "info"}`} role={message.error ? "alert" : "status"}>{message.text}</div>}
-    {settlement.pending && <Edits><button className="btn accent" disabled={busy || (settlement.pendingBankFile && !originals?.length)}
-      onClick={() => record()}>Retry statement operation</button></Edits>}
-    {!!lines.length && <>
+  const statementRows = <>
       <div className="table-wrap"><table className="t" aria-label="Supplier statement lines">
         <thead><tr><th>Statement line</th><th>Bank date</th><th>Account</th><th>Bank reference</th>
           <th className="num">Cash</th><th>Match</th></tr></thead>
@@ -221,7 +212,21 @@ export function SupplierBankWorklist({ bank, ds, currency, invoices }: {
               ? `Posted ${event.supplier_clearing.postings.map((item) => `${item.invoice}/${item.payment_number}`).join(", ")} · ${event.supplier_clearing.reason}`
               : "Released"}</li>)}</ol>}
       </div>}
-    </>}
+  </>;
+
+  return <Panel title="Supplier bank statements">
+    {domestic && <CarrierBankAccounts ds={ds} currency={currency} periods={periods} live={settlement.live} editable={editable}
+      supplier record={record} />}
+    {domestic && settlement.live && <CamtStatementImport ds={ds} editable={editable} pending={settlement.pendingBankFile}
+      originals={originals} setOriginals={setOriginals} record={record} />}
+    <SupplierPaymentInstructions ds={ds} invoices={invoices} currency={currency} />
+    {message && <div className={`banner ${message.error ? "error" : "info"}`} role={message.error ? "alert" : "status"}>{message.text}</div>}
+    {settlement.pending && <Edits><button className="btn accent" disabled={busy || (settlement.pendingBankFile && !originals?.length)}
+      onClick={() => record()}>Retry statement operation</button></Edits>}
+    {!!lines.length && (domestic ? statementRows : <details className="pad">
+      <summary>Review supplier statement entries</summary>
+      {statementRows}
+    </details>)}
     {!!cash.length && <details className="pad"><summary>Unmatched supplier cash ({cash.length})</summary>
       <ul>{cash.map((item) => <li key={item.voucher}>
         {item.voucher} · {day(item.date)} · {item.bank_account} · {item.reference} · {exactMoney(item.amount_minor / factor, currency)}
