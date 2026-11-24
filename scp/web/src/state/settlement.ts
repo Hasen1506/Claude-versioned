@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { ApiError } from "../api/client";
-import type { TransportActionInput } from "../api/types";
+import type { PoActionInput, TransportActionInput } from "../api/types";
 import { store, useStore } from "./store";
 
 const SETTLEMENTS = {
@@ -62,6 +62,67 @@ function readAttempt(key: string): SettlementAttempt | null {
   } catch {
     return null;
   }
+}
+
+type SupplierInvoiceCommand = {
+  action: "enter_invoice" | "cancel_invoice";
+  posting_date: string;
+  parameters: Omit<PoActionInput, "date"> & { po: string };
+};
+
+/** Keep the original instruction available even if reloading shows that its effects were committed. */
+export function useSupplierInvoicePosting(enabled: boolean, invoice?: string) {
+  const company = useStore((s) => s.company?.live ? s.company.id : null);
+  const user = useStore((s) => s.session?.user.id);
+  const key = enabled && company && user ? `scp.supplier-invoice.pending.v1:${company}:${user}:${invoice ?? "entry"}` : null;
+  const memory = useRef<SettlementAttempt | null>(null);
+  const [, refresh] = useState(0);
+  const pending = () => key ? (memory.current?.key === key ? memory.current : readAttempt(key)) : null;
+
+  function remember(attempt: SettlementAttempt | null) {
+    memory.current = attempt;
+    if (key) {
+      try {
+        if (attempt) sessionStorage.setItem(key, JSON.stringify(attempt));
+        else sessionStorage.removeItem(key);
+      } catch { /* keep the active tab's copy */ }
+    }
+    refresh((value) => value + 1);
+  }
+
+  async function send(attempt: SettlementAttempt, command: SupplierInvoiceCommand, retrying: boolean) {
+    if (!company || !user || store.get().session?.user.id !== user) throw new Error("Open the original company and sign in again.");
+    remember(attempt);
+    try {
+      const result = await store.postCompanyCommand(company, { kind: "purchasing", id: attempt.id, ...command });
+      remember(null);
+      return result;
+    } catch (error) {
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && ![408, 425, 429].includes(error.status)) {
+        if (!retrying || error.status === 409 || error.status === 422) remember(null);
+        throw error;
+      }
+      throw new Error("Confirmation is unavailable. Retry the original instruction to check or finish the posting.");
+    }
+  }
+
+  async function post(command: SupplierInvoiceCommand) {
+    if (!key) throw new Error("Sign in before posting the supplier invoice.");
+    if (pending()) throw new Error("Retry the unconfirmed instruction before posting another one.");
+    return send({ key, id: crypto.randomUUID(), details: JSON.stringify(command) }, command, false);
+  }
+
+  async function retry() {
+    const attempt = pending();
+    if (!attempt) throw new Error("There is no unconfirmed supplier invoice instruction.");
+    const command = JSON.parse(attempt.details) as SupplierInvoiceCommand;
+    if (!command?.posting_date || (invoice
+      ? (command.action !== "cancel_invoice" || command.parameters?.po !== invoice)
+      : command.action !== "enter_invoice")) throw new Error("The saved supplier invoice instruction could not be verified.");
+    return send(attempt, command, true);
+  }
+
+  return { pending: !!pending(), post, retry };
 }
 
 /** A tab can resubmit the original financial operation even after the document shows as settled. */

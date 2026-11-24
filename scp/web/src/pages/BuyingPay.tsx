@@ -1,13 +1,13 @@
 // Phase N on the Buying page: supplier invoices checked against the order and the goods received, what is owed to
 // whom, returns to suppliers and contracts. Every step is an engine action (/api/purchasing/act).
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, PayablesView, PoAction, PoActionInput, PoActionResponse, PurchasingView, StockType, SupplierInvoiceView, TransportActionResponse } from "../api/types";
 import { Badge, Edits, Empty, Panel, Reading, StatTile } from "../components/ui";
 import { day, exactMoney, hasMoney, moneyDigits, qty, unitMoney } from "../lib/format";
 import { Loc, Msg, Prod, namesOf } from "../lib/names";
 import { go, href } from "../lib/router";
-import { useSettlement } from "../state/settlement";
+import { useSettlement, useSupplierInvoicePosting } from "../state/settlement";
 import { store } from "../state/store";
 import { CarrierBillEvents } from "./CarrierBillEvents";
 import { CarrierBankWorklist } from "./CarrierBankWorklist";
@@ -40,12 +40,12 @@ export function poAct(action: PoAction, po: string, extra: PoActionInput = {}) {
   return applyPurchasing((dataset) => api.poAction(dataset, action, po, extra));
 }
 
-export function usePoAction(invoice?: string) {
+export function usePoAction(invoice?: string, afterEntry?: () => void) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const settlement = useSettlement("purchasing", invoice);
-  const invoiceAttempt = useRef<{ key: string; id: string } | null>(null);
+  const invoicePosting = useSupplierInvoicePosting(!!invoice || !!afterEntry, invoice);
   const execute = async (operation: () => Promise<Pick<PoActionResponse, "report">>, after?: () => void) => {
     setBusy(true); setErr(null); setMsg(null);
     try {
@@ -60,38 +60,35 @@ export function usePoAction(invoice?: string) {
       setBusy(false);
     }
   };
-  const settle = async (post: ReturnType<typeof settlement.retry>) => {
+  const refreshPosting = async (post: ReturnType<typeof settlement.retry>) => {
     const reply = await post;
     await Promise.allSettled([store.run("purchasing"), store.run("plan")]);
     return reply.result as Pick<PoActionResponse, "report">;
   };
   const run = (action: PoAction, po: string, extra: PoActionInput = {}, after?: () => void) => execute(async () => {
     if (action === "pay_invoice" && settlement.live)
-      return settle(settlement.post(extra.date, extra.amount ?? null, extra.reference));
+      return refreshPosting(settlement.post(extra.date, extra.amount ?? null, extra.reference));
     const { company, dataset } = store.get();
     if (dataset && company?.live && moneyDigits(dataset.settings.currency) !== 2
-        && (action === "enter_invoice" || action === "cancel_invoice")) {
+        && ((action === "enter_invoice" && afterEntry) || (action === "cancel_invoice" && invoice))) {
       const { date, ...extraParameters } = extra;
       const posting_date = date ?? dataset.settings.planning_start;
-      const parameters = { po, ...extraParameters };
-      const key = JSON.stringify([company.id, action, posting_date, parameters]);
-      const attempt = invoiceAttempt.current?.key === key ? invoiceAttempt.current : { key, id: crypto.randomUUID() };
-      invoiceAttempt.current = attempt;
-      const result = await store.postCompanyCommand(company.id, { id: attempt.id, kind: "purchasing", action, posting_date, parameters });
-      invoiceAttempt.current = null;
-      await Promise.allSettled([store.run("purchasing"), store.run("plan")]);
-      return result.result as Pick<PoActionResponse, "report">;
+      return refreshPosting(invoicePosting.post({ action, posting_date, parameters: { po, ...extraParameters } }));
     }
     return poAct(action, po, extra);
   }, after);
-  const retryPayment = (after?: () => void) => execute(() => settle(settlement.retry()), after);
+  const retryPayment = (after?: () => void) => execute(() => refreshPosting(settlement.retry()), after);
   const banners = <>
     {msg && <div className="banner info" role="status"><Badge sev="ok">Done</Badge><span><Msg text={msg} /></span><span className="spacer" />
       <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
-    {err && <div className="banner error" role="alert"><Badge sev="error">{settlement.pending ? "Unconfirmed" : "Not done"}</Badge><span>{err}</span><span className="spacer" />
+    {invoicePosting.pending && <div className="banner warning" role="alert"><Badge sev="warning">Unconfirmed</Badge>
+      <span>{err || "Retry the original instruction to check or finish the posting."}</span><span className="spacer" />
+      <button className="btn accent" disabled={busy} onClick={() => execute(() => refreshPosting(invoicePosting.retry()), afterEntry)}>
+        {invoice ? "Retry cancellation" : "Retry invoice"}</button></div>}
+    {err && !invoicePosting.pending && <div className="banner error" role="alert"><Badge sev="error">{settlement.pending ? "Unconfirmed" : "Not done"}</Badge><span>{err}</span><span className="spacer" />
       <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setErr(null)}>✕</button></div>}
   </>;
-  return { busy, run, banners, retryPayment, paymentPending: settlement.pending };
+  return { busy, run, banners, retryPayment, paymentPending: settlement.pending, invoicePending: invoicePosting.pending };
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -125,7 +122,8 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
   const [on, setOn] = useState("");
   const [tax, setTax] = useState("");
   const [freight, setFreight] = useState("");
-  const { busy, run, banners } = usePoAction();
+  const clearInvoice = () => { setPick(null); setEdit({}); setRef(""); setTax(""); setFreight(""); };
+  const { busy, run, banners, invoicePending } = usePoAction(undefined, clearInvoice);
   const line = (o: string) => edit[o] ?? { qty: "", price: "" };
   const net = picked.reduce((a, g) => a + Number(line(g.order).qty || g.qty) * Number(line(g.order).price || g.price || 0), 0)
     + Number(freight || 0);
@@ -159,7 +157,7 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
     supplier, date: postingDate, reference: ref, tax: tax === "" ? null : Number(tax), delivery_costs: Number(freight || 0),
     lines: picked.map((g) => ({ id: g.order, order: g.order, final: false, qty: Number(line(g.order).qty || g.qty),
       price: line(g.order).price === "" ? null : Number(line(g.order).price) })),
-  }, () => { setPick(null); setEdit({}); setRef(""); setTax(""); setFreight(""); });
+  }, clearInvoice);
   const cur = pay.invoices.find((i) => i.id === sel);
   return (
     <div className="stack">
@@ -180,7 +178,7 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
           onChange={(e) => setFreight(e.target.value)} /></label>}
         <label className="row small">Tax <input className="input num" style={{ width: 90 }} type="number" min={0} step="any" aria-label="Tax charged"
           placeholder={String(domestic ? Number(taxMinor) / 10 ** precision : round2(net * rate))} value={tax} onChange={(e) => setTax(e.target.value)} /></label>
-        <Edits><button className="btn accent" disabled={busy || !picked.length || suppliers.size !== 1} onClick={enter}
+        <Edits><button className="btn accent" disabled={busy || invoicePending || !picked.length || suppliers.size !== 1} onClick={enter}
           title={suppliers.size > 1 ? "One invoice is from one supplier: tick lines of one supplier" : undefined}>
           {busy ? "Checking…" : invoiceTotal == null ? "Enter the invoice" : `Enter the invoice (${exactMoney(invoiceTotal, billCur)})`}</button></Edits>
       </>}>
@@ -251,7 +249,7 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
   const due = round2(inv.open - (inTime ? round2(inv.total * inv.discount) : 0));
   const [amount, setAmount] = useState("");
   const [ref, setRef] = useState("");
-  const { busy, run, banners, retryPayment, paymentPending } = usePoAction(inv.id);
+  const { busy, run, banners, retryPayment, paymentPending, invoicePending } = usePoAction(inv.id);
   const clearPayment = () => { setAmount(""); setRef(""); };
   const blocked = inv.status === "blocked";
   const open = hasMoney(inv.open, inv.currency) && inv.status !== "cancelled";
@@ -263,7 +261,7 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
         {inv.status !== "cancelled" && inv.payments.length === 0 && <>
           {domestic && <label className="row small">Cancellation date <input className="input" type="date" value={cancelOn}
             onChange={(e) => setCancelOn(e.target.value)} /></label>}
-          <button className="btn ghost" disabled={busy || (domestic && !cancelOn)}
+          <button className="btn ghost" disabled={busy || invoicePending || (domestic && !cancelOn)}
             onClick={() => run("cancel_invoice", inv.id, domestic ? { date: cancelOn } : {})}>Cancel it</button>
         </>}
       </Edits>}>
