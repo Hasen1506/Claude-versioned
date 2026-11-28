@@ -1,0 +1,26 @@
+{
+  "name": "scp-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "scp/web"
+  ],
+  "scripts": {
+    "build:web": "npm run build --workspace=scp/web",
+    "build": "npm run build:web && tsc --noEmit -p tsconfig.server.json",
+    "dev": "node server.ts",
+    "start": "node server.ts",
+    "lint": "tsc --noEmit -p tsconfig.server.json && npm run typecheck --workspace=scp/web",
+    "test": "tsx --test server/engine.test.ts"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.15.3",
+    "tsx": "^4.19.4",
+    "typescript": "^5.9.3"
+  }
+}
